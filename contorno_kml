@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+    <kml xmlns:atom="http://www.w3.org/2005/Atom" xmlns:gx="http://www.google.com/kml/ext/2.2" xmlns="http://www.opengis.net/kml/2.2">
+    <Document id="root_doc">
+        <Schema name="t01" id="t01">
+        <SimpleField name="tessellate" type="int"></SimpleField>
+        </Schema>
+        <Folder>
+        <name>t01</name>
+        <Placemark>
+            <name>t01</name>
+            <Style>
+            <LineStyle><color>ff0000ff</color></LineStyle>
+            <PolyStyle><fill>0</fill></PolyStyle>
+            </Style>
+            <ExtendedData>
+            <SchemaData schemaUrl="#t01">
+                <SimpleData name="tessellate">1</SimpleData>
+            </SchemaData>
+            </ExtendedData>
+            <Polygon>
+            <outerBoundaryIs>
+                <LinearRing>
+                <coordinates> -55.544751311567,-22.714006532072,0 -55.544622565534,-22.713769009926,0 -55.537959958341,-22.71802455257,0 -55.541409279135,-22.721799998808,0 -55.542310501364,-22.722057299347,0 -55.546172882345,-22.720592659047,0 -55.545185829428,-22.716030401969,0 -55.544896150854,-22.715787935026,0 -55.544622565534,-22.715829995649,0 -55.544182012704,-22.715733812882,0 -55.543999287215,-22.715651083278,0 -55.543870205906,-22.715568353623,0 -55.543568457392,-22.714752497381,0 -55.544751311567,-22.714006532072,0 -55.544751311567,-22.714006532072,0</coordinates>
+                </LinearRing>
+            </outerBoundaryIs>
+            </Polygon>
+        </Placemark>
+        </Folder>
+    </Document>
+    </kml>

@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Acesso - Plataforma Agrícola Orion</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      font-family: 'Segoe UI', Roboto, Helvetica, sans-serif; background: #0d1117; color: #f0f6fc;
+      background-image: radial-gradient(#1f2937 1px, transparent 1px); background-size: 24px 24px;
+    }
+    .auth-card {
+      background: #161b22; border: 1px solid #30363d; border-radius: 14px;
+      padding: 32px; width: 100%; max-width: 400px; box-shadow: 0 16px 36px rgba(0,0,0,0.6);
+    }
+    .auth-header { text-align: center; margin-bottom: 24px; }
+    .auth-header h2 { margin: 0; color: #58a6ff; font-size: 1.5rem; }
+    .auth-header p { margin: 6px 0 0 0; color: #8b949e; font-size: 0.85rem; }
+    
+    .tab-switch { display: flex; gap: 8px; margin-bottom: 20px; background: #0d1117; padding: 4px; border-radius: 8px; }
+    .tab-switch button {
+      flex: 1; padding: 8px; background: transparent; border: none; color: #8b949e;
+      font-weight: 600; border-radius: 6px; cursor: pointer; transition: 0.2s;
+    }
+    .tab-switch button.active { background: #238636; color: #fff; }
+
+    .form-group { margin-bottom: 14px; }
+    .form-group label { display: block; font-size: 0.8rem; color: #8b949e; margin-bottom: 4px; }
+    .form-group input, .form-group select {
+      width: 100%; padding: 10px; background: #0d1117; border: 1px solid #30363d;
+      border-radius: 6px; color: #f0f6fc; font-size: 0.9rem;
+    }
+    .btn-submit {
+      width: 100%; padding: 12px; background: #238636; border: none; border-radius: 8px;
+      color: #fff; font-weight: 700; font-size: 0.95rem; cursor: pointer; margin-top: 10px;
+    }
+    .btn-submit:hover { background: #2ea043; }
+    .msg-error { color: #ff7b72; font-size: 0.8rem; margin-top: 10px; text-align: center; display: none; }
+  </style>
+</head>
+<body>
+
+  <div class="auth-card">
+    <div class="auth-header">
+      <h2>🚜 Portal Orion Agro</h2>
+      <p>Acesso ao Simulador 3D & Telemetria</p>
+    </div>
+
+    <div class="tab-switch">
+      <button class="active" id="tab-login-btn" onclick="showForm('login')">Entrar</button>
+      <button id="tab-register-btn" onclick="showForm('register')">Novo Usuário</button>
+    </div>
+
+    <!-- Formulário Login -->
+    <form id="form-login" onsubmit="handleLogin(event)">
+      <div class="form-group">
+        <label>E-mail Corporativo</label>
+        <input type="email" id="login-email" value="admin@orion.com" required>
+      </div>
+      <div class="form-group">
+        <label>Senha</label>
+        <input type="password" id="login-pass" value="123456" required>
+      </div>
+      <button type="submit" class="btn-submit">Acessar Plataforma</button>
+    </form>
+
+    <!-- Formulário Cadastro -->
+    <form id="form-register" style="display:none;" onsubmit="handleRegister(event)">
+      <div class="form-group">
+        <label>Nome Completo</label>
+        <input type="text" id="reg-name" required placeholder="Ex: Lucas Ferreira">
+      </div>
+      <div class="form-group">
+        <label>Cargo / Perfil</label>
+        <select id="reg-role">
+          <option value="Produtor Rural">Produtor Rural / Gestor</option>
+          <option value="Engenheiro Agrônomo">Engenheiro Agrônomo</option>
+          <option value="Operador de Máquinas">Operador de Máquinas</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>E-mail</label>
+        <input type="email" id="reg-email" required placeholder="lucas@fazenda.com">
+      </div>
+      <div class="form-group">
+        <label>Senha</label>
+        <input type="password" id="reg-pass" required placeholder="Mínimo 6 caracteres">
+      </div>
+      <button type="submit" class="btn-submit">Criar Conta</button>
+    </form>
+
+    <div id="auth-error" class="msg-error"></div>
+  </div>
+
+  <script src="app.js"></script>
+  <script>
+    function showForm(type) {
+      document.getElementById('form-login').style.display = type === 'login' ? 'block' : 'none';
+      document.getElementById('form-register').style.display = type === 'register' ? 'block' : 'none';
+      document.getElementById('tab-login-btn').className = type === 'login' ? 'active' : '';
+      document.getElementById('tab-register-btn').className = type === 'register' ? 'active' : '';
+      document.getElementById('auth-error').style.display = 'none';
+    }
+
+    async function handleLogin(e) {
+      e.preventDefault();
+      const email = document.getElementById('login-email').value;
+      const pass = document.getElementById('login-pass').value;
+
+      const res = await AuthService.login(email, pass);
+      if (res && res.success) {
+        window.location.href = 'fazendas.html';
+      } else {
+        showError(res ? res.message : 'Erro de conexão com o servidor.');
+      }
+    }
+
+    async function handleRegister(e) {
+      e.preventDefault();
+      const name = document.getElementById('reg-name').value;
+      const email = document.getElementById('reg-email').value;
+      const pass = document.getElementById('reg-pass').value;
+      const role = document.getElementById('reg-role').value;
+
+      const res = await AuthService.register(name, email, pass, role);
+      if (res && res.success) {
+        window.location.href = 'fazendas.html';
+      } else {
+        showError(res ? res.message : 'Erro ao cadastrar usuário.');
+      }
+    }
+
+    function showError(msg) {
+      const err = document.getElementById('auth-error');
+      err.innerText = msg || 'Ocorreu um erro ao processar a requisição.';
+      err.style.display = 'block';
+    }
+  </script>
+</body>
+</html>

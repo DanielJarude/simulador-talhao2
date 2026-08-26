@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Dashboard Agronômico & Operacional - Fazenda Orion</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 24px; font-family: 'Segoe UI', Roboto, Helvetica, sans-serif;
+      background: #0d1117; color: #f0f6fc;
+    }
+    .top-bar {
+      display: flex; justify-content: space-between; align-items: center;
+      padding-bottom: 20px; border-bottom: 1px solid #30363d; margin-bottom: 24px;
+      flex-wrap: wrap; gap: 16px;
+    }
+    .top-title h1 { margin: 0; font-size: 1.6rem; color: #58a6ff; }
+    .top-title p { margin: 4px 0 0 0; color: #8b949e; font-size: 0.9rem; }
+    .btn-action {
+      background: #238636; color: #fff; padding: 10px 18px; border-radius: 8px;
+      text-decoration: none; font-weight: 600; display: inline-flex; align-items: center; gap: 8px;
+      transition: 0.2s;
+    }
+    .btn-action:hover { background: #2ea043; }
+
+    /* Layout Principal em 2 Colunas */
+    .main-layout {
+      display: grid; grid-template-columns: 1fr 370px; gap: 24px;
+    }
+    @media (max-width: 1100px) { .main-layout { grid-template-columns: 1fr; } }
+
+    /* KPIs */
+    .kpi-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 14px; margin-bottom: 24px;
+    }
+    .kpi-card {
+      background: #161b22; border: 1px solid #30363d; padding: 16px;
+      border-radius: 12px; display: flex; flex-direction: column; gap: 4px;
+    }
+    .kpi-card span { font-size: 0.75rem; color: #8b949e; text-transform: uppercase; font-weight: 600; }
+    .kpi-card strong { font-size: 1.4rem; }
+    .kpi-card small { font-size: 0.75rem; color: #7ee787; }
+
+    .charts-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 24px;
+    }
+    @media (max-width: 750px) { .charts-grid { grid-template-columns: 1fr; } }
+
+    .chart-box, .table-box, .side-card {
+      background: #161b22; border: 1px solid #30363d; padding: 18px; border-radius: 12px;
+      margin-bottom: 20px;
+    }
+    .chart-box h3, .table-box h3, .side-card h3 { margin: 0 0 14px 0; font-size: 1rem; color: #58a6ff; }
+
+    /* Painéis Laterais */
+    .whatif-card { border-left: 4px solid #d29922; }
+    .calc-card { border-left: 4px solid #1f6feb; }
+
+    .param-group { margin-bottom: 12px; }
+    .param-group label { font-size: 0.8rem; color: #8b949e; display: flex; justify-content: space-between; }
+    .param-group input[type=range] { width: 100%; margin-top: 5px; accent-color: #d29922; }
+
+    .sim-result-box {
+      background: rgba(13, 17, 23, 0.8); border: 1px solid #30363d;
+      padding: 12px; border-radius: 8px; margin-top: 12px; font-size: 0.85rem;
+    }
+
+    .btn-orion-link {
+      background: #1f6feb; color: white; border: none; padding: 10px 14px;
+      border-radius: 8px; cursor: pointer; font-weight: 600; width: 100%; margin-top: 12px;
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      text-decoration: none; transition: 0.2s;
+    }
+    .btn-orion-link:hover { background: #388bfd; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #21262d; }
+    th { color: #8b949e; background: #0d1117; }
+    .badge { padding: 3px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; }
+    .badge-ok { background: rgba(35, 134, 54, 0.25); color: #7ee787; border: 1px solid #2ea043; }
+    .badge-warn { background: rgba(217, 119, 6, 0.25); color: #fbbf24; border: 1px solid #d97706; }
+    .badge-bad { background: rgba(218, 54, 51, 0.25); color: #ff7b72; border: 1px solid #da3633; }
+  </style>
+</head>
+<body>
+
+  <!-- Top Bar -->
+  <div class="top-bar">
+    <div class="top-title">
+      <h1>📊 Dashboard Agronômico & Operacional</h1>
+      <p>Fazenda Orion — Talhão 01 (Área Total: 42,54 ha)</p>
+    </div>
+    <a href="index.html" class="btn-action">🚀 Abrir Simulador 3D Side-by-Side</a>
+  </div>
+
+  <div class="main-layout">
+    <!-- Coluna Esquerda: KPIs, Gráficos e Tabela -->
+    <div>
+      <div class="kpi-grid">
+        <div class="kpi-card" style="border-left: 4px solid #2ea043;">
+          <span>Área Mapeada</span>
+          <strong>42,54 ha</strong>
+          <small>Talhão 01</small>
+        </div>
+        <div class="kpi-card" style="border-left: 4px solid #58a6ff;">
+          <span>Chuva Acumulada</span>
+          <strong>1.626,6 mm</strong>
+          <small>Ciclo Completo (NASA)</small>
+        </div>
+        <div class="kpi-card" style="border-left: 4px solid #d29922;">
+          <span>Temperatura Média</span>
+          <strong>22,4 °C</strong>
+          <small>Mín 1,2°C / Máx 38,0°C</small>
+        </div>
+        <div class="kpi-card" style="border-left: 4px solid #a371f7;">
+          <span>Série Sentinel-2</span>
+          <strong>13 Cenas</strong>
+          <small>07/04/25 a 08/03/26</small>
+        </div>
+      </div>
+
+      <div class="charts-grid">
+        <div class="chart-box">
+          <h3>🌧️ Precipitação Mensal (mm)</h3>
+          <canvas id="rainChart" height="140"></canvas>
+        </div>
+        <div class="chart-box">
+          <h3>🌡️ Curva Térmica Mensal (°C)</h3>
+          <canvas id="tempChart" height="140"></canvas>
+        </div>
+      </div>
+
+      <div class="table-box">
+        <h3>🛰️ Histórico de Aplicações & Imagens</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Data</th>
+              <th>Temp.</th>
+              <th>Chuva</th>
+              <th>Umidade</th>
+              <th>Vento</th>
+              <th>Status Aplicação</th>
+            </tr>
+          </thead>
+          <tbody id="table-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Coluna Direita: Simulador What-If + Card Calculadora Orion -->
+    <div>
+      <!-- 1. Simulador What-If -->
+      <div class="side-card whatif-card">
+        <h3 style="color:#e3b341;">⚡ Simulador "What-If"</h3>
+        
+        <div class="param-group">
+          <label><span>Adubação Nitrogenada ($N$)</span><strong id="val-n">+0 kg/ha</strong></label>
+          <input type="range" id="dash-n" min="-50" max="150" step="10" value="0">
+        </div>
+
+        <div class="param-group">
+          <label><span>Lâmina de Irrigação</span><strong id="val-w">+0 mm</strong></label>
+          <input type="range" id="dash-w" min="-30" max="60" step="5" value="0">
+        </div>
+
+        <div class="param-group">
+          <label><span>Pressão de Pragas/Clorose</span><strong id="val-p">0%</strong></label>
+          <input type="range" id="dash-p" min="0" max="60" step="5" value="0">
+        </div>
+
+        <div class="sim-result-box">
+          <div style="font-size:0.72rem; color:#8b949e; margin-bottom:4px;">PROJEÇÃO DO TALHÃO (42,54 ha):</div>
+          <div>Vigor: <strong id="dash-ndvi" style="color:#7ee787;">NDVI +0.00</strong></div>
+          <div>Produtividade: <strong id="dash-yield" style="color:#58a6ff;">+0.0 sc/ha</strong></div>
+          <div style="margin-top:6px; padding-top:6px; border-top:1px solid #30363d;">
+            Impacto Financeiro: <strong id="dash-money" style="color:#f0f6fc;">R$ 0,00</strong>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. Integração com a Calculadora Orion -->
+      <div class="side-card calc-card">
+        <h3 style="color:#58a6ff;">🚜 Calculadora Agrícola Orion</h3>
+        <p style="font-size:0.83rem; color:#8b949e; margin-top:0; line-height:1.4;">
+          Acesse a ferramenta oficial da Orion para cálculo de pontas de pulverização, taxa de aplicação, vazão de bicos e regulagem para este talhão.
+        </p>
+
+        <div class="sim-result-box" style="margin-top:8px;">
+          • Talhão Selecionado: <strong>Talhão 01</strong><br>
+          • Área Base: <strong>42,54 hectares</strong><br>
+          • Cultura: <strong>Soja / Milho Safrinha</strong>
+        </div>
+
+        <a href="https://orion.ind.br/calculadora/" target="_blank" class="btn-orion-link">
+          Abrir Calculadora Orion ↗
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const AREA_HA = 42.54;
+
+    // --- 1. LÓGICA WHAT-IF ---
+    function updateDashWhatIf() {
+      const n = parseFloat(document.getElementById('dash-n').value);
+      const w = parseFloat(document.getElementById('dash-w').value);
+      const p = parseFloat(document.getElementById('dash-p').value);
+
+      document.getElementById('val-n').innerText = `${n >= 0 ? '+' : ''}${n} kg/ha`;
+      document.getElementById('val-w').innerText = `${w >= 0 ? '+' : ''}${w} mm`;
+      document.getElementById('val-p').innerText = `${p}%`;
+
+      const deltaNDVI = (n * 0.0015) + (w * 0.002) - (p * 0.004);
+      const deltaYield = (deltaNDVI * 45).toFixed(1);
+      const totalSc = Math.round(deltaYield * AREA_HA);
+      const totalMoney = (totalSc * 125.0);
+
+      document.getElementById('dash-ndvi').innerText = `NDVI ${deltaNDVI >= 0 ? '+' : ''}${deltaNDVI.toFixed(2)}`;
+      document.getElementById('dash-yield').innerText = `${deltaYield >= 0 ? '+' : ''}${deltaYield} sc/ha`;
+      document.getElementById('dash-money').innerText = `${totalMoney >= 0 ? '+' : ''}${totalMoney.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`;
+    }
+
+    document.getElementById('dash-n').addEventListener('input', updateDashWhatIf);
+    document.getElementById('dash-w').addEventListener('input', updateDashWhatIf);
+    document.getElementById('dash-p').addEventListener('input', updateDashWhatIf);
+
+    // --- 2. HISTÓRICO SENTINEL-2 & NASA POWER ---
+    const passagens = [
+      { date: "07/04/2025", temp: "23,0 °C", rain: "0,0 mm", hum: "72,1 %", wind: "7,6 km/h", status: "ok", label: "FAVORÁVEL" },
+      { date: "22/04/2025", temp: "22,5 °C", rain: "0,0 mm", hum: "80,7 %", wind: "5,8 km/h", status: "ok", label: "FAVORÁVEL" },
+      { date: "02/05/2025", temp: "18,8 °C", rain: "0,0 mm", hum: "77,7 %", wind: "5,8 km/h", status: "ok", label: "FAVORÁVEL" },
+      { date: "11/06/2025", temp: "12,4 °C", rain: "0,0 mm", hum: "79,1 %", wind: "6,1 km/h", status: "ok", label: "FAVORÁVEL" },
+      { date: "04/10/2025", temp: "25,6 °C", rain: "0,0 mm", hum: "60,4 %", wind: "9,4 km/h", status: "ok", label: "FAVORÁVEL" },
+      { date: "11/10/2025", temp: "27,4 °C", rain: "0,0 mm", hum: "55,9 %", wind: "9,0 km/h", status: "ok", label: "FAVORÁVEL" },
+      { date: "18/11/2025", temp: "18,9 °C", rain: "0,0 mm", hum: "78,8 %", wind: "8,3 km/h", status: "ok", label: "FAVORÁVEL" },
+      { date: "20/11/2025", temp: "21,4 °C", rain: "0,0 mm", hum: "70,2 %", wind: "7,2 km/h", status: "ok", label: "FAVORÁVEL" },
+      { date: "10/12/2025", temp: "22,2 °C", rain: "0,0 mm", hum: "71,2 %", wind: "10,8 km/h", status: "warn", label: "ATENÇÃO" },
+      { date: "18/12/2025", temp: "23,7 °C", rain: "0,0 mm", hum: "81,4 %", wind: "7,6 km/h", status: "ok", label: "FAVORÁVEL" },
+      { date: "27/01/2026", temp: "28,2 °C", rain: "17,3 mm", hum: "64,8 %", wind: "4,3 km/h", status: "bad", label: "INAPTO" },
+      { date: "11/02/2026", temp: "28,4 °C", rain: "0,0 mm", hum: "57,0 %", wind: "5,4 km/h", status: "ok", label: "FAVORÁVEL" },
+      { date: "08/03/2026", temp: "28,5 °C", rain: "0,3 mm", hum: "62,2 %", wind: "3,2 km/h", status: "ok", label: "FAVORÁVEL" }
+    ];
+    const tbody = document.getElementById('table-body');
+    passagens.forEach(p => {
+      const bClass = p.status === 'ok' ? 'badge-ok' : (p.status === 'warn' ? 'badge-warn' : 'badge-bad');
+      tbody.innerHTML += `<tr><td><strong>${p.date}</strong></td><td>${p.temp}</td><td>${p.rain}</td><td>${p.hum}</td><td>${p.wind}</td><td><span class="badge ${bClass}">${p.label}</span></td></tr>`;
+    });
+
+    // --- 3. GRÁFICOS (CHART.JS) ---
+    const months = ["Abr/25", "Mai/25", "Jun/25", "Jul/25", "Ago/25", "Set/25", "Out/25", "Nov/25", "Dez/25", "Jan/26", "Fev/26", "Mar/26"];
+    new Chart(document.getElementById('rainChart'), {
+      type: 'bar',
+      data: { labels: months, datasets: [{ data: [244.6, 65.3, 63.4, 9.7, 38.9, 94.1, 164.4, 226.9, 328.1, 103.9, 286.6, 0.8], backgroundColor: '#1f6feb', borderRadius: 4 }] },
+      options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } }, y: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } } } }
+    });
+
+    new Chart(document.getElementById('tempChart'), {
+      type: 'line',
+      data: {
+        labels: months,
+        datasets: [
+          { label: 'Máx', data: [29.7, 31.8, 28.6, 32.7, 35.0, 38.0, 37.6, 38.0, 34.4, 35.9, 36.7, 35.9], borderColor: '#da3633', tension: 0.3 },
+          { label: 'Méd', data: [22.0, 20.4, 17.1, 17.0, 18.5, 24.6, 23.8, 23.8, 25.0, 26.2, 26.5, 27.4], borderColor: '#58a6ff', tension: 0.3 },
+          { label: 'Mín', data: [9.3, 3.1, 1.2, 3.5, 2.5, 8.9, 11.7, 12.1, 14.5, 13.6, 17.9, 19.5], borderColor: '#2ea043', tension: 0.3 }
+        ]
+      },
+      options: { responsive: true, plugins: { legend: { labels: { color: '#8b949e' } } }, scales: { x: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } }, y: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } } } }
+    });
+  </script>
+</body>
+</html>

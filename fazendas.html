@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Fazendas & Talhões - Orion Agro</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 28px; font-family: 'Segoe UI', Roboto, Helvetica, sans-serif;
+      background: #0d1117; color: #f0f6fc;
+    }
+    .header-bar {
+      display: flex; justify-content: space-between; align-items: center;
+      padding-bottom: 20px; border-bottom: 1px solid #30363d; margin-bottom: 28px;
+    }
+    .user-tag { font-size: 0.85rem; color: #8b949e; }
+    .btn-logout { background: transparent; color: #ff7b72; border: 1px solid #da3633; padding: 5px 12px; border-radius: 6px; cursor: pointer; }
+
+    .main-grid { display: grid; grid-template-columns: 1fr 420px; gap: 24px; }
+    @media(max-width: 1000px) { .main-grid { grid-template-columns: 1fr; } }
+
+    .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 20px; }
+    .card h3 { margin: 0 0 16px 0; color: #58a6ff; font-size: 1.1rem; }
+
+    .farm-item {
+      background: #0d1117; border: 1px solid #30363d; border-radius: 10px;
+      padding: 16px; margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center;
+      gap: 12px; flex-wrap: wrap;
+    }
+    .farm-info h4 { margin: 0 0 4px 0; font-size: 1.05rem; color: #f0f6fc; }
+    .farm-info p { margin: 0; font-size: 0.82rem; color: #8b949e; }
+
+    .action-btns { display: flex; gap: 8px; align-items: center; }
+    
+    .btn-enter-3d {
+      background: #238636; color: #fff; border: none; padding: 8px 14px;
+      border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 0.82rem;
+      cursor: pointer; display: inline-flex; align-items: center; gap: 4px;
+    }
+    .btn-enter-3d:hover { background: #2ea043; }
+
+    .btn-edit {
+      background: #21262d; color: #58a6ff; border: 1px solid #30363d; padding: 8px 12px;
+      border-radius: 6px; font-weight: 600; font-size: 0.82rem; cursor: pointer;
+    }
+    .btn-edit:hover { background: #30363d; }
+
+    .btn-delete {
+      background: #21262d; color: #ff7b72; border: 1px solid #da3633; padding: 8px 12px;
+      border-radius: 6px; font-weight: 600; font-size: 0.82rem; cursor: pointer;
+    }
+    .btn-delete:hover { background: rgba(218, 54, 51, 0.2); }
+
+    .form-group { margin-bottom: 12px; }
+    .form-group label { display: block; font-size: 0.8rem; color: #8b949e; margin-bottom: 4px; }
+    .form-group input, .form-group select, .form-group textarea {
+      width: 100%; padding: 8px 10px; background: #0d1117; border: 1px solid #30363d;
+      border-radius: 6px; color: #f0f6fc; font-size: 0.85rem;
+    }
+    .coord-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+    .file-dropzone {
+      border: 2px dashed #30363d; border-radius: 8px; padding: 14px;
+      text-align: center; background: #0d1117; cursor: pointer; margin-bottom: 12px;
+      transition: 0.2s;
+    }
+    .file-dropzone:hover { border-color: #58a6ff; }
+    .file-dropzone p { margin: 0; font-size: 0.8rem; color: #8b949e; }
+    .file-dropzone strong { color: #58a6ff; }
+
+    .btn-save-farm {
+      width: 100%; padding: 10px; background: #1f6feb; border: none; border-radius: 6px;
+      color: #fff; font-weight: 600; cursor: pointer; margin-top: 8px;
+    }
+    .btn-save-farm:hover { background: #388bfd; }
+
+    /* MODAL DE EDIÇÃO */
+    .modal-overlay {
+      position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+      background: rgba(0, 0, 0, 0.75); display: none; justify-content: center;
+      align-items: center; z-index: 1000; backdrop-filter: blur(4px);
+    }
+    .modal-overlay.active { display: flex; }
+    .modal-box {
+      background: #161b22; border: 1px solid #30363d; border-radius: 12px;
+      padding: 24px; width: 100%; max-width: 480px; box-shadow: 0 16px 36px rgba(0,0,0,0.8);
+      max-height: 90vh; overflow-y: auto;
+    }
+    .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+    .modal-header h3 { margin: 0; color: #58a6ff; }
+    .btn-close-modal { background: transparent; color: #8b949e; border: none; font-size: 1.2rem; cursor: pointer; }
+  </style>
+</head>
+<body>
+
+  <div class="header-bar">
+    <div>
+      <h2 style="margin:0; color:#58a6ff;">Gestão de Propriedades</h2>
+      <div class="user-tag" id="user-display">Conectado como: ...</div>
+    </div>
+    <button class="btn-logout" onclick="logout()">Sair</button>
+  </div>
+
+  <div class="main-grid">
+    <!-- Lista de Fazendas Cadastradas -->
+    <div class="card">
+      <h3>Propriedades & Talhões Disponíveis</h3>
+      <div id="farms-list"></div>
+    </div>
+
+    <!-- Formulário para Cadastrar Nova Fazenda -->
+    <div class="card" style="border-left: 4px solid #1f6feb;">
+      <h3>+ Cadastrar Nova Fazenda / Talhão</h3>
+      <form onsubmit="handleCreateFarm(event)">
+        
+        <div class="form-group">
+          <label>Importar Arquivo do Talhão (.kml ou .geojson):</label>
+          <div class="file-dropzone" onclick="document.getElementById('file-input').click()">
+            <p>📂 <strong>Clique para selecionar o KML/GeoJSON</strong></p>
+            <p style="font-size:0.75rem; margin-top:2px;">(As coordenadas e área serão calculadas automaticamente)</p>
+          </div>
+          <input type="file" id="file-input" accept=".kml,.geojson,.json" style="display:none;" onchange="handleFileSelect(event, 'create')">
+        </div>
+
+        <div class="form-group">
+          <label>Nome da Fazenda</label>
+          <input type="text" id="farm-name" required placeholder="Ex: Fazenda Santa Fé">
+        </div>
+        <div class="form-group">
+          <label>Município / UF</label>
+          <input type="text" id="farm-city" required placeholder="Ex: Londrina - PR">
+        </div>
+        <div class="form-group">
+          <label>Nome do Talhão</label>
+          <input type="text" id="talhao-name" required placeholder="Ex: Talhão 01 - Sede">
+        </div>
+        <div class="form-group">
+          <label>Área do Talhão (Hectares)</label>
+          <input type="number" step="0.01" id="farm-area" required placeholder="Ex: 45.20">
+        </div>
+        <div class="form-group">
+          <label>Cultura Principal</label>
+          <select id="farm-crop">
+            <option value="Soja / Milho Safrinha">Soja / Milho Safrinha</option>
+            <option value="Cana-de-Açúcar">Cana-de-Açúcar</option>
+            <option value="Café">Café</option>
+            <option value="Milho Safra">Milho Safra</option>
+            <option value="Pastagem">Pastagem</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Centroide Geográfico (Latitude / Longitude):</label>
+          <div class="coord-grid">
+            <input type="number" step="0.000001" id="farm-lat" required placeholder="Latitude">
+            <input type="number" step="0.000001" id="farm-lon" required placeholder="Longitude">
+          </div>
+        </div>
+
+        <input type="hidden" id="kml-coords-hidden">
+        <button type="submit" class="btn-save-farm">Salvar Propriedade & Geometria</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL DE EDIÇÃO -->
+  <div class="modal-overlay" id="edit-modal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3>Editar Propriedade</h3>
+        <button class="btn-close-modal" onclick="closeEditModal()">✕</button>
+      </div>
+      <form onsubmit="handleUpdateFarm(event)">
+        <input type="hidden" id="edit-farm-id">
+
+        <div class="form-group">
+          <label>Substituir Geometria (.kml ou .geojson):</label>
+          <div class="file-dropzone" onclick="document.getElementById('file-input-edit').click()">
+            <p>📂 <strong>Clique para atualizar o arquivo</strong></p>
+          </div>
+          <input type="file" id="file-input-edit" accept=".kml,.geojson,.json" style="display:none;" onchange="handleFileSelect(event, 'edit')">
+        </div>
+
+        <div class="form-group">
+          <label>Nome da Fazenda</label>
+          <input type="text" id="edit-farm-name" required>
+        </div>
+        <div class="form-group">
+          <label>Município / UF</label>
+          <input type="text" id="edit-farm-city" required>
+        </div>
+        <div class="form-group">
+          <label>Nome do Talhão</label>
+          <input type="text" id="edit-talhao-name" required>
+        </div>
+        <div class="form-group">
+          <label>Área do Talhão (Hectares)</label>
+          <input type="number" step="0.01" id="edit-farm-area" required>
+        </div>
+        <div class="form-group">
+          <label>Cultura Principal</label>
+          <select id="edit-farm-crop">
+            <option value="Soja / Milho Safrinha">Soja / Milho Safrinha</option>
+            <option value="Cana-de-Açúcar">Cana-de-Açúcar</option>
+            <option value="Café">Café</option>
+            <option value="Milho Safra">Milho Safra</option>
+            <option value="Pastagem">Pastagem</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Latitude / Longitude:</label>
+          <div class="coord-grid">
+            <input type="number" step="0.000001" id="edit-farm-lat" required>
+            <input type="number" step="0.000001" id="edit-farm-lon" required>
+          </div>
+        </div>
+
+        <input type="hidden" id="edit-kml-coords-hidden">
+        <button type="submit" class="btn-save-farm" style="background:#238636;">Atualizar Dados</button>
+      </form>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+  <script>
+    let allFarmsCache = [];
+
+    const user = AuthService.getCurrentUser();
+    if (!user) {
+      window.location.href = 'auth.html';
+    } else {
+      document.getElementById('user-display').innerText = `Conectado como: ${user.name} (${user.role})`;
+    }
+
+    // Leitor KML & GeoJSON
+    function handleFileSelect(e, context = 'create') {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function(event) {
+        const content = event.target.result;
+        if (file.name.endsWith('.kml')) {
+          parseKML(content, context);
+        } else if (file.name.endsWith('.geojson') || file.name.endsWith('.json')) {
+          parseGeoJSON(content, context);
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    function parseKML(kmlText, context) {
+      const parser = new DOMParser();
+      const xmlDoc = parser.parseFromString(kmlText, "text/xml");
+      const coordNode = xmlDoc.querySelector("coordinates");
+
+      if (coordNode) {
+        const rawCoords = coordNode.textContent.trim().split(/\s+/);
+        const latLngs = [];
+
+        rawCoords.forEach(c => {
+          const parts = c.split(',');
+          if (parts.length >= 2) {
+            const lon = parseFloat(parts[0]);
+            const lat = parseFloat(parts[1]);
+            if (!isNaN(lat) && !isNaN(lon)) latLngs.push([lat, lon]);
+          }
+        });
+
+        if (latLngs.length > 0) applyGeometry(latLngs, context);
+      } else {
+        alert("Nenhuma coordenada encontrada no KML.");
+      }
+    }
+
+    function parseGeoJSON(jsonText, context) {
+      try {
+        const data = JSON.parse(jsonText);
+        let coords = [];
+        if (data.type === 'FeatureCollection' && data.features.length > 0) {
+          coords = data.features[0].geometry.coordinates[0];
+        } else if (data.type === 'Feature') {
+          coords = data.geometry.coordinates[0];
+        } else if (data.type === 'Polygon') {
+          coords = data.coordinates[0];
+        }
+        const latLngs = coords.map(c => [c[1], c[0]]);
+        if (latLngs.length > 0) applyGeometry(latLngs, context);
+      } catch (e) {
+        alert("Erro ao ler GeoJSON.");
+      }
+    }
+
+    function applyGeometry(latLngs, context) {
+      let sumLat = 0, sumLon = 0;
+      latLngs.forEach(pt => { sumLat += pt[0]; sumLon += pt[1]; });
+      const centerLat = (sumLat / latLngs.length).toFixed(6);
+      const centerLon = (sumLon / latLngs.length).toFixed(6);
+
+      const prefix = context === 'edit' ? 'edit-' : '';
+      document.getElementById(`${prefix}farm-lat`).value = centerLat;
+      document.getElementById(`${prefix}farm-lon`).value = centerLon;
+      document.getElementById(`${prefix}kml-coords-hidden`).value = JSON.stringify(latLngs);
+
+      alert(`Geometria carregada!\nCentroide: Lat ${centerLat}, Lon ${centerLon}`);
+    }
+
+    // Listagem com botões Editar e Excluir
+    async function renderFarms() {
+      const list = document.getElementById('farms-list');
+      list.innerHTML = '<p style="color:#8b949e;">Carregando propriedades...</p>';
+      
+      try {
+        const farms = await FarmService.getFarms();
+        allFarmsCache = farms || [];
+        list.innerHTML = '';
+
+        if (!farms || farms.length === 0) {
+          list.innerHTML = '<p style="color:#8b949e;">Nenhuma fazenda cadastrada ainda.</p>';
+          return;
+        }
+
+        farms.forEach(f => {
+          const talhao = (f.talhoes && f.talhoes.length > 0) ? f.talhoes[0] : { name: 'Talhão Principal', crop: 'Grãos' };
+          const lat = (f.latitude !== undefined && f.latitude !== null) ? Number(f.latitude).toFixed(4) : '-22.7182';
+          const lon = (f.longitude !== undefined && f.longitude !== null) ? Number(f.longitude).toFixed(4) : '-55.5421';
+
+          list.innerHTML += `
+            <div class="farm-item">
+              <div class="farm-info">
+                <h4>${f.name}</h4>
+                <p>📍 ${f.city} • <strong>${f.total_area} ha</strong> • Lat: ${lat}, Lon: ${lon}</p>
+                <p style="margin-top:4px; color:#58a6ff;">${talhao.name} (${talhao.crop})</p>
+              </div>
+              <div class="action-btns">
+                <button class="btn-edit" onclick="openEditModal(${f.id})">✏️ Editar</button>
+                <button class="btn-delete" onclick="handleDeleteFarm(${f.id}, '${f.name}')">🗑️ Excluir</button>
+                <a href="index.html?farm_id=${f.id}" class="btn-enter-3d">Simulador 3D ↗</a>
+              </div>
+            </div>
+          `;
+        });
+      } catch (err) {
+        list.innerHTML = `<p style="color:#ff7b72;">Erro ao carregar fazendas: ${err.message}</p>`;
+      }
+    }
+
+    // Modal de Edição
+    function openEditModal(farmId) {
+      const farm = allFarmsCache.find(f => f.id === farmId);
+      if (!farm) return;
+
+      const talhao = (farm.talhoes && farm.talhoes.length > 0) ? farm.talhoes[0] : { name: 'Talhão 01', crop: 'Soja / Milho Safrinha' };
+
+      document.getElementById('edit-farm-id').value = farm.id;
+      document.getElementById('edit-farm-name').value = farm.name;
+      document.getElementById('edit-farm-city').value = farm.city;
+      document.getElementById('edit-talhao-name').value = talhao.name;
+      document.getElementById('edit-farm-area').value = farm.total_area;
+      document.getElementById('edit-farm-crop').value = talhao.crop || 'Soja / Milho Safrinha';
+      document.getElementById('edit-farm-lat').value = farm.latitude;
+      document.getElementById('edit-farm-lon').value = farm.longitude;
+      document.getElementById('edit-kml-coords-hidden').value = talhao.kml_coordinates || '';
+
+      document.getElementById('edit-modal').classList.add('active');
+    }
+
+    function closeEditModal() {
+      document.getElementById('edit-modal').classList.remove('active');
+    }
+
+    async function handleUpdateFarm(e) {
+      e.preventDefault();
+      const id = document.getElementById('edit-farm-id').value;
+      const btn = e.target.querySelector('button[type="submit"]');
+      btn.disabled = true;
+      btn.innerText = "Atualizando...";
+
+      try {
+        await FarmService.updateFarm(
+          id,
+          document.getElementById('edit-farm-name').value,
+          document.getElementById('edit-farm-city').value,
+          document.getElementById('edit-farm-area').value,
+          document.getElementById('edit-talhao-name').value,
+          document.getElementById('edit-farm-crop').value,
+          document.getElementById('edit-farm-lat').value,
+          document.getElementById('edit-farm-lon').value,
+          document.getElementById('edit-kml-coords-hidden').value
+        );
+        closeEditModal();
+        await renderFarms();
+      } catch (err) {
+        alert("Erro ao atualizar propriedade: " + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.innerText = "Atualizar Dados";
+      }
+    }
+
+    // Exclusão com confirmação
+    async function handleDeleteFarm(farmId, farmName) {
+      if (!confirm(`Tem certeza que deseja excluir a propriedade "${farmName}"?\nTodos os talhões e dados vinculados serão apagados.`)) {
+        return;
+      }
+
+      try {
+        await FarmService.deleteFarm(farmId);
+        await renderFarms();
+      } catch (err) {
+        alert("Erro ao excluir propriedade: " + err.message);
+      }
+    }
+
+    // Criação
+    async function handleCreateFarm(e) {
+      e.preventDefault();
+      const btn = e.target.querySelector('button[type="submit"]');
+      btn.disabled = true;
+      btn.innerText = "Salvando...";
+
+      try {
+        await FarmService.createFarm(
+          document.getElementById('farm-name').value,
+          document.getElementById('farm-city').value,
+          document.getElementById('farm-area').value,
+          document.getElementById('talhao-name').value,
+          document.getElementById('farm-crop').value,
+          document.getElementById('farm-lat').value,
+          document.getElementById('farm-lon').value,
+          document.getElementById('kml-coords-hidden').value
+        );
+
+        e.target.reset();
+        document.getElementById('kml-coords-hidden').value = '';
+        await renderFarms();
+      } catch (err) {
+        alert("Erro ao cadastrar: " + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.innerText = "Salvar Propriedade & Geometria";
+      }
+    }
+
+    function logout() {
+      AuthService.logout();
+      window.location.href = 'auth.html';
+    }
+
+    renderFarms();
+  </script>
+</body>
+</html>

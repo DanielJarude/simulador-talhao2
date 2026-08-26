@@ -1,0 +1,965 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Plataforma Agrícola Inteligente - Orion Agro</title>
+  
+  <!-- Leaflet & Chart.js -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <!-- Three.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+  <style>
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0; width: 100vw; height: 100vh;
+      overflow: hidden; font-family: 'Segoe UI', Roboto, Helvetica, sans-serif;
+      background: #0d1117; color: #f0f6fc;
+      display: flex; flex-direction: column;
+    }
+
+    #top-nav {
+      height: 56px; min-height: 56px; background: #161b22; border-bottom: 1px solid #30363d;
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 0 20px; z-index: 100; flex-shrink: 0;
+    }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1.05rem; color: #58a6ff; }
+    .nav-tabs { display: flex; gap: 8px; }
+    .tab-btn {
+      background: transparent; color: #8b949e; border: 1px solid transparent;
+      padding: 7px 14px; border-radius: 8px; font-weight: 600; cursor: pointer;
+      display: flex; align-items: center; gap: 6px; transition: 0.2s; font-size: 0.85rem;
+    }
+    .tab-btn:hover { background: #21262d; color: #f0f6fc; }
+    .tab-btn.active { background: #238636; color: #ffffff; border-color: #2ea043; }
+
+    .btn-back-farms {
+      background: #21262d; color: #f0f6fc; border: 1px solid #30363d; padding: 6px 12px;
+      border-radius: 6px; text-decoration: none; font-size: 0.82rem; font-weight: 600;
+    }
+    .btn-pdf-report {
+      background: #1f6feb; color: #fff; border: none; padding: 6px 12px;
+      border-radius: 6px; font-size: 0.82rem; font-weight: 600; cursor: pointer; transition: 0.2s;
+    }
+    .btn-pdf-report:hover { background: #388bfd; }
+    .btn-calc-orion {
+      background: #d97706; color: #fff; padding: 6px 12px; border-radius: 6px;
+      text-decoration: none; font-size: 0.82rem; font-weight: 600; transition: 0.2s;
+    }
+    .btn-calc-orion:hover { background: #b45309; }
+
+    #main-content {
+      flex: 1; width: 100%; position: relative; overflow: hidden;
+    }
+
+    .screen-view {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      display: none;
+    }
+    .screen-view.active { display: block; }
+
+    /* DASHBOARD */
+    #dash-container { padding: 20px; height: 100%; overflow-y: auto; }
+
+    /* PAINEL DE CONTROLE TEMPORAL CENTRAL */
+    .timeline-control-panel {
+      background: #161b22; border: 1px solid #30363d; border-radius: 12px;
+      padding: 14px 18px; margin-bottom: 16px; display: flex; flex-direction: column; gap: 10px;
+    }
+    .timeline-header {
+      display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;
+    }
+    .timeline-header h4 { margin: 0; font-size: 0.95rem; color: #58a6ff; display: flex; align-items: center; gap: 8px; }
+    .layer-pill-group { display: flex; gap: 6px; }
+    .layer-pill {
+      background: #21262d; border: 1px solid #30363d; color: #8b949e;
+      padding: 4px 12px; border-radius: 20px; font-size: 0.78rem; font-weight: 700; cursor: pointer; transition: 0.2s;
+    }
+    .layer-pill:hover { color: #fff; background: #30363d; }
+    .layer-pill.active { background: #238636; color: #fff; border-color: #2ea043; }
+
+    .timeline-dates-bar {
+      display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin;
+    }
+    .date-pill {
+      background: #0d1117; border: 1px solid #30363d; color: #8b949e;
+      padding: 6px 12px; border-radius: 8px; font-size: 0.75rem; font-weight: 600; cursor: pointer; white-space: nowrap; transition: 0.2s;
+    }
+    .date-pill:hover { border-color: #58a6ff; color: #58a6ff; }
+    .date-pill.active { background: #1f6feb; border-color: #388bfd; color: #ffffff; box-shadow: 0 0 10px rgba(31, 111, 235, 0.4); }
+
+    .kpi-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 14px; margin-bottom: 16px;
+    }
+    .kpi-card {
+      background: #161b22; border: 1px solid #30363d; padding: 14px 16px;
+      border-radius: 10px; display: flex; flex-direction: column; gap: 4px;
+    }
+    .kpi-card span { font-size: 0.72rem; color: #8b949e; text-transform: uppercase; font-weight: 700; }
+    .kpi-card strong { font-size: 1.3rem; color: #f0f6fc; }
+    .kpi-card small { font-size: 0.75rem; color: #7ee787; }
+
+    .dash-layout { display: grid; grid-template-columns: 1fr 340px; gap: 16px; }
+    @media(max-width: 1050px) { .dash-layout { grid-template-columns: 1fr; } }
+
+    .chart-box, .table-box, .side-card {
+      background: #161b22; border: 1px solid #30363d; padding: 16px; border-radius: 10px; margin-bottom: 16px;
+    }
+    .chart-box h3, .table-box h3, .side-card h3 { margin: 0 0 12px 0; font-size: 0.92rem; color: #58a6ff; }
+    .charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px; }
+    @media(max-width: 750px) { .charts-grid { grid-template-columns: 1fr; } }
+
+    /* ZONEAMENTO */
+    .zones-grid {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 16px;
+    }
+    .zone-card {
+      padding: 10px; border-radius: 8px; text-align: center; border: 1px solid #30363d; background: #0d1117;
+    }
+    .zone-card span { font-size: 0.7rem; color: #8b949e; display: block; margin-bottom: 2px; }
+    .zone-card strong { font-size: 1.05rem; display: block; }
+    .zone-card small { font-size: 0.72rem; color: #8b949e; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #21262d; }
+    th { color: #8b949e; background: #0d1117; }
+    .badge { padding: 3px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; }
+    .badge-ok { background: rgba(35, 134, 54, 0.25); color: #7ee787; border: 1px solid #2ea043; }
+    .badge-warn { background: rgba(217, 119, 6, 0.25); color: #fbbf24; border: 1px solid #d97706; }
+    .badge-bad { background: rgba(218, 54, 51, 0.25); color: #ff7b72; border: 1px solid #da3633; }
+
+    /* MAPA 2D */
+    #map { width: 100%; height: 100%; }
+    .map-floating-card {
+      position: absolute; top: 16px; left: 16px; z-index: 500;
+      background: rgba(22, 27, 34, 0.92); backdrop-filter: blur(10px);
+      padding: 14px 18px; border-radius: 10px; border-left: 4px solid #238636;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.6); max-width: 300px;
+    }
+
+    /* 3D SPLIT VIEW */
+    #screen-3d { background: #0d1117; position: relative; width: 100%; height: 100%; }
+    #canvas-container { width: 100%; height: 100%; position: absolute; top: 0; left: 0; }
+    
+    .view-label {
+      position: absolute; top: 14px; z-index: 25;
+      padding: 6px 12px; border-radius: 6px; font-weight: 700; font-size: 0.75rem;
+      backdrop-filter: blur(8px);
+    }
+    #label-left { left: 16px; background: rgba(33, 38, 45, 0.9); border-left: 4px solid #58a6ff; color: #58a6ff; }
+    #label-right { left: calc(50% + 12px); background: rgba(33, 38, 45, 0.9); border-left: 4px solid #d29922; color: #e3b341; }
+    .divider-line { position: absolute; top: 0; left: 50%; width: 2px; height: 100%; background: #30363d; z-index: 20; }
+
+    #whatif-panel-3d {
+      position: absolute; top: 14px; right: 16px; z-index: 30;
+      background: rgba(22, 27, 34, 0.94); backdrop-filter: blur(12px);
+      padding: 14px; border-radius: 10px; width: 270px;
+      border: 1px solid #30363d; box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+    }
+    #whatif-panel-3d h4 { margin: 0 0 8px 0; color: #e3b341; font-size: 0.9rem; }
+    .param-group { margin-bottom: 10px; }
+    .param-group label { font-size: 0.75rem; color: #8b949e; display: flex; justify-content: space-between; }
+    .param-group input[type=range] { width: 100%; margin-top: 3px; accent-color: #d29922; }
+
+    .sim-result-box {
+      background: rgba(13, 17, 23, 0.8); padding: 8px 10px; border-radius: 6px;
+      border: 1px solid #21262d; font-size: 0.78rem; line-height: 1.35;
+    }
+
+    #ui-panel-3d {
+      position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+      background: rgba(22, 27, 34, 0.96); backdrop-filter: blur(14px);
+      padding: 10px 18px; border-radius: 12px; display: flex; gap: 14px;
+      align-items: center; width: 85%; max-width: 780px; z-index: 35;
+      border: 1px solid #38404a; box-shadow: 0 8px 28px rgba(0,0,0,0.85);
+    }
+    #ui-panel-3d button, #ui-panel-3d select {
+      background: #238636; color: white; border: none; padding: 7px 14px;
+      border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.82rem;
+    }
+    #ui-panel-3d select { background: #21262d; border: 1px solid #30363d; }
+  </style>
+</head>
+<body>
+
+  <!-- Barra Superior -->
+  <header id="top-nav">
+    <div style="display:flex; align-items:center; gap:14px;">
+      <a href="fazendas.html" class="btn-back-farms">← Trocar Propriedade</a>
+      <div class="brand">
+        <span>🚜</span> <span id="nav-farm-title">Carregando...</span>
+      </div>
+    </div>
+    <div class="nav-tabs">
+      <button class="tab-btn active" id="tab-dash" onclick="switchScreen('dash')">📊 Dashboard</button>
+      <button class="tab-btn" id="tab-map" onclick="switchScreen('map')">🗺️ Google Maps 2D</button>
+      <button class="tab-btn" id="tab-3d" onclick="switchScreen('3d')">⛰️ Simulador 3D Split-View</button>
+    </div>
+    <div style="display:flex; gap:10px; align-items:center;">
+      <button onclick="downloadPDFReport()" class="btn-pdf-report">
+        📄 Baixar Laudo Técnico (PDF)
+      </button>
+      <a href="https://orion.ind.br/calculadora/" target="_blank" class="btn-calc-orion">🚜 Calculadora Orion ↗</a>
+    </div>
+  </header>
+
+  <!-- Área Principal -->
+  <main id="main-content">
+    
+    <!-- TELA 1: DASHBOARD -->
+    <div id="screen-dash" class="screen-view active">
+      <div id="dash-container">
+        
+        <!-- SELETOR TEMPORAL E CAMADAS NO TOPO DO DASHBOARD -->
+        <div class="timeline-control-panel">
+          <div class="timeline-header">
+            <h4>🛰️ Passagens do Satélite Sentinel-2</h4>
+            <div class="layer-pill-group">
+              <button class="layer-pill active" onclick="setSpectralLayer('ndvi')">NDVI (Biomassa)</button>
+              <button class="layer-pill" onclick="setSpectralLayer('evi')">EVI (Vigor Denso)</button>
+              <button class="layer-pill" onclick="setSpectralLayer('ndre')">NDRE (Nitrogênio/Clorofila)</button>
+              <button class="layer-pill" onclick="setSpectralLayer('ndmi')">NDMI (Umidade Foliar)</button>
+            </div>
+          </div>
+          <div class="timeline-dates-bar" id="dashboard-dates-bar">
+            <!-- Pílulas de datas injetadas via JS -->
+          </div>
+        </div>
+
+        <!-- CARDS DE ESTIMATIVA DE SAFRA -->
+        <div class="kpi-grid" style="margin-bottom: 16px;">
+          <div class="kpi-card" style="border-left: 4px solid #2ea043; background: linear-gradient(145deg, #161b22, #1a232e);">
+            <span>🌱 Safra de Verão (Soja)</span>
+            <strong id="kpi-soja-yield" style="color:#7ee787;">-- sc/ha</strong>
+            <small id="kpi-soja-vol">Total: -- sacas | R$ --</small>
+          </div>
+          <div class="kpi-card" style="border-left: 4px solid #d29922; background: linear-gradient(145deg, #161b22, #262117);">
+            <span>🌽 2ª Safra (Milho Safrinha)</span>
+            <strong id="kpi-milho-yield" style="color:#fbbf24;">-- sc/ha</strong>
+            <small id="kpi-milho-vol">Total: -- sacas | R$ --</small>
+          </div>
+          <div class="kpi-card" style="border-left: 4px solid #58a6ff; background: linear-gradient(145deg, #161b22, #162233);">
+            <span>💰 Faturamento Anual Estimado</span>
+            <strong id="kpi-total-revenue" style="color:#58a6ff;">R$ --</strong>
+            <small>Soma das 2 Safras no Talhão</small>
+          </div>
+        </div>
+
+        <div class="kpi-grid">
+          <div class="kpi-card" style="border-left: 4px solid #2ea043;">
+            <span>Área Monitorada</span>
+            <strong id="kpi-area">-- ha</strong>
+            <small id="kpi-talhao-desc">Talhão Principal</small>
+          </div>
+          <div class="kpi-card" style="border-left: 4px solid #58a6ff;">
+            <span>Chuva Acumulada</span>
+            <strong id="kpi-rain">Carregando...</strong>
+            <small>Total 12 Meses (NASA POWER)</small>
+          </div>
+          <div class="kpi-card" style="border-left: 4px solid #d29922;">
+            <span>Temperatura Média</span>
+            <strong id="kpi-temp">Carregando...</strong>
+            <small id="kpi-temp-sub">Série Histórica Diária</small>
+          </div>
+          <div class="kpi-card" style="border-left: 4px solid #a371f7;">
+            <span>Vigor da Data Selecionada</span>
+            <strong id="kpi-mean-index">NDVI 0.68</strong>
+            <small id="kpi-mean-date">Passagem 07/04/2025</small>
+          </div>
+        </div>
+
+        <div class="dash-layout">
+          <div>
+            <!-- Zoneamento da Data Escolhida -->
+            <div class="chart-box" style="border-left: 4px solid #58a6ff;">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                <h3 style="margin:0;">🌱 Zoneamento Espectral & Distribuição da Área</h3>
+                <span id="zone-selected-date-badge" style="font-size:0.75rem; background:#21262d; padding:4px 8px; border-radius:6px; color:#58a6ff; font-weight:700;">Data: 07/04/2025</span>
+              </div>
+              <div class="zones-grid">
+                <div class="zone-card" style="border-top: 3px solid #da3633;">
+                  <span>Estresse / Solo</span>
+                  <strong id="zone-stress-pct" style="color:#ff7b72;">--%</strong>
+                  <small id="zone-stress-ha">-- ha</small>
+                </div>
+                <div class="zone-card" style="border-top: 3px solid #d97706;">
+                  <span>Vigor Médio</span>
+                  <strong id="zone-mid-pct" style="color:#fbbf24;">--%</strong>
+                  <small id="zone-mid-ha">-- ha</small>
+                </div>
+                <div class="zone-card" style="border-top: 3px solid #2ea043;">
+                  <span>Bom Vigor</span>
+                  <strong id="zone-good-pct" style="color:#7ee787;">--%</strong>
+                  <small id="zone-good-ha">-- ha</small>
+                </div>
+                <div class="zone-card" style="border-top: 3px solid #1f6feb;">
+                  <span>Biomassa Densa</span>
+                  <strong id="zone-dense-pct" style="color:#58a6ff;">--%</strong>
+                  <small id="zone-dense-ha">-- ha</small>
+                </div>
+              </div>
+            </div>
+
+            <!-- Gráfico Interativo da Curva de Safra -->
+            <div class="chart-box">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                <h3 style="margin:0;">📈 Curva Real da Safra (Clique nos pontos para ver os dados da data)</h3>
+              </div>
+              <canvas id="cropCurveChart" height="110"></canvas>
+            </div>
+
+            <div class="charts-grid">
+              <div class="chart-box">
+                <h3>🌧️ Precipitação Mensal Acumulada (mm)</h3>
+                <canvas id="rainChart" height="130"></canvas>
+              </div>
+              <div class="chart-box">
+                <h3>🌡️ Perfil Térmico Mensal (°C)</h3>
+                <canvas id="tempChart" height="130"></canvas>
+              </div>
+            </div>
+
+            <div class="table-box">
+              <h3>🛰️ Série Recente & Janela de Pulverização (NASA POWER)</h3>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Data</th>
+                    <th>Temp.</th>
+                    <th>Chuva</th>
+                    <th>Umidade</th>
+                    <th>Vento</th>
+                    <th>Status Aplicação</th>
+                  </tr>
+                </thead>
+                <tbody id="table-body">
+                  <tr><td colspan="6" style="text-align:center; color:#8b949e;">Carregando dados meteorológicos ao vivo...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div>
+            <div class="side-card" style="border-left: 4px solid #d29922;">
+              <h3 style="color:#e3b341;">⚡ Projeção Rápida What-If</h3>
+              <div class="param-group">
+                <label><span>Adubação Nitrogenada (N)</span><strong id="val-dash-n">+0 kg/ha</strong></label>
+                <input type="range" id="slider-dash-n" min="-50" max="150" step="10" value="0">
+              </div>
+              <div class="param-group">
+                <label><span>Lâmina de Irrigação</span><strong id="val-dash-w">+0 mm</strong></label>
+                <input type="range" id="slider-dash-w" min="-30" max="60" step="5" value="0">
+              </div>
+              <div class="param-group">
+                <label><span>Pressão de Pragas</span><strong id="val-dash-p">0%</strong></label>
+                <input type="range" id="slider-dash-p" min="0" max="60" step="5" value="0">
+              </div>
+              <div class="sim-result-box">
+                <div style="font-size:0.72rem; color:#8b949e; margin-bottom:4px;">PROJEÇÃO DO TALHÃO:</div>
+                <div>Vigor: <strong id="dash-ndvi-val" style="color:#7ee787;">NDVI +0.00</strong></div>
+                <div>Produtividade: <strong id="dash-yield-val" style="color:#58a6ff;">+0.0 sc/ha</strong></div>
+                <div style="margin-top:6px; padding-top:6px; border-top:1px solid #30363d;">
+                  Impacto Financeiro: <strong id="dash-money-val" style="color:#f0f6fc;">R$ 0,00</strong>
+                </div>
+              </div>
+              <button class="tab-btn active" style="width:100%; margin-top:12px; justify-content:center;" onclick="switchScreen('3d')">
+                Visualizar em 3D Lado a Lado ↗
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TELA 2: MAPA 2D -->
+    <div id="screen-map" class="screen-view">
+      <div class="map-floating-card">
+        <h3 style="margin:0 0 4px 0; color:#58a6ff;" id="map-card-farm">Propriedade</h3>
+        <p style="margin:0 0 6px 0; font-size:0.82rem; color:#8b949e;" id="map-card-city">Localização</p>
+        <div style="font-size:0.82rem;" id="map-card-area">Área: <strong>-- ha</strong></div>
+        <div style="font-size:0.82rem; margin-top:2px;" id="map-card-crop">Cultura: <strong>--</strong></div>
+      </div>
+      <div id="map"></div>
+    </div>
+
+    <!-- TELA 3: SIMULADOR 3D -->
+    <div id="screen-3d" class="screen-view">
+      <div id="label-left" class="view-label">🛰️ CENÁRIO REAL (SENTINEL-2)</div>
+      <div id="label-right" class="view-label">🧪 CENÁRIO SIMULADO (WHAT-IF)</div>
+      <div class="divider-line"></div>
+
+      <div id="whatif-panel-3d">
+        <h4>⚡ Parâmetros What-If</h4>
+        <div class="param-group">
+          <label><span>Adubação Nitrogenada (N)</span><strong id="val-3d-n">+0 kg/ha</strong></label>
+          <input type="range" id="slider-3d-n" min="-50" max="150" step="10" value="0">
+        </div>
+        <div class="param-group">
+          <label><span>Lâmina de Irrigação</span><strong id="val-3d-w">+0 mm</strong></label>
+          <input type="range" id="slider-3d-w" min="-30" max="60" step="5" value="0">
+        </div>
+        <div class="param-group">
+          <label><span>Pressão de Pragas</span><strong id="val-3d-p">0%</strong></label>
+          <input type="range" id="slider-3d-p" min="0" max="60" step="5" value="0">
+        </div>
+
+        <div class="sim-result-box">
+          • Vigor: <strong id="sim-3d-ndvi" style="color:#7ee787;">NDVI +0.00</strong><br>
+          • Ganho: <strong id="sim-3d-yield" style="color:#58a6ff;">+0.0 sc/ha</strong><br>
+          • Financeiro: <strong id="sim-3d-finance" style="color:#f0f6fc;">R$ 0,00</strong>
+        </div>
+      </div>
+
+      <div id="ui-panel-3d">
+        <button id="play-btn">▶ Play</button>
+        <input type="range" id="timeline-slider" min="0" max="12" value="0" step="1" style="flex:1;">
+        <span id="date-label" style="font-size:0.8rem; font-weight:bold; width:80px;">07/04/2025</span>
+        <select id="layer-select">
+          <option value="ndvi">NDVI</option>
+          <option value="evi">EVI</option>
+          <option value="ndre">NDRE</option>
+          <option value="ndmi">NDMI</option>
+        </select>
+      </div>
+
+      <div id="canvas-container"></div>
+    </div>
+
+  </main>
+
+  <script src="app.js"></script>
+  <script>
+    let activeFarm = {
+      id: 1,
+      name: "Fazenda Orion",
+      city: "Apucarana - PR",
+      total_area: 42.54,
+      latitude: -22.7182,
+      longitude: -55.5421,
+      crop: "Soja / Milho Safrinha",
+      kml_coordinates: null
+    };
+
+    let currentScreen = 'dash';
+    let currentLayer = "ndvi";
+    let currentIndex = 0;
+    let rainChartInstance = null;
+    let tempChartInstance = null;
+    let cropCurveChartInstance = null;
+    let currentPolygon = null;
+    let isFetchingFarm = false;
+    let analyticsTimelineCache = [];
+
+    const dates = [
+      "2025-04-07", "2025-04-22", "2025-05-02", "2025-06-11",
+      "2025-10-04", "2025-10-11", "2025-11-18", "2025-11-20",
+      "2025-12-10", "2025-12-18", "2026-01-27", "2026-02-11", "2026-03-08"
+    ];
+
+    function renderDatePills() {
+      const container = document.getElementById('dashboard-dates-bar');
+      if (!container) return;
+      container.innerHTML = '';
+      dates.forEach((d, idx) => {
+        const formatted = d.split('-').reverse().join('/');
+        const btn = document.createElement('button');
+        btn.className = `date-pill ${idx === currentIndex ? 'active' : ''}`;
+        btn.id = `date-pill-${idx}`;
+        btn.innerText = formatted;
+        btn.onclick = () => selectDateIndex(idx);
+        container.appendChild(btn);
+      });
+    }
+
+    function selectDateIndex(idx) {
+      currentIndex = idx;
+      document.getElementById('timeline-slider').value = idx;
+      
+      document.querySelectorAll('.date-pill').forEach(el => el.classList.remove('active'));
+      const activePill = document.getElementById(`date-pill-${idx}`);
+      if (activePill) activePill.classList.add('active');
+
+      updateZoneCards(currentIndex);
+      updateTextures();
+    }
+
+    function setSpectralLayer(layer) {
+      currentLayer = layer;
+      document.getElementById('layer-select').value = layer;
+
+      document.querySelectorAll('.layer-pill').forEach(btn => {
+        btn.classList.toggle('active', btn.getAttribute('onclick').includes(layer));
+      });
+
+      loadAnalyticsData();
+      updateTextures();
+    }
+
+    function downloadPDFReport() {
+      const url = `http://localhost:8000/api/reports/farm/${activeFarm.id || 1}/pdf?layer=${currentLayer}&date_index=${currentIndex}&n_kg=${factorNitro}&w_mm=${factorWater}&pest_pct=${factorPest}`;
+      window.open(url, '_blank');
+    }
+
+    // 1. Inicializar Mapa 2D
+    const map = L.map('map').setView([activeFarm.latitude, activeFarm.longitude], 15);
+    L.tileLayer('https://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+      maxZoom: 20, subdomains: ['mt0','mt1','mt2','mt3'], attribution: 'Google Maps'
+    }).addTo(map);
+
+    const marker = L.marker([activeFarm.latitude, activeFarm.longitude]).addTo(map);
+
+    // 2. Carregar Fazenda Ativa
+    async function loadActiveFarm() {
+      if (isFetchingFarm) return;
+      isFetchingFarm = true;
+
+      const params = new URLSearchParams(window.location.search);
+      const farmId = params.get('farm_id');
+
+      if (farmId) {
+        try {
+          const farm = await FarmService.getFarmById(farmId);
+          if (farm) {
+            activeFarm = {
+              ...farm,
+              crop: (farm.talhoes && farm.talhoes[0]) ? farm.talhoes[0].crop : "Soja / Milho Safrinha",
+              kml_coordinates: (farm.talhoes && farm.talhoes[0]) ? farm.talhoes[0].kml_coordinates : null
+            };
+          }
+        } catch (e) {
+          console.warn("Erro ao carregar dados da fazenda:", e);
+        }
+      }
+
+      document.getElementById('nav-farm-title').innerText = `${activeFarm.name} — ${activeFarm.city}`;
+      document.getElementById('kpi-area').innerText = `${activeFarm.total_area} ha`;
+      document.getElementById('kpi-talhao-desc').innerText = `${activeFarm.crop}`;
+      
+      document.getElementById('map-card-farm').innerText = activeFarm.name;
+      document.getElementById('map-card-city').innerText = `📍 ${activeFarm.city}`;
+      document.getElementById('map-card-area').innerHTML = `Área: <strong>${activeFarm.total_area} ha</strong>`;
+      document.getElementById('map-card-crop').innerHTML = `Cultura: <strong>${activeFarm.crop}</strong>`;
+
+      map.setView([activeFarm.latitude, activeFarm.longitude], 15);
+      marker.setLatLng([activeFarm.latitude, activeFarm.longitude]);
+
+      if (currentPolygon) {
+        map.removeLayer(currentPolygon);
+        currentPolygon = null;
+      }
+
+      if (activeFarm.kml_coordinates) {
+        try {
+          const coords = JSON.parse(activeFarm.kml_coordinates);
+          currentPolygon = L.polygon(coords, {
+            color: '#2ea043',
+            weight: 3,
+            fillColor: '#238636',
+            fillOpacity: 0.35
+          }).addTo(map);
+
+          map.fitBounds(currentPolygon.getBounds(), { padding: [40, 40] });
+        } catch (e) {
+          console.warn("Polígono KML não pôde ser traçado:", e);
+        }
+      }
+
+      renderDatePills();
+      loadAnalyticsData();
+      updateTextures();
+      loadLiveWeather();
+    }
+
+    async function loadAnalyticsData() {
+      try {
+        const res = await fetch(`http://localhost:8000/api/analytics/farm/${activeFarm.id || 1}?layer=${currentLayer}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        analyticsTimelineCache = data.timeline || [];
+
+        renderCropCurve(analyticsTimelineCache);
+        updateZoneCards(currentIndex);
+
+        // Preenche as estimativas de safra nos cards
+        if (data.yield_predictions) {
+          const v = data.yield_predictions.safra_verao;
+          const s = data.yield_predictions.safrinha;
+          const totalRev = data.yield_predictions.total_anual_faturamento_brl;
+
+          document.getElementById('kpi-soja-yield').innerText = `${v.produtividade_sc_ha} sc/ha`;
+          document.getElementById('kpi-soja-vol').innerText = `Total: ${v.total_sacas.toLocaleString('pt-BR')} sc | R$ ${v.faturamento_bruto_brl.toLocaleString('pt-BR', {minimumFractionDigits: 2})}`;
+
+          document.getElementById('kpi-milho-yield').innerText = `${s.produtividade_sc_ha} sc/ha`;
+          document.getElementById('kpi-milho-vol').innerText = `Total: ${s.total_sacas.toLocaleString('pt-BR')} sc | R$ ${s.faturamento_bruto_brl.toLocaleString('pt-BR', {minimumFractionDigits: 2})}`;
+
+          document.getElementById('kpi-total-revenue').innerText = totalRev.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+        }
+      } catch (err) {
+        console.warn("Erro ao carregar estatísticas do talhão:", err);
+      }
+    }
+
+    function updateZoneCards(idx) {
+      if (!analyticsTimelineCache || analyticsTimelineCache.length === 0) return;
+      const currentStats = analyticsTimelineCache[idx] || analyticsTimelineCache[0];
+      
+      if (currentStats && currentStats.zones) {
+        document.getElementById('kpi-mean-index').innerText = `${currentLayer.toUpperCase()} ${currentStats.mean}`;
+        document.getElementById('kpi-mean-date').innerText = `Passagem ${currentStats.formatted_date}`;
+        document.getElementById('zone-selected-date-badge').innerText = `Data: ${currentStats.formatted_date}`;
+
+        document.getElementById('zone-stress-pct').innerText = `${currentStats.zones.stress.pct}%`;
+        document.getElementById('zone-stress-ha').innerText = `${currentStats.zones.stress.ha} ha`;
+
+        document.getElementById('zone-mid-pct').innerText = `${currentStats.zones.medium.pct}%`;
+        document.getElementById('zone-mid-ha').innerText = `${currentStats.zones.medium.ha} ha`;
+
+        document.getElementById('zone-good-pct').innerText = `${currentStats.zones.good.pct}%`;
+        document.getElementById('zone-good-ha').innerText = `${currentStats.zones.good.ha} ha`;
+
+        document.getElementById('zone-dense-pct').innerText = `${currentStats.zones.dense.pct}%`;
+        document.getElementById('zone-dense-ha').innerText = `${currentStats.zones.dense.ha} ha`;
+      }
+    }
+
+    function renderCropCurve(timeline) {
+      if (!timeline || timeline.length === 0) return;
+
+      const labels = timeline.map(t => t.formatted_date);
+      const values = timeline.map(t => t.mean);
+
+      if (cropCurveChartInstance) cropCurveChartInstance.destroy();
+
+      cropCurveChartInstance = new Chart(document.getElementById('cropCurveChart'), {
+        type: 'line',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: `${currentLayer.toUpperCase()} Médio Real`,
+            data: values,
+            borderColor: '#2ea043',
+            backgroundColor: 'rgba(46, 160, 67, 0.15)',
+            borderWidth: 2.5,
+            fill: true,
+            tension: 0.35,
+            pointRadius: 6,
+            pointHoverRadius: 9,
+            pointBackgroundColor: '#7ee787'
+          }]
+        },
+        options: {
+          responsive: true,
+          onClick: (evt, elements) => {
+            if (elements && elements.length > 0) {
+              const clickedIdx = elements[0].index;
+              selectDateIndex(clickedIdx);
+            }
+          },
+          plugins: {
+            legend: { labels: { color: '#8b949e', font: { size: 11 } } },
+            tooltip: {
+              callbacks: {
+                label: (ctx) => ` Vigor Médio: ${ctx.parsed.y} (Clique para selecionar)`
+              }
+            }
+          },
+          scales: {
+            x: { grid: { color: '#21262d' }, ticks: { color: '#8b949e', font: { size: 10 } } },
+            y: { min: 0.1, max: 0.9, grid: { color: '#21262d' }, ticks: { color: '#8b949e', font: { size: 10 } } }
+          }
+        }
+      });
+    }
+
+    async function loadLiveWeather() {
+      try {
+        const res = await fetch(`http://localhost:8000/api/weather/farm/${activeFarm.id || 1}`);
+        if (!res.ok) return;
+        const wData = await res.json();
+
+        if (wData.summary) {
+          document.getElementById('kpi-rain').innerText = `${wData.summary.total_rain_mm.toLocaleString('pt-BR')} mm`;
+          document.getElementById('kpi-temp').innerText = `${wData.summary.avg_temp_c.toFixed(1)} °C`;
+          document.getElementById('kpi-temp-sub').innerText = `Mín ${wData.summary.min_temp_c}°C / Máx ${wData.summary.max_temp_c}°C`;
+        }
+
+        const tbody = document.getElementById('table-body');
+        tbody.innerHTML = '';
+        if (wData.recent_applications && wData.recent_applications.length > 0) {
+          wData.recent_applications.forEach(p => {
+            const bClass = p.status === 'ok' ? 'badge-ok' : (p.status === 'warn' ? 'badge-warn' : 'badge-bad');
+            tbody.innerHTML += `
+              <tr>
+                <td><strong>${p.date}</strong></td>
+                <td>${p.temp}</td>
+                <td>${p.rain}</td>
+                <td>${p.hum}</td>
+                <td>${p.wind}</td>
+                <td><span class="badge ${bClass}" title="${p.reason}">${p.label}</span></td>
+              </tr>
+            `;
+          });
+        }
+
+        renderCharts(wData.monthly);
+      } catch (err) {
+        console.error("Erro ao carregar clima:", err);
+      }
+    }
+
+    function renderCharts(monthly) {
+      if (!monthly) return;
+
+      if (rainChartInstance) rainChartInstance.destroy();
+      if (tempChartInstance) tempChartInstance.destroy();
+
+      rainChartInstance = new Chart(document.getElementById('rainChart'), {
+        type: 'bar',
+        data: {
+          labels: monthly.labels,
+          datasets: [{ data: monthly.rain, backgroundColor: '#1f6feb', borderRadius: 4 }]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } },
+            y: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } }
+          }
+        }
+      });
+
+      tempChartInstance = new Chart(document.getElementById('tempChart'), {
+        type: 'line',
+        data: {
+          labels: monthly.labels,
+          datasets: [
+            { label: 'Máx', data: monthly.temp_max, borderColor: '#da3633', tension: 0.3 },
+            { label: 'Méd', data: monthly.temp_avg, borderColor: '#58a6ff', tension: 0.3 },
+            { label: 'Mín', data: monthly.temp_min, borderColor: '#2ea043', tension: 0.3 }
+          ]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { labels: { color: '#8b949e' } } },
+          scales: {
+            x: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } },
+            y: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } }
+          }
+        }
+      });
+    }
+
+    function switchScreen(screenId) {
+      currentScreen = screenId;
+      document.querySelectorAll('.screen-view').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+
+      const activeScreen = document.getElementById(`screen-${screenId}`);
+      activeScreen.classList.add('active');
+      document.getElementById(`tab-${screenId}`).classList.add('active');
+
+      if (screenId === 'map') {
+        setTimeout(() => map.invalidateSize(), 150);
+      } else if (screenId === '3d') {
+        setTimeout(() => {
+          onWindowResize();
+        }, 100);
+      }
+    }
+
+    // 3. Three.js - Simulador 3D Split-View
+    const container = document.getElementById('canvas-container');
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight - 56);
+    renderer.autoClear = false;
+    container.appendChild(renderer.domElement);
+
+    const sceneReal = new THREE.Scene();
+    sceneReal.background = new THREE.Color(0x0a0e14);
+    const sceneSim = new THREE.Scene();
+    sceneSim.background = new THREE.Color(0x0d1117);
+
+    const camera = new THREE.PerspectiveCamera(45, (window.innerWidth / 2) / (window.innerHeight - 56), 0.1, 1000);
+    camera.position.set(0, -60, 52);
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    [sceneReal, sceneSim].forEach(sc => {
+      sc.add(new THREE.AmbientLight(0xffffff, 0.8));
+      const dl = new THREE.DirectionalLight(0xffffff, 0.9);
+      dl.position.set(40, 50, 60);
+      sc.add(dl);
+      const grid = new THREE.GridHelper(80, 20, 0x1f6feb, 0x161b22);
+      grid.rotation.x = Math.PI / 2;
+      grid.position.z = -0.15;
+      sc.add(grid);
+    });
+
+    const geo = new THREE.PlaneGeometry(50, 50, 64, 64);
+    const textureLoader = new THREE.TextureLoader();
+    textureLoader.setCrossOrigin('anonymous');
+
+    const matReal = new THREE.MeshStandardMaterial({ roughness: 0.85, displacementScale: 4.0, side: THREE.DoubleSide });
+    const meshReal = new THREE.Mesh(geo, matReal);
+    sceneReal.add(meshReal);
+
+    const matSim = new THREE.MeshStandardMaterial({ roughness: 0.85, displacementScale: 4.0, side: THREE.DoubleSide });
+    const meshSim = new THREE.Mesh(geo, matSim);
+    sceneSim.add(meshSim);
+
+    let isPlaying = false, playInterval = null;
+    let factorNitro = 0, factorWater = 0, factorPest = 0;
+
+    function calculateImpact() {
+      const area = activeFarm.total_area || 42.54;
+      const deltaNDVI = (factorNitro * 0.0015) + (factorWater * 0.002) - (factorPest * 0.004);
+      const deltaYield = (deltaNDVI * 45).toFixed(1);
+      const totalFinance = (deltaYield * area * 125.0);
+
+      document.getElementById('sim-3d-ndvi').innerText = `NDVI ${deltaNDVI >= 0 ? '+' : ''}${deltaNDVI.toFixed(2)}`;
+      document.getElementById('sim-3d-yield').innerText = `${deltaYield >= 0 ? '+' : ''}${deltaYield} sc/ha`;
+      document.getElementById('sim-3d-finance').innerText = `${totalFinance >= 0 ? '+' : ''}${totalFinance.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`;
+
+      document.getElementById('dash-ndvi-val').innerText = `NDVI ${deltaNDVI >= 0 ? '+' : ''}${deltaNDVI.toFixed(2)}`;
+      document.getElementById('dash-yield-val').innerText = `${deltaYield >= 0 ? '+' : ''}${deltaYield} sc/ha`;
+      document.getElementById('dash-money-val').innerText = `${totalFinance >= 0 ? '+' : ''}${totalFinance.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`;
+
+      matSim.displacementScale = Math.max(1.0, 4.0 + (deltaNDVI * 8.0));
+
+      if (deltaNDVI >= 0) {
+        matSim.color.setRGB(1.0 - (deltaNDVI * 0.5), 1.0 + (deltaNDVI * 0.8), 1.0 - (deltaNDVI * 0.5));
+      } else {
+        matSim.color.setRGB(1.0 + Math.abs(deltaNDVI), 1.0 - Math.abs(deltaNDVI * 1.5), 0.8);
+      }
+    }
+
+    function syncWhatIfInputs(n, w, p) {
+      factorNitro = n; factorWater = w; factorPest = p;
+      document.getElementById('slider-3d-n').value = n;
+      document.getElementById('slider-3d-w').value = w;
+      document.getElementById('slider-3d-p').value = p;
+      document.getElementById('slider-dash-n').value = n;
+      document.getElementById('slider-dash-w').value = w;
+      document.getElementById('slider-dash-p').value = p;
+
+      document.getElementById('val-3d-n').innerText = `${n >= 0 ? '+' : ''}${n} kg/ha`;
+      document.getElementById('val-3d-w').innerText = `${w >= 0 ? '+' : ''}${w} mm`;
+      document.getElementById('val-3d-p').innerText = `${p}%`;
+      document.getElementById('val-dash-n').innerText = `${n >= 0 ? '+' : ''}${n} kg/ha`;
+      document.getElementById('val-dash-w').innerText = `${w >= 0 ? '+' : ''}${w} mm`;
+      document.getElementById('val-dash-p').innerText = `${p}%`;
+
+      calculateImpact();
+    }
+
+    document.getElementById('slider-3d-n').addEventListener('input', e => syncWhatIfInputs(parseFloat(e.target.value), factorWater, factorPest));
+    document.getElementById('slider-3d-w').addEventListener('input', e => syncWhatIfInputs(factorNitro, parseFloat(e.target.value), factorPest));
+    document.getElementById('slider-3d-p').addEventListener('input', e => syncWhatIfInputs(factorNitro, factorWater, parseFloat(e.target.value)));
+    document.getElementById('slider-dash-n').addEventListener('input', e => syncWhatIfInputs(parseFloat(e.target.value), factorWater, factorPest));
+    document.getElementById('slider-dash-w').addEventListener('input', e => syncWhatIfInputs(factorNitro, parseFloat(e.target.value), factorPest));
+    document.getElementById('slider-dash-p').addEventListener('input', e => syncWhatIfInputs(factorNitro, factorWater, parseFloat(e.target.value)));
+
+    async function updateTextures() {
+      const dateStr = dates[currentIndex];
+      document.getElementById('date-label').innerText = dateStr.split('-').reverse().join('/');
+
+      let texturePath = `sentinel-21KXQ-${dateStr}/${currentLayer}_cloudless_min_max.png`;
+
+      if (activeFarm.id !== 1) {
+        try {
+          const res = await fetch(`http://localhost:8000/api/talhao/${activeFarm.id}/texture?layer=${currentLayer}`);
+          if (res.ok) {
+            const data = await res.json();
+            texturePath = data.texture_url;
+          }
+        } catch (e) {
+          console.warn("Usando textura padrão local.");
+        }
+      }
+
+      textureLoader.load(texturePath, (tex) => {
+        tex.generateMipmaps = true;
+        tex.needsUpdate = true;
+
+        matReal.map = tex;
+        matReal.displacementMap = tex;
+        matReal.needsUpdate = true;
+
+        matSim.map = tex;
+        matSim.displacementMap = tex;
+        matSim.needsUpdate = true;
+
+        calculateImpact();
+      });
+
+      updateZoneCards(currentIndex);
+    }
+
+    const slider = document.getElementById('timeline-slider');
+    slider.addEventListener('input', e => { 
+      selectDateIndex(parseInt(e.target.value));
+    });
+    
+    document.getElementById('layer-select').addEventListener('change', e => { 
+      setSpectralLayer(e.target.value);
+    });
+
+    document.getElementById('play-btn').addEventListener('click', () => {
+      isPlaying = !isPlaying;
+      document.getElementById('play-btn').innerText = isPlaying ? "⏸ Pause" : "▶ Play";
+      if (isPlaying) {
+        playInterval = setInterval(() => {
+          const nextIdx = (currentIndex + 1) % dates.length;
+          selectDateIndex(nextIdx);
+        }, 1400);
+      } else {
+        clearInterval(playInterval);
+      }
+    });
+
+    function onWindowResize() {
+      const container = document.getElementById('canvas-container');
+      const w = container.clientWidth || window.innerWidth;
+      const h = container.clientHeight || (window.innerHeight - 56);
+
+      renderer.setSize(w, h);
+      camera.aspect = (w / 2) / h;
+      camera.updateProjectionMatrix();
+    }
+    window.addEventListener('resize', onWindowResize);
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      if (currentScreen !== '3d') return;
+
+      controls.update();
+
+      const container = document.getElementById('canvas-container');
+      const w = container.clientWidth || window.innerWidth;
+      const h = container.clientHeight || (window.innerHeight - 56);
+
+      renderer.clear();
+      renderer.setViewport(0, 0, w / 2, h);
+      renderer.setScissor(0, 0, w / 2, h);
+      renderer.setScissorTest(true);
+      renderer.render(sceneReal, camera);
+
+      renderer.setViewport(w / 2, 0, w / 2, h);
+      renderer.setScissor(w / 2, 0, w / 2, h);
+      renderer.setScissorTest(true);
+      renderer.render(sceneSim, camera);
+    }
+    animate();
+
+    loadActiveFarm();
+  </script>
+</body>
+</html>
