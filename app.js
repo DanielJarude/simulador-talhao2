@@ -95,10 +95,17 @@ const AuthService = {
  * As mutações (create/update/delete) exigem Bearer token.
  */
 const FarmService = {
-  // Listar todas as fazendas cadastradas (leitura pública)
+  // Listar fazendas do usuário logado (PR #3 — privacidade: exige Bearer token)
   getFarms: async () => {
     try {
-      const res = await fetch(`${API_URL}/farms`);
+      const res = await fetch(`${API_URL}/farms`, { headers: { ...authHeaders() } });
+      if (res.status === 401) {
+        AuthService.logout();
+        throw new Error("Sessão inválida ou expirada — faça login novamente (auth.html).");
+      }
+      if (res.status === 403) {
+        throw new Error("Você não tem permissão para visualizar essas propriedades.");
+      }
       if (!res.ok) throw new Error("Falha ao buscar lista de propriedades.");
       return await res.json();
     } catch (e) {
@@ -107,10 +114,17 @@ const FarmService = {
     }
   },
 
-  // Buscar detalhes de uma fazenda por ID (leitura pública)
+  // Buscar detalhes de uma fazenda por ID (PR #3 — exige Bearer token)
   getFarmById: async (id) => {
     try {
-      const res = await fetch(`${API_URL}/farms/${id}`);
+      const res = await fetch(`${API_URL}/farms/${id}`, { headers: { ...authHeaders() } });
+      if (res.status === 401) {
+        AuthService.logout();
+        throw new Error("Sessão inválida ou expirada — faça login novamente (auth.html).");
+      }
+      if (res.status === 403) {
+        throw new Error("Você não tem permissão para acessar esta propriedade.");
+      }
       if (res.ok) {
         return await res.json();
       }
@@ -216,9 +230,12 @@ const FarmService = {
  */
 const WeatherService = {
   // Obter clima diário e histórico da NASA POWER ao vivo por ID da fazenda
+  // (PR #3 — exige Bearer token; routes de fazenda são privadas)
   getLiveWeather: async (farmId) => {
     try {
-      const res = await fetch(`${API_URL}/weather/farm/${farmId}`);
+      const res = await fetch(`${API_URL}/weather/farm/${farmId}`, { headers: { ...authHeaders() } });
+      if (res.status === 401) { AuthService.logout(); throw new Error("Sessão expirada — faça login novamente (auth.html)."); }
+      if (res.status === 403) throw new Error("Sem permissão para os dados desta fazenda.");
       if (!res.ok) throw new Error("Erro ao consultar dados meteorológicos.");
       return await res.json();
     } catch (e) {
@@ -230,9 +247,12 @@ const WeatherService = {
 
 const SatelliteService = {
   // Obter rota da textura dinâmica ou padrão do talhão
+  // (PR #3 — exige Bearer token; a textura é privada por fazenda)
   getTalhaoTexture: async (farmId) => {
     try {
-      const res = await fetch(`${API_URL}/talhao/${farmId}/texture`);
+      const res = await fetch(`${API_URL}/talhao/${farmId}/texture`, { headers: { ...authHeaders() } });
+      if (res.status === 401) { AuthService.logout(); throw new Error("Sessão expirada — faça login novamente (auth.html)."); }
+      if (res.status === 403) throw new Error("Sem permissão para a textura desta fazenda.");
       if (!res.ok) throw new Error("Erro ao obter textura do talhão.");
       return await res.json();
     } catch (e) {
@@ -243,14 +263,47 @@ const SatelliteService = {
 
   // Obter heightmap topográfico (Copernicus DEM GL-30) do talhão.
   // available=false → o 3D mantém o deslocamento via NDVI (fallback).
+  // (PR #3 — exige Bearer token)
   getTalhaoHeightmap: async (farmId) => {
     try {
-      const res = await fetch(`${API_URL}/talhao/${farmId}/heightmap`);
+      const res = await fetch(`${API_URL}/talhao/${farmId}/heightmap`, { headers: { ...authHeaders() } });
+      if (res.status === 401) { AuthService.logout(); throw new Error("Sessão expirada — faça login novamente (auth.html)."); }
+      if (res.status === 403) throw new Error("Sem permissão para o heightmap desta fazenda.");
       if (!res.ok) throw new Error("Erro ao obter heightmap do talhão.");
       return await res.json();
     } catch (e) {
       console.warn("Erro no SatelliteService.getTalhaoHeightmap:", e);
       return null;
+    }
+  }
+};
+
+/**
+ * SERVIÇO DE LAUDOS (PDF) — endpoint privado por fazenda (PR #3)
+ * Baixa o laudo via fetch autenticado (Bearer) e dispara o download do blob,
+ * já que `window.open` não envia o cabeçalho de autorização.
+ */
+const ReportService = {
+  downloadFarmPdf: async (farmId, { layer = "ndvi", dateIndex = 0, nKg = 0, wMm = 0, pestPct = 0 } = {}) => {
+    const url = `${API_URL}/reports/farm/${farmId}/pdf?layer=${layer}&date_index=${dateIndex}&n_kg=${nKg}&w_mm=${wMm}&pest_pct=${pestPct}`;
+    try {
+      const res = await fetch(url, { headers: { ...authHeaders() } });
+      if (res.status === 401) { AuthService.logout(); throw new Error("Sessão expirada — faça login novamente (auth.html)."); }
+      if (res.status === 403) throw new Error("Você não tem permissão para o laudo desta fazenda.");
+      if (!res.ok) throw new Error("Erro ao gerar o laudo em PDF.");
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objectUrl;
+      a.download = `Laudo_Agronomico_fazenda_${farmId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objectUrl);
+      return true;
+    } catch (e) {
+      console.error("Erro no ReportService.downloadFarmPdf:", e);
+      throw e;
     }
   }
 };

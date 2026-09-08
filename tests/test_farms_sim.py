@@ -45,7 +45,7 @@ class TestFarms:
         assert talhao["area"] == FARM_BODY["total_area"]
 
         # Consistência GET
-        got = client.get(f"/api/farms/{d['id']}").json()
+        got = client.get(f"/api/farms/{d['id']}", headers=auth(admin_token)).json()
         assert got["name"] == d["name"] and got["talhoes"][0]["id"] == talhao["id"]
 
         # Geoprocessamento: texturas espectrais geradas em disco
@@ -66,22 +66,23 @@ class TestFarms:
         r = client.post("/api/farms", json=body, headers=auth(admin_token))
         assert r.status_code == 422
 
-    def test_get_inexistente_404(self, client):
-        assert client.get("/api/farms/999999").status_code == 404
+    def test_get_inexistente_404(self, client, admin_token):
+        assert client.get("/api/farms/999999", headers=auth(admin_token)).status_code == 404
 
     def test_texture_dinamica_url_e_arquivo(self, client, admin_token):
         fid = client.post("/api/farms", json=FARM_BODY, headers=auth(admin_token)).json()["id"]
-        r = client.get(f"/api/talhao/{fid}/texture?layer=ndvi")
+        r = client.get(f"/api/talhao/{fid}/texture?layer=ndvi", headers=auth(admin_token))
         assert r.status_code == 200
         d = r.json()
         assert d["type"] == "dynamic"
-        assert d["texture_url"].endswith(".png")
-        # URL servida estaticamente pelo próprio FastAPI
-        assert client.get(d["texture_url"]).status_code == 200
+        # URL autenticada do PNG (PR #3); termina em .png (antes do query string).
+        assert "/api/talhao/" in d["texture_url"] and ".png" in d["texture_url"]
+        # URL autenticada servida por rota com checagem de ownership.
+        assert client.get(d["texture_url"], headers=auth(admin_token)).status_code == 200
 
     @pytest.mark.parametrize("layer", ["xyz", "NDVI", ""])
-    def test_texture_layer_invalida_422(self, client, layer):
-        assert client.get(f"/api/talhao/1/texture?layer={layer}").status_code == 422
+    def test_texture_layer_invalida_422(self, client, admin_token, layer):
+        assert client.get(f"/api/talhao/1/texture?layer={layer}", headers=auth(admin_token)).status_code == 422
 
 
 # ---------------------------------------------------------------------------
@@ -153,8 +154,8 @@ class TestWhatIf:
 # Analytics (série temporal / zoneamento / safras)
 # ---------------------------------------------------------------------------
 class TestAnalytics:
-    def test_serie_temporal_farm_demo(self, client):
-        d = client.get("/api/analytics/farm/1?layer=ndvi").json()
+    def test_serie_temporal_farm_demo(self, client, admin_token):
+        d = client.get("/api/analytics/farm/1?layer=ndvi", headers=auth(admin_token)).json()
         assert len(d["timeline"]) == 13
         for point in d["timeline"]:
             zones = point["zones"]
@@ -170,23 +171,23 @@ class TestAnalytics:
         assert yp["safrinha"]["cultura"] == "Milho Safrinha"
         assert yp["total_anual_faturamento_brl"] > 0
 
-    def test_farm_inexistente_404(self, client):
-        assert client.get("/api/analytics/farm/999999").status_code == 404
+    def test_farm_inexistente_404(self, client, admin_token):
+        assert client.get("/api/analytics/farm/999999", headers=auth(admin_token)).status_code == 404
 
-    def test_layer_invalida_422(self, client):
-        assert client.get("/api/analytics/farm/1?layer=xyz").status_code == 422
+    def test_layer_invalida_422(self, client, admin_token):
+        assert client.get("/api/analytics/farm/1?layer=xyz", headers=auth(admin_token)).status_code == 422
 
 
 # ---------------------------------------------------------------------------
 # Laudo PDF
 # ---------------------------------------------------------------------------
 class TestPDF:
-    def test_pdf_200(self, client):
-        r = client.get("/api/reports/farm/1/pdf?layer=ndvi&date_index=0&n_kg=50")
+    def test_pdf_200(self, client, admin_token):
+        r = client.get("/api/reports/farm/1/pdf?layer=ndvi&date_index=0&n_kg=50", headers=auth(admin_token))
         assert r.status_code == 200
         assert r.headers["content-type"] == "application/pdf"
         assert r.content[:4] == b"%PDF"
         assert len(r.content) > 1000
 
-    def test_pdf_date_index_fora_da_faixa_422(self, client):
-        assert client.get("/api/reports/farm/1/pdf?date_index=99").status_code == 422
+    def test_pdf_date_index_fora_da_faixa_422(self, client, admin_token):
+        assert client.get("/api/reports/farm/1/pdf?date_index=99", headers=auth(admin_token)).status_code == 422

@@ -5,15 +5,15 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
 import models
 import schemas
 from config import settings
-from database import Base, SessionLocal, engine, get_db
-from security import create_access_token, get_current_user, hash_password, require_role, verify_password
+from database import Base, SessionLocal, engine, ensure_owner_columns, get_db
+from security import create_access_token, get_current_user, get_auth_context, hash_password, require_role, verify_password
 from services.analytics_service import get_farm_temporal_series
 from services.dem_service import process_talhao_heightmap
 from services.pdf_service import generate_farm_pdf_report
@@ -29,51 +29,65 @@ logger = logging.getLogger("orion.api")
 
 # Montagem do diretório estático para texturas geradas dinamicamente
 BASE_PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 dynamic_path = os.path.join(BASE_PROJECT_DIR, "dynamic_talhoes")
 os.makedirs(dynamic_path, exist_ok=True)
+
+#: E-mail do administrador de demonstração (criado/associado pelo seed).
+DEMO_ADMIN_EMAIL = "admin@orion.com"
+#: Farm de demonstração (id 1) — legível por qualquer usuário autenticado.
+DEMO_FARM_SHARED = True
 
 
 # ---------------------------------------------------------------------------
 # Ciclo de vida (lifespan moderno — substitui @app.on_event, deprecado)
 # ---------------------------------------------------------------------------
 def seed_demo_data(db: Session) -> None:
-    """Popula a base com dados de demonstração se estiver vazia."""
-    if db.query(models.User).filter(models.User.email == "admin@orion.com").first():
-        return
+    """Popula a base com dados de demonstração se estiver vazia.
 
-    demo_farm = models.Farm(
-        name="Fazenda Orion",
-        city="Apucarana - PR",
-        total_area=42.54,
-        latitude=-22.7182,
-        longitude=-55.5421,
-    )
-    db.add(demo_farm)
-    db.commit()
-    db.refresh(demo_farm)
-
-    db.add(
-        models.Talhao(
-            farm_id=demo_farm.id,
-            name="Talhão 01",
-            area=42.54,
-            crop="Soja / Milho Safrinha",
-            latitude=-22.7182,
-            longitude=-55.5421,
-        )
-    )
-    # Senha do demo SEMPRE hasheada (bcrypt) — nunca em texto puro.
-    # O demo é o administrador da plataforma (role "admin" → RBAC liberado).
-    db.add(
-        models.User(
+    PR #3 (ownership): o usuário admin demo é criado ANTES da fazenda demo, e
+    esta fica vinculada a ele (owner_id) e marcada como compartilhada
+    (is_shared=True) para funcionar como vitrine legível por qualquer usuário
+    autenticado. O seed é idempotente: se o admin já existe, apenas garante o
+    backfill de fazendas órfãs (owner_id nulo) e da flag de farm demo.
+    """
+    admin = db.query(models.User).filter(models.User.email == DEMO_ADMIN_EMAIL).first()
+    if admin is None:
+        admin = models.User(
             name="Admin Demo",
-            email="admin@orion.com",
+            email=DEMO_ADMIN_EMAIL,
             hashed_password=hash_password("123456"),
             role="admin",
         )
-    )
+        db.add(admin)
+        db.commit()
+        db.refresh(admin)
+        logger.info("Seed de demonstração aplicado (admin@orion.com).")
+
+    demo_farm = db.query(models.Farm).filter(models.Farm.id == 1).first()
+    if demo_farm is None:
+        demo_farm = models.Farm(
+            name="Fazenda Orion",
+            city="Apucarana - PR",
+            total_area=42.54,
+            latitude=-22.7182,
+            longitude=-55.5421,
+            owner_id=admin.id,
+            is_shared=DEMO_FARM_SHARED,
+        )
+        db.add(demo_farm)
+
+    # Backfill defensivo (idempotente): qualquer fazenda sem dono (banco
+    # legado) passa a pertencer ao admin demo; a farm demo (id 1) é sempre
+    # marcada como compartilhada.
+    orphans = db.query(models.Farm).filter(models.Farm.owner_id.is_(None)).all()
+    for farm in orphans:
+        farm.owner_id = admin.id
+    if demo_farm is not None:
+        demo_farm.is_shared = DEMO_FARM_SHARED
+
     db.commit()
-    logger.info("Seed de demonstração aplicado (admin@orion.com).")
+    logger.info("Backfill de ownership concluído (dono demo -> admin@orion.com).")
 
 
 @asynccontextmanager
@@ -87,11 +101,45 @@ async def lifespan(_: FastAPI):
             "(tokens serão invalidados a cada restart). Defina JWT_SECRET_KEY no .env."
         )
     Base.metadata.create_all(bind=engine)
+
+    # Migrações Alembic (PR #3): em bancos já existentes, garante as colunas
+    # de ownership (owner_id, is_shared) e roda o backfill seguro. Não apaga o
+    # banco — apenas aplica as revisões pendentes (fallback idempotente em
+    # database.ensure_owner_columns para quem sobe a app sem rodar migrations).
+    _apply_migrations()
+
     with SessionLocal() as db:
         seed_demo_data(db)
     logger.info("Orion Agro API pronta.")
     yield
     logger.info("Orion Agro API finalizada.")
+
+
+def _apply_migrations() -> None:
+    """
+    Aplica as migrações pendentes (idempotente) ao subir a aplicação.
+
+    Tenta `alembic upgrade head` em processo (preferido em produção/dev). Se o
+    Alembic não estiver disponível ou falhar, cai no fallback
+    `database.ensure_owner_columns()` (ALTER idempotente) para não quebrar bancos
+    SQLite legados. Em qualquer caso, NUNCA recria/apaga o banco.
+    """
+    ini = os.path.join(BACKEND_DIR, "alembic.ini")
+    if not os.path.exists(ini):
+        logger.info("alembic.ini ausente — usando fallback de colunas de ownership.")
+        ensure_owner_columns()
+        return
+    try:
+        from alembic import command
+        from alembic.config import Config
+
+        cfg = Config(ini)
+        cfg.set_main_option("script_location", os.path.join(BACKEND_DIR, "alembic"))
+        command.upgrade(cfg, "head")
+        logger.info("Migrações Alembic aplicadas (upgrade head).")
+    except Exception as exc:  # noqa: BLE001 — nunca deve impedir o boot
+        logger.warning("Falha ao aplicar migrações Alembic (%s) — fallback de colunas.", exc)
+        ensure_owner_columns()
 
 
 app = FastAPI(
@@ -129,6 +177,73 @@ def _get_farm_or_404(db: Session, farm_id: int) -> models.Farm:
 def _resolve_talhao_id(farm: models.Farm) -> int:
     """ID real do 1º talhão da fazenda (corrige o bug multi-talhão)."""
     return farm.talhoes[0].id if farm.talhoes else farm.id
+
+
+# ---------------------------------------------------------------------------
+# Ownership / Privacidade (PR #3)
+# ---------------------------------------------------------------------------
+def _is_admin(user: models.User) -> bool:
+    """Usuário tem papel admin (nível máximo da hierarquia de RBAC)."""
+    return settings.role_hierarchy.get(user.role.strip().lower(), 1) >= settings.role_hierarchy.get("admin", 2)
+
+
+def _can_access_farm(user: models.User, farm: models.Farm) -> bool:
+    """
+    Regra de LEITURA/uso de uma fazenda:
+
+    - admin                → acesso global (qualquer fazenda);
+    - dono da fazenda       → acesso total à própria fazenda;
+    - fazenda compartilhada → qualquer usuário AUTENTICADO pode ler;
+    - demais                → sem acesso.
+    """
+    if _is_admin(user):
+        return True
+    if farm.owner_id is not None and farm.owner_id == user.id:
+        return True
+    return bool(farm.is_shared)
+
+
+def _can_write_farm(user: models.User, farm: models.Farm) -> bool:
+    """
+    Regra de ESCRITA (PUT/DELETE): apenas o DONO ou um ADMIN.
+
+    Uma fazenda compartilhada (ex.: demo) é legível por qualquer usuário
+    autenticado, mas NÃO editável/excluível por não-donos — isso evita que um
+    usuário comum apague a fazenda de demonstração ou a de outro.
+    """
+    if _is_admin(user):
+        return True
+    return farm.owner_id is not None and farm.owner_id == user.id
+
+
+def _require_farm_access(db: Session, farm_id: int, user: models.User) -> models.Farm:
+    """
+    Carrega a fazenda e aplica a regra de ownership (leitura).
+
+    - Sem dono → 401 (autenticação precede autorização);
+    - Com dono, mas sem permissão → 404 (evita expor a existência do recurso
+      alheio — PR #3 prefere 404 consistente e seguro em vez de 403);
+    - inexistente → 404.
+    """
+    farm = _get_farm_or_404(db, farm_id)
+    if not _can_access_farm(user, farm):
+        raise HTTPException(status_code=404, detail="Fazenda não encontrada.")
+    return farm
+
+
+def _require_farm_write(db: Session, farm_id: int, user: models.User) -> models.Farm:
+    """
+    Carrega a fazenda e aplica a regra de ownership (escrita: PUT/DELETE).
+
+    - Sem dono → 401 (autenticação precede autorização);
+    - Com dono, mas sem permissão (nem dono, nem admin, nem escrita) → 404
+      (PR #3: não expõe a existência do recurso alheio);
+    - inexistente → 404.
+    """
+    farm = _get_farm_or_404(db, farm_id)
+    if not _can_write_farm(user, farm):
+        raise HTTPException(status_code=404, detail="Fazenda não encontrada.")
+    return farm
 
 
 # ---------------------------------------------------------------------------
@@ -183,22 +298,34 @@ def login(login_in: schemas.UserLogin, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 # FAZENDAS & TALHÕES (CRUD COMPLETO)
 #
-# Matriz de acesso (RBAC):
-#   GET (leitura)                  → pública
-#   POST /api/farms (criação)      → autenticado (uso padrão)
-#   PUT  /api/farms/{id}           → admin (modificação estrutural sensível:
-#                                     reescreve geometria/área e regenera as
-#                                     camadas espectrais do talhão)
-#   DELETE /api/farms/{id}         → admin (operação destrutiva)
+# Matriz de acesso (PR #3 — ownership + privacidade multiusuário):
+#   GET    /api/farms            → autenticado; usuário comum vê SÓ as próprias;
+#                                   admin vê todas
+#   GET    /api/farms/{id}       → autenticado; dono | admin | farm compartilhada
+#   POST   /api/farms            → autenticado; cria vinculada ao usuário logado
+#                                   (owner_id NUNCA vem do payload — derivado do token)
+#   PUT    /api/farms/{id}       → dono da fazenda | admin (modificação estrutural)
+#   DELETE /api/farms/{id}       → dono da fazenda | admin (operação destrutiva)
+#   Anônimo                      → 401 em qualquer leitura de fazenda
 # ---------------------------------------------------------------------------
 @app.get("/api/farms", response_model=list[schemas.FarmResponse])
-def get_farms(db: Session = Depends(get_db)):
-    return db.query(models.Farm).all()
+def get_farms(
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),  # exige Bearer token
+):
+    if _is_admin(user):
+        return db.query(models.Farm).all()
+    # Usuário comum: apenas as próprias fazendas (privacidade multiusuário).
+    return db.query(models.Farm).filter(models.Farm.owner_id == user.id).all()
 
 
 @app.get("/api/farms/{farm_id}", response_model=schemas.FarmResponse)
-def get_farm_by_id(farm_id: int, db: Session = Depends(get_db)):
-    return _get_farm_or_404(db, farm_id)
+def get_farm_by_id(
+    farm_id: int,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),  # exige Bearer token
+):
+    return _require_farm_access(db, farm_id, user)
 
 
 @app.post("/api/farms", response_model=schemas.FarmResponse, status_code=201)
@@ -207,12 +334,16 @@ def create_farm(
     db: Session = Depends(get_db),
     user: models.User = Depends(get_current_user),  # exige Bearer token
 ):
+    # O dono é SEMPRE o usuário autenticado. O payload não tem (nem poderia
+    # ter) owner_id — falha-fechada contra escalada de ownership.
     new_farm = models.Farm(
         name=farm_in.name,
         city=farm_in.city,
         total_area=farm_in.total_area,
         latitude=farm_in.latitude,
         longitude=farm_in.longitude,
+        owner_id=user.id,
+        is_shared=False,
     )
     db.add(new_farm)
     db.commit()
@@ -247,9 +378,9 @@ def update_farm(
     farm_id: int,
     farm_in: schemas.FarmCreate,
     db: Session = Depends(get_db),
-    user: models.User = Depends(require_role("admin")),  # modificação estrutural sensível
+    user: models.User = Depends(get_current_user),  # exige Bearer token
 ):
-    farm = _get_farm_or_404(db, farm_id)
+    farm = _require_farm_write(db, farm_id, user)  # apenas dono | admin
 
     farm.name = farm_in.name
     farm.city = farm_in.city
@@ -285,8 +416,12 @@ def update_farm(
 
 
 @app.delete("/api/farms/{farm_id}")
-def delete_farm(farm_id: int, db: Session = Depends(get_db), user: models.User = Depends(require_role("admin"))):
-    farm = _get_farm_or_404(db, farm_id)
+def delete_farm(
+    farm_id: int,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),  # exige Bearer token
+):
+    farm = _require_farm_write(db, farm_id, user)  # apenas dono | admin
     name = farm.name
     db.delete(farm)
     db.commit()
@@ -301,8 +436,10 @@ def get_talhao_texture(
     farm_id: int,
     layer: schemas.SpectralLayer = "ndvi",
     db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),  # exige Bearer token
 ):
-    farm = _get_farm_or_404(db, farm_id)
+    # Ownership: só dono | admin | farm compartilhada (PR #3 — privacidade).
+    farm = _require_farm_access(db, farm_id, user)
 
     if farm_id == 1:
         return {
@@ -325,13 +462,41 @@ def get_talhao_texture(
             kml_coordinates=talhao.kml_coordinates if talhao else None,
         )
 
-    # URL montada a partir da configuração (sem localhost hardcoded)
+    # URL autenticada (PR #3 — o PNG por fazenda é privado por usuário e
+    # servido por rota com checagem de ownership, não via StaticFiles solto).
     return {
         "type": "dynamic",
         "texture_url": (
-            f"{settings.public_base_url}/dynamic_talhoes/{folder_name}/{layer}_cloudless_min_max.png"
+            f"{settings.public_base_url}/api/talhao/{farm.id}/texture.png?layer={layer}"
         ),
     }
+
+
+@app.get("/api/talhao/{farm_id}/texture.png")
+def get_talhao_texture_png(
+    farm_id: int,
+    layer: schemas.SpectralLayer = "ndvi",
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),  # exige Bearer token
+):
+    """Streaming autenticado do PNG da textura espectral (PR #3 — privacidade)."""
+    farm = _require_farm_access(db, farm_id, user)
+    talhao_id = _resolve_talhao_id(farm)
+    folder_name = f"farm_{farm.id}_talhao_{talhao_id}"
+    file_path = os.path.join(dynamic_path, folder_name, f"{layer}_cloudless_min_max.png")
+    if not os.path.exists(file_path):
+        talhao = farm.talhoes[0] if farm.talhoes else None
+        generate_all_spectral_layers(
+            farm_id=farm.id,
+            talhao_id=talhao_id,
+            lat=farm.latitude,
+            lon=farm.longitude,
+            area_ha=farm.total_area,
+            kml_coordinates=talhao.kml_coordinates if talhao else None,
+        )
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Textura indisponível.")
+    return StreamingResponse(open(file_path, "rb"), media_type="image/png")
 
 
 # ---------------------------------------------------------------------------
@@ -353,8 +518,9 @@ def get_farm_analytics(
     farm_id: int,
     layer: schemas.SpectralLayer = "ndvi",
     db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),  # exige Bearer token
 ):
-    farm = _get_farm_or_404(db, farm_id)
+    farm = _require_farm_access(db, farm_id, user)  # ownership (PR #3)
     talhao_id = _resolve_talhao_id(farm)  # ID real do talhão (fix multi-talhão)
     return get_farm_temporal_series(
         farm_id=farm.id,
@@ -368,8 +534,12 @@ def get_farm_analytics(
 # CLIMA AO VIVO (NASA POWER) — com cache TTL em weather_service
 # ---------------------------------------------------------------------------
 @app.get("/api/weather/farm/{farm_id}")
-def get_farm_live_weather(farm_id: int, db: Session = Depends(get_db)):
-    farm = _get_farm_or_404(db, farm_id)
+def get_farm_live_weather(
+    farm_id: int,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),  # exige Bearer token
+):
+    farm = _require_farm_access(db, farm_id, user)  # ownership (PR #3)
     return fetch_live_nasa_weather(farm.latitude, farm.longitude)
 
 
@@ -381,10 +551,11 @@ def get_talhao_heightmap(
     farm_id: int,
     size: int = Query(default=256, ge=64, le=512, description="Lado do heightmap (potência de 2)"),
     db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),  # exige Bearer token
 ):
-    farm = _get_farm_or_404(db, farm_id)
+    farm = _require_farm_access(db, farm_id, user)  # ownership (PR #3)
     talhao = farm.talhoes[0] if farm.talhoes else None
-    return process_talhao_heightmap(
+    hm = process_talhao_heightmap(
         farm_id=farm.id,
         talhao_id=_resolve_talhao_id(farm),
         lat=farm.latitude,
@@ -393,6 +564,52 @@ def get_talhao_heightmap(
         kml_coordinates=talhao.kml_coordinates if talhao else None,
         size=size,
     )
+    # URL autenticada (PR #3): o PNG do heightmap por fazenda é privado.
+    if hm.get("heightmap_url"):
+        hm["heightmap_url"] = (
+            f"{settings.public_base_url}/api/talhao/{farm.id}/heightmap.png?size={size}"
+        )
+    return hm
+
+
+@app.get("/api/talhao/{farm_id}/heightmap.png")
+def get_talhao_heightmap_png(
+    farm_id: int,
+    size: int = Query(default=256, ge=64, le=512, description="Lado do heightmap (potência de 2)"),
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),  # exige Bearer token
+):
+    """Streaming autenticado do PNG do heightmap (PR #3 — privacidade)."""
+    farm = _require_farm_access(db, farm_id, user)
+    talhao = farm.talhoes[0] if farm.talhoes else None
+    hm = process_talhao_heightmap(
+        farm_id=farm.id,
+        talhao_id=_resolve_talhao_id(farm),
+        lat=farm.latitude,
+        lon=farm.longitude,
+        area_ha=farm.total_area,
+        kml_coordinates=talhao.kml_coordinates if talhao else None,
+        size=size,
+    )
+    url = hm.get("heightmap_url")
+    if not url:
+        raise HTTPException(status_code=404, detail="Heightmap indisponível.")
+    # Resolve o caminho físico a partir da BASE do projeto.
+    # - forma legada /dynamic_talhoes/farm_X_talhao_Y/heightmap.png → usa o
+    #   próprio caminho (fonte da verdade);
+    # - forma autenticada /api/talhao/{id}/heightmap.png → reconstrói a partir
+    #   do talhão real da fazenda (não confunda farm_id com talhao_id).
+    if "/dynamic_talhoes/" in url:
+        suffix = url.split("/dynamic_talhoes/", 1)[1]
+        local = os.path.join(dynamic_path, suffix)
+    else:
+        talhao_id = _resolve_talhao_id(farm)
+        local = os.path.join(
+            dynamic_path, f"farm_{farm.id}_talhao_{talhao_id}", "heightmap.png"
+        )
+    if not os.path.exists(local):
+        raise HTTPException(status_code=404, detail="Heightmap indisponível.")
+    return StreamingResponse(open(local, "rb"), media_type="image/png")
 
 
 # ---------------------------------------------------------------------------
@@ -421,8 +638,9 @@ def download_farm_report_pdf(
     w_mm: float = Query(default=0.0, ge=-100, le=300),
     pest_pct: float = Query(default=0.0, ge=0, le=100),
     db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),  # exige Bearer token
 ):
-    farm = _get_farm_or_404(db, farm_id)
+    farm = _require_farm_access(db, farm_id, user)  # ownership (PR #3)
     talhao = farm.talhoes[0] if farm.talhoes else None
     crop_name = talhao.crop if talhao else "Soja / Milho Safrinha"
 
