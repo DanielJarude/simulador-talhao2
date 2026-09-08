@@ -193,15 +193,16 @@ alembic revision --autogenerate -m "descreva a mudança"
 - **JWT (HS256)**: o login emite `access_token` + `token_type` + `expires_in`. Leituras de fazenda
   e criação de fazendas/talhões e simulação exigem `Authorization: Bearer <token>` via dependência
   `get_current_user` (401 se ausente/inválido/expirado).
-- **RBAC**: `require_role("admin")` restringe rotas administrativas/destrutivas (`PUT`/`DELETE /api/farms`) validando o claim `role` do token — papéis insuficientes (e não-donos) recebem **404**
-  consistente para recursos alheios (matriz acima).
+- **RBAC e ownership**: `PUT`/`DELETE /api/farms` permitem o **dono da fazenda ou admin**; o claim `role` do token dá acesso global ao admin, enquanto a checagem de `owner_id` restringe usuários comuns às próprias fazendas. Recursos alheios retornam **404** consistente e seguro (matriz acima).
 - **Segredo do token** vem de `JWT_SECRET_KEY` no `.env` (12-factor). Se ausente, um segredo **efêmero** é gerado no boot (adequado só p/ dev — tokens expiram no restart).
 - **CORS** restrito às origens declaradas em `CORS_ORIGINS` (`.env`) — nunca `*`.
 - **Validação** total com Pydantic (`Field` com faixas de lat/lon, áreas, parâmetros agronômicos e tamanho do heightmap).
 - **Texturas/heightmap privados**: os PNGs por fazenda são servidos por rotas autenticadas
   (`/api/talhao/{id}/texture.png`, `/api/talhao/{id}/heightmap.png`) com checagem de ownership; o
-  `TextureLoader` do Three.js envia o Bearer token. As texturas **nativas** de demonstração
-  (`sentinel-21KXQ-*`, servidas via `StaticFiles`) permanecem públicas por serem asset de vitrine.
+  `TextureLoader` do Three.js baixa URLs relativas ou absolutas via `fetch` com Bearer token,
+  converte a resposta para Blob e revoga o `blob:` URL após o carregamento. As texturas **nativas**
+  de demonstração (`sentinel-21KXQ-*`, servidas via `StaticFiles`) permanecem públicas por serem
+  asset de vitrine.
 
 ## ⛰️ Topografia — Copernicus DEM GL-30
 
@@ -252,7 +253,7 @@ curl http://localhost:8000/api/weather/farm/1
 ## 🧪 Suíte de testes automatizados (pytest)
 
 A suíte versionada em `tests/` cobre as 4 frentes exigidas + ownership/migrações/paridade de
-schema — **164 testes** (1 skip por dataset Sentinel-2 ausente fora do git):
+schema e assets autenticados — **165 testes** (1 skip por dataset Sentinel-2 ausente fora do git):
 
 | Módulo | Testes | Abrangência |
 |---|---|---|
@@ -263,6 +264,7 @@ schema — **164 testes** (1 skip por dataset Sentinel-2 ausente fora do git):
 | `test_services.py` | 36 | Cache de clima (hit, por coordenadas, TTL, fallback em erro, fallback cacheado), regras de negócio do what-if, estimativa de safra, zoneamento espectral, paletas espectrais |
 | `test_ownership.py` | 32 | **Ownership** (usuário cria/ler/edita/exclui a própria farm; `owner_id` correto; payload `owner_id` ignorado), **admin global**, **privacidade** (GETs exigem token → 401; analytics/clima/textura/heightmap/PDF não expõem farm alheia → 404), **migração Alembic** (adiciona `owner_id`/`is_shared` + backfill seguro em SQLite legado) |
 | `test_schema_parity.py` | 3 | Paridade banco novo × legado migrado: colunas, tipos, nullable, defaults, PK, índices, FKs, `alembic_version`, idempotência, preservação de dados e enforcement SQLite |
+| `test_frontend_texture_urls.py` | 1 | Fluxo frontend de texture.png/heightmap.png relativos e absolutos: classificação, Bearer no fetch, respostas 401/403/404 e revogação do Blob URL após o TextureLoader |
 
 ### Execução
 

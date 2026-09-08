@@ -832,6 +832,22 @@
     const textureCache = new Map();     // key -> THREE.Texture (ordem de inserção = LRU)
     const textureInFlight = new Map();  // key -> Promise<THREE.Texture> (dedupe de cargas paralelas)
 
+    /**
+     * Rotas autenticadas podem vir relativas ou absolutas (PUBLIC_BASE_URL).
+     * URL() resolve as relativas contra a página atual e pathname evita
+     * hardcode de localhost/host da API.
+     */
+    function isAuthenticatedAssetUrl(url) {
+      if (!url || typeof url !== 'string') return false;
+      try {
+        const parsed = new URL(url, window.location.href);
+        return parsed.pathname.startsWith('/api/');
+      } catch (e) {
+        console.warn(`URL de textura inválida: ${url}`, e);
+        return false;
+      }
+    }
+
     function getCachedTexture(key, url) {
       const hit = textureCache.get(key);
       if (hit) {
@@ -842,28 +858,53 @@
       if (textureInFlight.has(key)) return textureInFlight.get(key);
 
       // PR #3 — rotas de textura/heightmap por fazenda exigem Bearer token.
-      // Se a URL for do backend (/api/...), baixa via fetch autenticado e
-      // converte em blob: URL antes de entregar ao TextureLoader (que não
-      // envia headers de autorização por padrão).
-      const isAuthUrl = url && url.indexOf('/api/') === 0;
+      // A detecção usa pathname, portanto funciona para /api/... relativo e
+      // para URLs absolutas devolvidas por PUBLIC_BASE_URL. O TextureLoader
+      // não envia headers de autorização; por isso a resposta autenticada é
+      // convertida em blob: URL antes do carregamento.
+      const isAuthUrl = isAuthenticatedAssetUrl(url);
 
       const pending = new Promise((resolve, reject) => {
-        const loadViaLoader = (finalUrl) => {
-          textureLoader.load(finalUrl, (tex) => {
-            tex.generateMipmaps = true;
-            tex.minFilter = THREE.LinearMipmapLinearFilter;
-            tex.magFilter = THREE.LinearFilter;
-            textureCache.set(key, tex);
-            while (textureCache.size > MAX_CACHED_TEXTURES) {
-              const oldestKey = textureCache.keys().next().value; // LRU
-              textureCache.get(oldestKey).dispose();              // libera VRAM
-              textureCache.delete(oldestKey);
+        const loadViaLoader = (finalUrl, onSettled = null) => {
+          let cleanedUp = false;
+          const cleanup = () => {
+            if (cleanedUp) return;
+            cleanedUp = true;
+            if (onSettled) onSettled();
+          };
+
+          const onLoad = (tex) => {
+            try {
+              tex.generateMipmaps = true;
+              tex.minFilter = THREE.LinearMipmapLinearFilter;
+              tex.magFilter = THREE.LinearFilter;
+              textureCache.set(key, tex);
+              while (textureCache.size > MAX_CACHED_TEXTURES) {
+                const oldestKey = textureCache.keys().next().value; // LRU
+                textureCache.get(oldestKey).dispose();              // libera VRAM
+                textureCache.delete(oldestKey);
+              }
+              resolve(tex);
+            } catch (err) {
+              reject(err);
+            } finally {
+              // Para blob: URLs, o loader já terminou de ler a imagem neste
+              // callback; só agora é seguro liberar o objeto temporário.
+              cleanup();
             }
-            resolve(tex);
-          }, undefined, (err) => {
+          };
+          const onError = (err) => {
+            cleanup();
             console.warn(`Falha ao carregar textura: ${finalUrl}`, err);
             reject(err);
-          });
+          };
+
+          try {
+            textureLoader.load(finalUrl, onLoad, undefined, onError);
+          } catch (err) {
+            cleanup();
+            reject(err);
+          }
         };
 
         if (!isAuthUrl) {
@@ -874,19 +915,30 @@
         const token = localStorage.getItem('orion_auth_token');
         fetch(url, { headers: token ? { 'Authorization': `Bearer ${token}` } : {} })
           .then((res) => {
-            if (res.status === 401) { AuthService.logout(); throw new Error('Sessão expirada.'); }
-            if (res.status === 403) { throw new Error('Sem permissão para esta textura.'); }
+            if (res.status === 401) {
+              AuthService.logout();
+              throw new Error('Sessão expirada.');
+            }
+            if (res.status === 403) throw new Error('Sem permissão para esta textura.');
+            if (res.status === 404) throw new Error('Textura não encontrada.');
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             return res.blob();
           })
           .then((blob) => {
             const blobUrl = URL.createObjectURL(blob);
-            loadViaLoader(blobUrl);
+            // Mantém a URL viva durante todo o TextureLoader.load() e revoga
+            // somente no callback de sucesso/erro do loader.
+            loadViaLoader(blobUrl, () => URL.revokeObjectURL(blobUrl));
           })
           .catch((err) => { reject(err); });
       });
       textureInFlight.set(key, pending);
-      pending.finally(() => textureInFlight.delete(key));
+      // then(..., ...) evita criar uma promise rejeitada não observada apenas
+      // para remover a entrada de in-flight.
+      pending.then(
+        () => textureInFlight.delete(key),
+        () => textureInFlight.delete(key),
+      );
       return pending;
     }
 
