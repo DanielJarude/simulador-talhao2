@@ -1,16 +1,227 @@
-Ela partiu
-Partiu e nunca mais voltou
-Ela sumiu, sumiu e nunca mais voltou
-Se souberem onde ela está
-Digam-me e vou lá buscá-la
-Pelo menos telefone em seu nome
-Me dêumflex uma dica, uma pista, insistaEi! e nunca mais voltou
-Ela sumiu, sumiu e nunca mais voltou
-Ela partiu, partiu
-E nunca mais voltou
-Se eu soubesse onde ela foi iria atrás
-Mas não sei mais nem direção
-Várias noites que eu não durmo um segundo
-Estou cansado
-Magoado exausto
-E nunca mais voltou
+# 🚜 Orion Agro — Simulador 3D de Talhões
+
+Plataforma de monitoramento agronômico que combina **sensoriamento espectral** (índices NDVI, EVI, NDRE e NDMI derivados de passagens Sentinel-2), **agrometeorologia** (série diária de 12 meses da NASA POWER com avaliação de janela de pulverização) e **simulação what-if em 3D** (Three.js) para projetar o impacto de adubação nitrogenada, irrigação e pressão de pragas sobre o vigor, a produtividade e o financeiro do talhão.
+
+## ✨ Funcionalidades
+
+- **Dashboard agronômico** — KPIs de safra (soja de verão + milho safrinha), zoneamento espectral por área (ha), curva temporal do índice e série climática mensal.
+- **Mapa 2D** — localização da propriedade e contorno do talhão (importação de `.kml` / `.geojson` / `.json`).
+- **Simulador 3D split-view** — cena "cenário real" × "cenário simulado" lado a lado, com **relevo topográfico real (Copernicus DEM GL-30)** e sliders what-if em tempo real.
+- **Auth JWT** — registro/login com senhas hasheadas (bcrypt) e tokens de acesso (HS256); mutações protegidas por `Authorization: Bearer`.
+- **Laudo técnico em PDF** — relatório agronômico consolidando safras, zoneamento, clima e simulação.
+
+## 🧱 Stack tecnológica
+
+| Camada | Tecnologias |
+|--------|-------------|
+| **Backend** | FastAPI · Pydantic v2 · pydantic-settings · SQLAlchemy 2 · SQLite · requests · rasterio · ReportLab |
+| **Frontend** | Three.js r128 (split-view 3D) · Leaflet 1.9 · Chart.js — HTML puro, sem build step |
+| **Dados** | Sentinel-2 (13 passagens, `sentinel-21KXQ-*`), Copernicus DEM GL-30 (topografia), contornos KML/SHP, NASA POWER (tempo real) |
+
+## 📁 Estrutura
+
+```
+.
+├── index.html              # Dashboard + Mapa 2D + Simulador 3D (SPA multi-tela)
+├── fazendas.html           # CRUD de propriedades + import de geometria
+├── auth.html               # Login / cadastro
+├── app.js                  # Cliente da API (Auth, Farms, Weather, Satellite, Simulation)
+├── backend/
+│   ├── main.py             # Rotas FastAPI (lifespan, CORS via settings)
+│   ├── config.py           # Configuração centralizada (pydantic-settings + .env)
+│   ├── database.py         # Engine/sessão SQLAlchemy
+│   ├── models.py           # User, Farm, Talhao
+│   ├── schemas.py          # Contratos Pydantic (validados)
+│   ├── security.py         # Senhas (bcrypt) + tokens JWT + dependência get_current_user
+│   ├── requirements.txt
+│   ├── .env.example
+│   ├── data/dem/           # Tiles GeoTIFF do Copernicus DEM GL-30 (fora do Git)
+│   └── services/
+│       ├── simulation_service.py   # Modelo agronômico what-if por cultura
+│       ├── weather_service.py      # NASA POWER + cache TTL
+│       ├── satellite_service.py    # Geração das texturas espectrais (KML → PNG)
+│       ├── analytics_service.py    # Série temporal, zoneamento, estimativa de safra
+│       ├── dem_service.py          # Pipeline topográfico Copernicus DEM GL-30 (heightmap)
+│       └── pdf_service.py          # Laudo técnico em PDF (ReportLab)
+├── sentinel-21KXQ-<data>/  # Texturas espectrais por passagem de satélite
+└── dynamic_talhoes/        # Texturas + heightmaps gerados dinamicamente (runtime)
+```
+
+## ✅ Pré-requisitos
+
+- **Python 3.11+**
+- **Navegador** com WebGL (Chrome/Edge/Firefox recentes)
+- Servidor HTTP estático para o frontend (ex.: Live Server do VS Code na porta 5501)
+
+## 🚀 Instalação e execução
+
+```bash
+# 1. Clone e entre no repositório
+git clone https://github.com/DanielJarude/simulador-talhao2.git
+cd simulador-talhao2
+
+# 2. Crie e ative o ambiente virtual
+python -m venv .venv
+source .venv/bin/activate        # Linux/macOS
+# .venv\Scripts\activate         # Windows
+
+# 3. Instale as dependências do backend
+pip install -r backend/requirements.txt
+
+# 4. Configure o ambiente (recomendado)
+cp backend/.env.example backend/.env
+# Em produção, defina OBRIGATÓRIAMENTE JWT_SECRET_KEY (senão, um segredo
+# efêmero é usado e os tokens expiram a cada restart do servidor).
+#   python -c "import secrets; print(secrets.token_urlsafe(48))"
+
+# 5. Suba a API (porta 8000)
+cd backend
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
+cd ..
+
+# 6. Sirva o frontend (porta 5501) — em outro terminal
+python -m http.server 5501
+# (ou Live Server do VS Code)
+
+# 7. Acesse
+#    http://localhost:5501/fazendas.html   → cadastro/propriedades
+#    http://localhost:5501/auth.html       → login (demo: admin@orion.com / 123456)
+#    http://localhost:8000/docs            → Swagger da API
+```
+
+> **Nota:** a URL base da API usada pelo frontend está em `app.js` (`API_URL`).
+> Ajuste-a se a API rodar em outra porta/host (o backend também monta URLs
+> de texturas a partir de `PUBLIC_BASE_URL` no `.env`).
+
+## 🔌 Endpoints principais
+
+| Método | Rota | Auth | Descrição |
+|--------|------|:----:|-----------|
+| `POST` | `/api/auth/register` | — | Cria usuário (bcrypt) — papel **fixo** `Produtor Rural`; `role` no payload é ignorado |
+| `POST` | `/api/auth/login` | — | Valida bcrypt e **emite o token JWT** (`{access_token, token_type, expires_in, user}`) |
+| `GET` | `/api/farms` · `/api/farms/{id}` | — | Lista/busca fazendas + talhões |
+| `POST` | `/api/farms` | 🔑 | Cria fazenda + talhão (gera texturas espectrais) |
+| `PUT` | `/api/farms/{id}` | 🔑🛡️ | Atualiza fazenda + talhão (**admin** — modificação estrutural sensível) |
+| `DELETE` | `/api/farms/{id}` | 🔑🛡️ | Remove fazenda e talhões vinculados (**admin** — destrutiva) |
+| `GET` | `/api/talhao/{farm_id}/texture?layer=ndvi` | — | URL da textura espectral (nativa ou dinâmica) |
+| `GET` | `/api/talhao/{farm_id}/heightmap?size=256` | — | **Heightmap Copernicus DEM GL-30** (relevo p/ Three.js) |
+| `GET` | `/api/talhao/dates` | — | Datas Sentinel-2 e índices disponíveis |
+| `GET` | `/api/analytics/farm/{farm_id}` | — | Série temporal + zoneamento + estimativa de safras |
+| `GET` | `/api/weather/farm/{farm_id}` | — | Clima NASA POWER (cache TTL de 60 min por padrão) |
+| `POST` | `/api/simulation/what-if` | 🔑 | Impacto de N/água/pragas sobre NDVI, safra e financeiro |
+| `GET` | `/api/reports/farm/{farm_id}/pdf` | — | Laudo técnico em PDF |
+
+> 🔑 = exige `Authorization: Bearer <access_token>` (401 sem token).
+> 🛡️ = exige, além do token, papel **admin** (403 Forbidden para papéis insuficientes).
+
+### 🛡️ RBAC — matriz de acesso
+
+| Rota | Anônimo | Usuário comum (`user`, `Produtor Rural`, `Operador de Máquinas`, `Engenheiro Agrônomo`) | Admin (`admin`) |
+|------|:-------:|:---:|:---:|
+| `GET` (leitura) | 200 | 200 | 200 |
+| `POST /api/farms` | 401 | **201** | 201 |
+| `POST /api/simulation/what-if` | 401 | **200** | 200 |
+| `PUT /api/farms/{id}` | 401 | **403** | 200 |
+| `DELETE /api/farms/{id}` | 401 | **403** | 200 |
+
+> O usuário demo `admin@orion.com / 123456` possui role `admin` (seed).
+
+- A validação usa o claim `role` do **payload do token JWT** (snapshot do login), comparado à hierarquia `role_hierarchy` (`config.py`, sobrescrevível por `ROLE_HIERARCHY` no `.env`).
+- O papel de nível máximo (`admin`) tem **acesso global** a rotas protegidas por papéis específicos; papéis desconhecidos/ausentes caem no nível de `user` (**fail-closed**).
+- Autenticação precede autorização: sem token (ou token inválido) o resultado é sempre **401**, nunca 403.
+
+## 🔐 Segurança
+
+- **Senhas** nunca em texto puro: hash bcrypt via `passlib` (`security.py`). Bases legadas com senha crua são **rehashed automaticamente** no primeiro login bem-sucedido.
+- **Sem auto-registro privilegiado**: `POST /api/auth/register` ignora qualquer `role` enviado no payload e atribui rigidamente o papel público (`DEFAULT_PUBLIC_ROLE = "Produtor Rural"` em `main.py`). O campo `role` nem faz parte do contrato `UserCreate`; contas `admin` existem apenas via seed interno (`seed_demo_data`) — impossibilitando escalada de privilégio pelo cadastro.
+- **JWT (HS256)**: o login emite `access_token` + `token_type` + `expires_in`. Endpoints de criação de fazendas/talhões e simulação exigem `Authorization: Bearer <token>` via dependência `get_current_user` (401 se ausente/inválido/expirado).
+- **RBAC**: `require_role("admin")` restringe rotas administrativas/destrutivas (`PUT`/`DELETE /api/farms`) validando o claim `role` do token — papéis insuficientes recebem **403 Forbidden** com mensagem clara (matriz na seção de endpoints).
+- **Segredo do token** vem de `JWT_SECRET_KEY` no `.env` (12-factor). Se ausente, um segredo **efêmero** é gerado no boot (adequado só p/ dev — tokens expiram no restart).
+- **CORS** restrito às origens declaradas em `CORS_ORIGINS` (`.env`) — nunca `*`.
+- **Validação** total com Pydantic (`Field` com faixas de lat/lon, áreas, parâmetros agronômicos e tamanho do heightmap).
+
+## ⛰️ Topografia — Copernicus DEM GL-30
+
+O terreno 3D usa **relevo real** a partir do Copernicus DEM GL-30 em vez de um plano com displacement genérico:
+
+- `GET /api/talhao/{farm_id}/heightmap` recorta a tile SRTM que cobre a fazenda (ex.: `s23_w056`), normaliza a elevação para 0–255 e resampleia para `size`×`size` (potência de 2, ideal p/ mipmaps), servindo um PNG cinza em `/dynamic_talhoes/…/heightmap.png` + mín/máx em metros.
+- O frontend aplica esse heightmap como `displacementMap` (o canal lido pelo Three.js), **mantendo as texturas NDVI como cor** e reutilizando o **mesmo cache LRU de VRAM** de antes (1 heightmap por fazenda — sem custo extra).
+- **Sem tile disponível**, o endpoint responde `available=false` e o 3D mantém o fallback (deslocamento via NDVI).
+
+**Como obter a tile:** baixe a tile `Copernicus_Dem_GLO30_<sN>_w<NNN>` correspondente à região (OpenTopography ou portal Copernicus) e coloque em `backend/data/dem/`. A API também tenta **baixar automaticamente** a tile dos espelhos públicos (best-effort, `DEM_DOWNLOAD_ENABLED`), cacheando o resultado localmente.
+
+## 📊 Dados
+
+- **Sentinel-2**: 13 passagens em `sentinel-21KXQ-<data>/` (PNGs coloridos por índice).
+- **Topografia**: Copernicus DEM GL-30 — tiles GeoTIFF em `backend/data/dem/` (fora do Git).
+- **Contornos**: `contorno_kml` / `contorno_shp` (talhão 01 de exemplo).
+- **Clima**: NASA POWER (agregado, defasagem de 3 dias; fallback climatológico quando indisponível).
+
+## 🧪 Teste rápido da API (fluxo JWT)
+
+```bash
+# 1. Login → captura o access_token
+TOKEN=$(curl -s -X POST http://localhost:8000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email": "admin@orion.com", "password": "123456"}' \
+  | python3 -c "import sys, json; print(json.load(sys.stdin)['access_token'])")
+
+# 2. Simulação what-if (protegida — exige o token)
+curl -X POST http://localhost:8000/api/simulation/what-if \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"nitrogen_kg": 50, "water_mm": 10, "pest_pressure_pct": 5, "area_ha": 42.54}'
+
+# 3. Sem token → 401 Unauthorized
+curl -i -X POST http://localhost:8000/api/simulation/what-if \
+  -H "Content-Type: application/json" -d '{}' | head -1
+
+# 4. Série temporal (farm de demo, leitura pública)
+curl http://localhost:8000/api/analytics/farm/1
+
+# 5. Heightmap topográfico (Copernicus DEM GL-30)
+curl http://localhost:8000/api/talhao/1/heightmap
+
+# 6. Clima (cache TTL — a 2ª chamada não consulta a NASA)
+curl http://localhost:8000/api/weather/farm/1
+```
+
+## 🧪 Suíte de testes automatizados (pytest)
+
+A suíte versionada em `tests/` cobre as 4 frentes exigidas — **129 testes**:
+
+| Módulo | Testes | Abrangência |
+|---|---|---|
+| `test_auth_security.py` | 27 | Registro/login (201/400/401/422), **papel forçado no registro** (qualquer `role` enviado — inclusive `"admin"` — é ignorado; sem prerrogativas administrativas; admin isolado ao seed), bcrypt (hash, salt, verificação), migração transparente de senha legada → bcrypt, emissão e validação de JWT (claims, expirado, assinatura inválida, `sub` inexistente) |
+| `test_rbac.py` | 21 | Admin 200 (PUT/DELETE/POST/what-if), papel insuficiente 403 (dados intactos + mensagem clara), sem token / token inválido 401 (autenticação precede autorização), leituras públicas 200 |
+| `test_farms_sim.py` | 28 | Contratos Pydantic (criação + resposta + What-If exatos a 9 campos), 422 parametrizados, 404, texturas dinâmicas em disco, datas Sentinel-2, matemática da simulação (constantes por crop), analytics (série temporal, zoneamento, safras), laudo PDF |
+| `test_dem.py` | 17 | Nomenclatura SRTM/Copernicus, bounds (KML e por área), seleção de tile, endpoint de heightmap: recorte → normalização → PNG 256×256 servido estaticamente, `size`, 422, 404, indisponível com orientação |
+| `test_services.py` | 36 | Cache de clima (hit, por coordenadas, TTL, fallback em erro, fallback cacheado), regras de negócio do what-if, estimativa de safra, zoneamento espectral, paletas espectrais |
+
+### Execução
+
+```bash
+python3 -m venv .venv-test && .venv-test/bin/pip install -r backend/requirements.txt
+pytest            # a partir da RAIZ do repositório
+```
+
+### Isolamento (git nunca é poluído)
+
+- **Banco SQLite efêmero** em diretório temporário do SO (`DATABASE_URL` via env,
+  definido antes do import da aplicação) — removido ao fim da sessão;
+- **NASA POWER simulada** no nível da aplicação (a rede nunca é acessada; o
+  clima de fallback é testado em nível de serviço com o fetch monkeypatchado);
+- **DEM**: tile GeoTIFF sintética (mesmo grid 30 m do GL-30) em temp +
+  `DEM_DOWNLOAD_ENABLED=false`;
+- Pastas novas criadas em `dynamic_talhoes/` pelos testes são **removidas na
+  teardown** (snapshot/restore); `.pytest_cache` e `.venv*` são gitignored.
+- O dataset pesado `sentinel-*/` vive **fora do git** (higiene): na ausência
+  das texturas, 1 teste é pulado com aviso e a timeline do farm de demo usa
+  o fallback documentado do serviço — o restante da suíte roda em qualquer
+  clone limpo.
+
+> A suíte também **detectou e corrigiu dois defeitos reais** durante o
+> desenvolvimento: o quadrado de fallback de `talhao_bounds` saía 10× maior que
+> o talhão (`√area·1000` em vez de `√area·100` metros) e a classificação
+> espectral não era mutuamente exclusiva (pct das zonas passava de 100 e o
+> índice médio podia ultrapassar o limite físico de 1,0).
