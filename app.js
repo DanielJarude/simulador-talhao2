@@ -1,11 +1,35 @@
 // app.js - Camada de Integração Front-end <-> Back-end FastAPI (Orion Agro)
+// As URLs usam base relativa a `API_URL` (única constante de ambiente do front).
 const API_URL = "http://localhost:8000/api";
+
+// ---------------------------------------------------------------------------
+// Autenticação (JWT)
+// ---------------------------------------------------------------------------
+const TOKEN_KEY = "orion_auth_token";
+const USER_KEY = "orion_auth_user";
+
+/** Headers de autorização a partir do token em localStorage. */
+function authHeaders() {
+  const token = localStorage.getItem(TOKEN_KEY);
+  return token ? { "Authorization": `Bearer ${token}` } : {};
+}
+
+function storeSession(data) {
+  // `data` pode ser {access_token, user} (login) ou o usuário direto
+  if (data && data.access_token) {
+    localStorage.setItem(TOKEN_KEY, data.access_token);
+    if (data.user) localStorage.setItem(USER_KEY, JSON.stringify(data.user));
+    return data.user;
+  }
+  localStorage.setItem(USER_KEY, JSON.stringify(data));
+  return data;
+}
 
 /**
  * SERVIÇO DE AUTENTICAÇÃO
  */
 const AuthService = {
-  // Login de Usuário
+  // Login de Usuário — devolve e persiste o token JWT
   login: async (email, password) => {
     try {
       const res = await fetch(`${API_URL}/auth/login`, {
@@ -14,32 +38,34 @@ const AuthService = {
         body: JSON.stringify({ email, password })
       });
       if (!res.ok) {
-        const errData = await res.json();
+        const errData = await res.json().catch(() => ({}));
         throw new Error(errData.detail || "E-mail ou senha incorretos.");
       }
-      const user = await res.json();
-      localStorage.setItem("orion_auth_user", JSON.stringify(user));
-      return { success: true, user };
+      const data = await res.json();
+      const user = storeSession(data);
+      return { success: true, user, token: data.access_token || null };
     } catch (e) {
       return { success: false, message: e.message };
     }
   },
 
-  // Cadastro de Novo Usuário
-  register: async (name, email, password, role) => {
+  // Cadastro de Novo Usuário — após criar a conta, faz login automático
+  // para já obter o token (necessário p/ criar/editar fazendas).
+  // Obs.: o papel (role) NÃO é enviado — a API atribui o papel público
+  // padrão de forma fixa (auto-registro como admin é impossível).
+  register: async (name, email, password, _role = undefined) => {
     try {
       const res = await fetch(`${API_URL}/auth/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, email, password, role })
+        body: JSON.stringify({ name, email, password })
       });
       if (!res.ok) {
-        const errData = await res.json();
+        const errData = await res.json().catch(() => ({}));
         throw new Error(errData.detail || "Erro ao cadastrar usuário.");
       }
-      const user = await res.json();
-      localStorage.setItem("orion_auth_user", JSON.stringify(user));
-      return { success: true, user };
+      await res.json(); // UserResponse
+      return await this.login(email, password);
     } catch (e) {
       return { success: false, message: e.message };
     }
@@ -48,23 +74,28 @@ const AuthService = {
   // Recupera usuário ativo da sessão
   getCurrentUser: () => {
     try {
-      return JSON.parse(localStorage.getItem("orion_auth_user"));
+      return JSON.parse(localStorage.getItem(USER_KEY));
     } catch {
       return null;
     }
   },
 
+  // Token atual (ou null)
+  getAuthToken: () => localStorage.getItem(TOKEN_KEY),
+
   // Encerra a sessão
   logout: () => {
-    localStorage.removeItem("orion_auth_user");
+    localStorage.removeItem(USER_KEY);
+    localStorage.removeItem(TOKEN_KEY);
   }
 };
 
 /**
  * SERVIÇO DE GESTÃO DE PROPRIEDADES & TALHÕES (CRUD COMPLETO)
+ * As mutações (create/update/delete) exigem Bearer token.
  */
 const FarmService = {
-  // Listar todas as fazendas cadastradas
+  // Listar todas as fazendas cadastradas (leitura pública)
   getFarms: async () => {
     try {
       const res = await fetch(`${API_URL}/farms`);
@@ -76,7 +107,7 @@ const FarmService = {
     }
   },
 
-  // Buscar detalhes de uma fazenda por ID
+  // Buscar detalhes de uma fazenda por ID (leitura pública)
   getFarmById: async (id) => {
     try {
       const res = await fetch(`${API_URL}/farms/${id}`);
@@ -95,7 +126,7 @@ const FarmService = {
     try {
       const res = await fetch(`${API_URL}/farms`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({
           name: name.trim(),
           city: city.trim(),
@@ -108,8 +139,11 @@ const FarmService = {
         })
       });
 
+      if (res.status === 401) {
+        throw new Error("Sessão expirada — faça login novamente (auth.html).");
+      }
       if (!res.ok) {
-        const errData = await res.json();
+        const errData = await res.json().catch(() => ({}));
         throw new Error(errData.detail || "Erro ao salvar propriedade no servidor.");
       }
 
@@ -125,7 +159,7 @@ const FarmService = {
     try {
       const res = await fetch(`${API_URL}/farms/${id}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({
           name: name.trim(),
           city: city.trim(),
@@ -138,8 +172,11 @@ const FarmService = {
         })
       });
 
+      if (res.status === 401) {
+        throw new Error("Sessão expirada — faça login novamente (auth.html).");
+      }
       if (!res.ok) {
-        const errData = await res.json();
+        const errData = await res.json().catch(() => ({}));
         throw new Error(errData.detail || "Erro ao atualizar propriedade no servidor.");
       }
 
@@ -154,11 +191,15 @@ const FarmService = {
   deleteFarm: async (id) => {
     try {
       const res = await fetch(`${API_URL}/farms/${id}`, {
-        method: "DELETE"
+        method: "DELETE",
+        headers: { ...authHeaders() }
       });
 
+      if (res.status === 401) {
+        throw new Error("Sessão expirada — faça login novamente (auth.html).");
+      }
       if (!res.ok) {
-        const errData = await res.json();
+        const errData = await res.json().catch(() => ({}));
         throw new Error(errData.detail || "Erro ao excluir propriedade no servidor.");
       }
 
@@ -198,18 +239,31 @@ const SatelliteService = {
       console.warn("Erro no SatelliteService.getTalhaoTexture:", e);
       return null;
     }
+  },
+
+  // Obter heightmap topográfico (Copernicus DEM GL-30) do talhão.
+  // available=false → o 3D mantém o deslocamento via NDVI (fallback).
+  getTalhaoHeightmap: async (farmId) => {
+    try {
+      const res = await fetch(`${API_URL}/talhao/${farmId}/heightmap`);
+      if (!res.ok) throw new Error("Erro ao obter heightmap do talhão.");
+      return await res.json();
+    } catch (e) {
+      console.warn("Erro no SatelliteService.getTalhaoHeightmap:", e);
+      return null;
+    }
   }
 };
 
 /**
- * SERVIÇO DE SIMULAÇÃO WHAT-IF (BACK-END)
+ * SERVIÇO DE SIMULAÇÃO WHAT-IF (BACK-END, protegida por JWT)
  */
 const SimulationService = {
   calculateWhatIf: async (nitrogenKg, waterMm, pestPressurePct, areaHa = 42.54) => {
     try {
       const res = await fetch(`${API_URL}/simulation/what-if`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({
           nitrogen_kg: parseFloat(nitrogenKg),
           water_mm: parseFloat(waterMm),
@@ -217,6 +271,9 @@ const SimulationService = {
           area_ha: parseFloat(areaHa)
         })
       });
+      if (res.status === 401) {
+        throw new Error("Sessão expirada — faça login novamente (auth.html).");
+      }
       if (!res.ok) throw new Error("Erro ao processar simulação.");
       return await res.json();
     } catch (e) {

@@ -501,7 +501,7 @@
     }
 
     function downloadPDFReport() {
-      const url = `http://localhost:8000/api/reports/farm/${activeFarm.id || 1}/pdf?layer=${currentLayer}&date_index=${currentIndex}&n_kg=${factorNitro}&w_mm=${factorWater}&pest_pct=${factorPest}`;
+      const url = `${API_URL}/reports/farm/${activeFarm.id || 1}/pdf?layer=${currentLayer}&date_index=${currentIndex}&n_kg=${factorNitro}&w_mm=${factorWater}&pest_pct=${factorPest}`;
       window.open(url, '_blank');
     }
 
@@ -573,11 +573,12 @@
       loadAnalyticsData();
       updateTextures();
       loadLiveWeather();
+      loadHeightmap(); // Copernicus DEM GL-30 (fire-and-forget; fallback p/ NDVI)
     }
 
     async function loadAnalyticsData() {
       try {
-        const res = await fetch(`http://localhost:8000/api/analytics/farm/${activeFarm.id || 1}?layer=${currentLayer}`);
+        const res = await fetch(`${API_URL}/analytics/farm/${activeFarm.id || 1}?layer=${currentLayer}`);
         if (!res.ok) return;
         const data = await res.json();
         analyticsTimelineCache = data.timeline || [];
@@ -678,7 +679,7 @@
 
     async function loadLiveWeather() {
       try {
-        const res = await fetch(`http://localhost:8000/api/weather/farm/${activeFarm.id || 1}`);
+        const res = await fetch(`${API_URL}/weather/farm/${activeFarm.id || 1}`);
         if (!res.ok) return;
         const wData = await res.json();
 
@@ -765,18 +766,23 @@
       document.getElementById(`tab-${screenId}`).classList.add('active');
 
       if (screenId === 'map') {
+        stopRenderLoop();
         setTimeout(() => map.invalidateSize(), 150);
       } else if (screenId === '3d') {
         setTimeout(() => {
           onWindowResize();
         }, 100);
+        startRenderLoop(); // inicia (ou retoma) o rAF apenas aqui
+      } else {
+        stopRenderLoop();
       }
     }
 
     // 3. Three.js - Simulador 3D Split-View
     const container = document.getElementById('canvas-container');
     const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setPixelRatio(window.devicePixelRatio);
+    // Teto no pixel ratio: em 4K/Retina (dpr 2-3) o fill-rate triplica sem ganho visual
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(window.innerWidth, window.innerHeight - 56);
     renderer.autoClear = false;
     container.appendChild(renderer.domElement);
@@ -803,8 +809,46 @@
     });
 
     const geo = new THREE.PlaneGeometry(50, 50, 64, 64);
+
+    // ---------- CACHE DE TEXTURAS (gerenciamento de VRAM) ----------
+    // LRU com limite de texturas ativas: na evicção o .dispose() libera a
+    // memória GPU, corrigindo o vazamento ao trocar datas/camadas.
+    const MAX_CACHED_TEXTURES = 8; // 8 texturas 256×256 RGBA ≈ 2,6 MB de VRAM
     const textureLoader = new THREE.TextureLoader();
     textureLoader.setCrossOrigin('anonymous');
+    const textureCache = new Map();     // key -> THREE.Texture (ordem de inserção = LRU)
+    const textureInFlight = new Map();  // key -> Promise<THREE.Texture> (dedupe de cargas paralelas)
+
+    function getCachedTexture(key, url) {
+      const hit = textureCache.get(key);
+      if (hit) {
+        textureCache.delete(key);   // MRU: atualiza a ordem de acesso
+        textureCache.set(key, hit);
+        return Promise.resolve(hit);
+      }
+      if (textureInFlight.has(key)) return textureInFlight.get(key);
+
+      const pending = new Promise((resolve, reject) => {
+        textureLoader.load(url, (tex) => {
+          tex.generateMipmaps = true;
+          tex.minFilter = THREE.LinearMipmapLinearFilter;
+          tex.magFilter = THREE.LinearFilter;
+          textureCache.set(key, tex);
+          while (textureCache.size > MAX_CACHED_TEXTURES) {
+            const oldestKey = textureCache.keys().next().value; // LRU
+            textureCache.get(oldestKey).dispose();              // libera VRAM
+            textureCache.delete(oldestKey);
+          }
+          resolve(tex);
+        }, undefined, (err) => {
+          console.warn(`Falha ao carregar textura: ${url}`, err);
+          reject(err);
+        });
+      });
+      textureInFlight.set(key, pending);
+      pending.finally(() => textureInFlight.delete(key));
+      return pending;
+    }
 
     const matReal = new THREE.MeshStandardMaterial({ roughness: 0.85, displacementScale: 4.0, side: THREE.DoubleSide });
     const meshReal = new THREE.Mesh(geo, matReal);
@@ -816,6 +860,43 @@
 
     let isPlaying = false, playInterval = null;
     let factorNitro = 0, factorWater = 0, factorPest = 0;
+
+    // ---------- TOPOGRAFIA REAL (Copernicus DEM GL-30) ----------
+    // heightTexture = heightmap do DEM (ou null → fallback p/ NDVI)
+    // terrainScale  = escala de deslocamento derivada do alívio real
+    let heightTexture = null;
+    let terrainScale = 4.0;
+
+    async function loadHeightmap() {
+      const info = await SatelliteService.getTalhaoHeightmap(activeFarm.id);
+      if (!info || !info.available || !info.heightmap_url) {
+        console.info("DEM GL-30: heightmap indisponível — usando NDVI como deslocamento.", info && info.reason);
+        return;
+      }
+      try {
+        // Mesma LRU de texturas: 1 heightmap por fazenda, sem custo extra de VRAM
+        const key = `height|${activeFarm.id}|${info.heightmap_url}`;
+        const tex = await getCachedTexture(key, info.heightmap_url);
+        // Dados de altura são lineares — sem conversão sRGB (r152+ ignora em r128)
+        if ("colorSpace" in tex) tex.colorSpace = THREE.NoColorSpace;
+
+        heightTexture = tex;
+        // Escala de relevo: 8 m de alívio ≈ 2 unidades do mundo (teto 8)
+        const relief = Math.max(1, (info.max_elevation_m || 0) - (info.min_elevation_m || 0));
+        terrainScale = Math.min(8, Math.max(2, relief / 8));
+
+        matReal.displacementMap = tex;
+        matReal.displacementScale = terrainScale;
+        matReal.needsUpdate = true;
+        matSim.displacementMap = tex;
+        matSim.needsUpdate = true;
+        calculateImpact(); // re-aplica a escala what-if no lado simulado
+
+        console.info(`DEM GL-30: relevo real ativo (alívio ~${relief.toFixed(0)} m, ${info.min_elevation_m}–${info.max_elevation_m} m)`);
+      } catch (e) {
+        console.warn("Falha ao aplicar heightmap DEM:", e);
+      }
+    }
 
     function calculateImpact() {
       const area = activeFarm.total_area || 42.54;
@@ -831,7 +912,7 @@
       document.getElementById('dash-yield-val').innerText = `${deltaYield >= 0 ? '+' : ''}${deltaYield} sc/ha`;
       document.getElementById('dash-money-val').innerText = `${totalFinance >= 0 ? '+' : ''}${totalFinance.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`;
 
-      matSim.displacementScale = Math.max(1.0, 4.0 + (deltaNDVI * 8.0));
+      matSim.displacementScale = Math.max(1.0, terrainScale + (deltaNDVI * 8.0));
 
       if (deltaNDVI >= 0) {
         matSim.color.setRGB(1.0 - (deltaNDVI * 0.5), 1.0 + (deltaNDVI * 0.8), 1.0 - (deltaNDVI * 0.5));
@@ -870,35 +951,38 @@
       const dateStr = dates[currentIndex];
       document.getElementById('date-label').innerText = dateStr.split('-').reverse().join('/');
 
-      let texturePath = `sentinel-21KXQ-${dateStr}/${currentLayer}_cloudless_min_max.png`;
+      let textureUrl = `sentinel-21KXQ-${dateStr}/${currentLayer}_cloudless_min_max.png`;
 
       if (activeFarm.id !== 1) {
         try {
-          const res = await fetch(`http://localhost:8000/api/talhao/${activeFarm.id}/texture?layer=${currentLayer}`);
+          const res = await fetch(`${API_URL}/talhao/${activeFarm.id}/texture?layer=${currentLayer}`);
           if (res.ok) {
             const data = await res.json();
-            texturePath = data.texture_url;
+            textureUrl = data.texture_url;
           }
         } catch (e) {
           console.warn("Usando textura padrão local.");
         }
       }
 
-      textureLoader.load(texturePath, (tex) => {
-        tex.generateMipmaps = true;
-        tex.needsUpdate = true;
+      // Cache LRU: evita realocar a mesma textura e o .dispose() na evicção
+      // corrige o vazamento de VRAM entre datas/camadas
+      const key = `${activeFarm.id}|${currentLayer}|${textureUrl}`;
+      const tex = await getCachedTexture(key, textureUrl);
 
-        matReal.map = tex;
-        matReal.displacementMap = tex;
-        matReal.needsUpdate = true;
+      // NDVI = cor (map); DEM GL-30 = relevo (displacementMap).
+      // Sem heightmap disponível, o NDVI segue fazendo o deslocamento (fallback).
+      const disp = heightTexture || tex;
 
-        matSim.map = tex;
-        matSim.displacementMap = tex;
-        matSim.needsUpdate = true;
+      matReal.map = tex;
+      matReal.displacementMap = disp;
+      matReal.needsUpdate = true;
 
-        calculateImpact();
-      });
+      matSim.map = tex;
+      matSim.displacementMap = disp;
+      matSim.needsUpdate = true;
 
+      calculateImpact();
       updateZoneCards(currentIndex);
     }
 
@@ -935,10 +1019,25 @@
     }
     window.addEventListener('resize', onWindowResize);
 
-    function animate() {
-      requestAnimationFrame(animate);
+    // ---------- LOOP DE RENDERIZAÇÃO (sob demanda) ----------
+    // O rAF só roda com a aba 3D ativa: zera o consumo de CPU/GPU no
+    // dashboard/mapa e o navegador ainda suspende o rAF com a aba oculta.
+    let renderLoopRunning = false;
 
-      if (currentScreen !== '3d') return;
+    function startRenderLoop() {
+      if (!renderLoopRunning) {
+        renderLoopRunning = true;
+        requestAnimationFrame(animate);
+      }
+    }
+
+    function stopRenderLoop() {
+      renderLoopRunning = false;
+    }
+
+    function animate() {
+      if (!renderLoopRunning || currentScreen !== '3d') return; // para de fato
+      requestAnimationFrame(animate);
 
       controls.update();
 
@@ -957,7 +1056,8 @@
       renderer.setScissorTest(true);
       renderer.render(sceneSim, camera);
     }
-    animate();
+    // O loop inicia sob demanda via startRenderLoop() ao abrir a aba 3D
+    // (antes: `animate();` mantinha o rAF ativo para sempre desde o load).
 
     loadActiveFarm();
   </script>

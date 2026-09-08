@@ -2,6 +2,8 @@ import os
 import numpy as np
 from PIL import Image
 
+from config import settings
+
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def extract_layer_stats(image_path: str, total_area_ha: float = 42.54):
@@ -20,14 +22,21 @@ def extract_layer_stats(image_path: str, total_area_ha: float = 42.54):
     green_channel = arr[:, :, 1][valid_mask].astype(float)
     blue_channel = arr[:, :, 2][valid_mask].astype(float)
 
-    stress_pixels = np.sum((red_channel > 180) & (green_channel < 100))
-    mid_pixels = np.sum((red_channel > 150) & (green_channel > 100) & (blue_channel < 50))
-    good_pixels = np.sum((green_channel > 120) & (blue_channel < 100))
-    dense_pixels = np.sum(blue_channel > 150)
+    # Classificação MUTUAMENTE EXCLUSIVA (cada pixel entra em exatamente uma
+    # zona), na ordem de prioridade stress → medium → dense → good (catch-all).
+    # Assim os pcts somam 100 e o índice médio fica preso a [0, 1].
+    r = red_channel
+    g = green_channel
+    b = blue_channel
+    is_stress = (r > 180) & (g < 100)
+    is_mid = (~is_stress) & (r > 150) & (g > 100) & (b < 50)
+    is_dense = (~is_stress) & (~is_mid) & (b > 150)
+    is_good = ~(is_stress | is_mid | is_dense)   # resto do talhão
 
-    classified = stress_pixels + mid_pixels + good_pixels + dense_pixels
-    if classified < total_valid_pixels:
-        good_pixels += (total_valid_pixels - classified)
+    stress_pixels = np.sum(is_stress)
+    mid_pixels = np.sum(is_mid)
+    dense_pixels = np.sum(is_dense)
+    good_pixels = np.sum(is_good)
 
     pct_stress = round((stress_pixels / total_valid_pixels) * 100, 1)
     pct_mid = round((mid_pixels / total_valid_pixels) * 100, 1)
@@ -96,20 +105,31 @@ def estimate_seasonal_yield(timeline: list, area_ha: float = 42.54):
     }
 
 
-def get_farm_temporal_series(farm_id: int, layer: str = "ndvi", total_area_ha: float = 42.54):
-    dates = [
-        "2025-04-07", "2025-04-22", "2025-05-02", "2025-06-11",
-        "2025-10-04", "2025-10-11", "2025-11-18", "2025-11-20",
-        "2025-12-10", "2025-12-18", "2026-01-27", "2026-02-11", "2026-03-08"
-    ]
-    
+def get_farm_temporal_series(
+    farm_id: int,
+    layer: str = "ndvi",
+    total_area_ha: float = 42.54,
+    talhao_id: int | None = None,
+):
+    """
+    Série temporal de índices espectrais da fazenda.
+
+    `talhao_id` é o ID REAL do talhão (a antiga versão usava `farm_id`
+    duas vezes no nome da pasta — `farm_{id}_talhao_{id}` — e, em
+    fazendas multi-talhão, caía em fallback incorreto).
+    As datas vêm de `config.settings.sentinel_dates` (fonte única).
+    """
+    if talhao_id is None:
+        talhao_id = farm_id  # compatibilidade com chamadas antigas
+    dates = settings.sentinel_dates
+
     series_data = []
-    
+
     for d in dates:
         if farm_id == 1:
             img_path = os.path.join(BASE_DIR, f"sentinel-21KXQ-{d}", f"{layer}_cloudless_min_max.png")
         else:
-            img_path = os.path.join(BASE_DIR, "dynamic_talhoes", f"farm_{farm_id}_talhao_{farm_id}", f"{layer}_cloudless_min_max.png")
+            img_path = os.path.join(BASE_DIR, "dynamic_talhoes", f"farm_{farm_id}_talhao_{talhao_id}", f"{layer}_cloudless_min_max.png")
 
         stats = extract_layer_stats(img_path, total_area_ha)
         
