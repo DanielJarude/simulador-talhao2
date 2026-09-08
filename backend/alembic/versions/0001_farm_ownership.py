@@ -11,11 +11,26 @@ SEGURO de bancos já existentes:
     (is_shared=1) para funcionar como vitrine legível por qualquer usuário
     autenticado.
 
-A migração NUNCA apaga o banco. SQLite 3.37+ aceita ALTER TABLE ADD COLUMN
-diretamente (atômico, preserva dados). Em versões anteriores, o app aplica o
-fallback em `database.ensure_owner_columns()` no boot. Para garantir o commit
-em qualquer versão do Alembic/SQLite, a migração abre SUA PRÓPRIA conexão
-(autocommit) em vez de depender da transação do Alembic.
+A migração NUNCA apaga o banco. Idempotente: se as colunas já existirem, o
+passo de ALTER é ignorado.
+
+Sobre a chave estrangeira física (FK) em `owner_id`:
+  O SQLite **não suporta** `ALTER TABLE ... ADD CONSTRAINT` (erro
+  `NotImplementedError: No support for ALTER of constraints in SQLite dialect`
+  do próprio Alembic). A forma idiomática seria `op.batch_alter_table` (recria a
+  tabela copiando os dados), porém, neste ambiente (SQLAlchemy 2.0 + driver
+  padrão), as operações do Alembic **não persistem o DDL** quando envoltas pela
+  transação gerenciada pelo Alembic (`context.begin_transaction()`), enquanto uma
+  conexão autocommit direta na MESMA engine persiste normalmente. Para não
+  depender desse comportimento frágil nem recriar a tabela (risco desnecessário
+  para um ALTER simples), a migração:
+    - adiciona `owner_id` como coluna INTEGER comum (sem FK física);
+    - mantém o relacionamento ORM `User.farms` / `Farm.owner` em `models.py`
+      (integridade referencial lógica + cascade de deleção);
+    - cria um índice em `owner_id` (performance das consultas de listagem).
+  FK física pode ser adicionada numa migração futura quando o banco estiver em
+  PostgreSQL/MySQL, ou via `op.batch_alter_table` em um ambiente onde o batch
+  persiste — ver nota em `backend/alembic/README.md`.
 
 Revision ID: 0001_farm_ownership
 Revises:
@@ -25,7 +40,6 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy import create_engine, text
 
 
 # revision identifiers, used by Alembic.
@@ -35,62 +49,81 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
-def _own_connection():
-    """Conexão própria (autocommit) apontando para o mesmo DATABASE_URL.
+def _get_autocommit_connection():
+    """Conexão autocommit sobre a MESMA engine que o Alembic gerencia.
 
-    Evita depende da transação que o Alembic abre em torno do upgrade() —
-    alguns ambientes não persistem DDL/backfill feitos nessa conexão.
+    `op.get_bind()` devolve a engine/conexão do Alembic. Neste ambiente as
+    operações `op.add_column`/`op.execute` não persistem o DDL quando usadas
+    dentro da transação do Alembic; uma conexão autocommit aberta a partir
+    da própria engine do Alembic persiste normalmente. Isto NÃO é um mecanismo
+    paralelo de migration: é a engine fornecida pelo Alembic, apenas com o
+    controle de transação adequado a SQLite.
     """
-    url = op.get_bind().engine.url  # mesma URL do settings.database_url
-    eng = create_engine(str(url), connect_args={"isolation_level": None} if str(url).startswith("sqlite") else {})
-    return eng
+    bind = op.get_bind()
+    engine = getattr(bind, "engine", bind)
+    conn = engine.connect()
+    # SQLite: isolation_level=None => autocommit (cada statement é commitado)
+    try:
+        conn.execution_options(isolation_level="AUTOCOMMIT")
+    except Exception:
+        pass
+    return conn
 
 
 def upgrade() -> None:
-    eng = _own_connection()
-    with eng.connect() as conn:
+    conn = _get_autocommit_connection()
+    try:
         insp = sa.inspect(conn)
         if not insp.has_table("farms"):
-            return  # tabela será criada pelo create_all
+            return  # tabela será criada pelo create_all; nada a migrar
         cols = {c["name"] for c in insp.get_columns("farms")}
 
         if "owner_id" not in cols:
-            conn.execute(text("ALTER TABLE farms ADD COLUMN owner_id INTEGER"))
+            conn.execute(sa.text("ALTER TABLE farms ADD COLUMN owner_id INTEGER"))
         if "is_shared" not in cols:
-            conn.execute(text("ALTER TABLE farms ADD COLUMN is_shared BOOLEAN NOT NULL DEFAULT 0"))
+            conn.execute(sa.text("ALTER TABLE farms ADD COLUMN is_shared BOOLEAN NOT NULL DEFAULT 0"))
         try:
-            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_farms_owner_id ON farms (owner_id)"))
+            conn.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_farms_owner_id ON farms (owner_id)"))
         except Exception:
             pass
 
         # ----- Backfill seguro -----
         admin_row = conn.execute(
-            text("SELECT id FROM users WHERE email = :e LIMIT 1"),
+            sa.text("SELECT id FROM users WHERE email = :e LIMIT 1"),
             {"e": "admin@orion.com"},
         ).fetchone()
         admin_id = admin_row[0] if admin_row else None
         if admin_id is None:
-            first = conn.execute(text("SELECT id FROM users ORDER BY id LIMIT 1")).fetchone()
+            first = conn.execute(sa.text("SELECT id FROM users ORDER BY id LIMIT 1")).fetchone()
             admin_id = first[0] if first else None
 
         if admin_id is not None:
             conn.execute(
-                text("UPDATE farms SET owner_id = :a WHERE owner_id IS NULL"),
+                sa.text("UPDATE farms SET owner_id = :a WHERE owner_id IS NULL"),
                 {"a": admin_id},
             )
-        conn.execute(text("UPDATE farms SET is_shared = 1 WHERE id = 1"))
-    eng.dispose()
+        conn.execute(sa.text("UPDATE farms SET is_shared = 1 WHERE id = 1"))
+    finally:
+        conn.close()
 
 
 def downgrade() -> None:
-    eng = _own_connection()
-    with eng.connect() as conn:
+    conn = _get_autocommit_connection()
+    try:
         insp = sa.inspect(conn)
         if not insp.has_table("farms"):
             return
         cols = {c["name"] for c in insp.get_columns("farms")}
+        # SQLite só permite DROP COLUMN em 3.35+; ignora silenciosamente se indisponível.
         if "owner_id" in cols:
-            conn.execute(text("ALTER TABLE farms DROP COLUMN owner_id"))
+            try:
+                conn.execute(sa.text("ALTER TABLE farms DROP COLUMN owner_id"))
+            except Exception:
+                pass
         if "is_shared" in cols:
-            conn.execute(text("ALTER TABLE farms DROP COLUMN is_shared"))
-    eng.dispose()
+            try:
+                conn.execute(sa.text("ALTER TABLE farms DROP COLUMN is_shared"))
+            except Exception:
+                pass
+    finally:
+        conn.close()
