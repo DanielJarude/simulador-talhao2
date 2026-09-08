@@ -12,6 +12,10 @@ email-validator==2.2.0
 # Banco de dados
 sqlalchemy==2.0.36
 
+# Migrações de esquema (PR #3 — ownership + FK física em SQLite via batch).
+# Em produção, rode `alembic upgrade head` antes de subir a app.
+alembic==1.14.0
+
 # Autenticação
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4

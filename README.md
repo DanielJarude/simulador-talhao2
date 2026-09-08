@@ -99,46 +99,110 @@ python -m http.server 5501
 |--------|------|:----:|-----------|
 | `POST` | `/api/auth/register` | — | Cria usuário (bcrypt) — papel **fixo** `Produtor Rural`; `role` no payload é ignorado |
 | `POST` | `/api/auth/login` | — | Valida bcrypt e **emite o token JWT** (`{access_token, token_type, expires_in, user}`) |
-| `GET` | `/api/farms` · `/api/farms/{id}` | — | Lista/busca fazendas + talhões |
-| `POST` | `/api/farms` | 🔑 | Cria fazenda + talhão (gera texturas espectrais) |
-| `PUT` | `/api/farms/{id}` | 🔑🛡️ | Atualiza fazenda + talhão (**admin** — modificação estrutural sensível) |
-| `DELETE` | `/api/farms/{id}` | 🔑🛡️ | Remove fazenda e talhões vinculados (**admin** — destrutiva) |
-| `GET` | `/api/talhao/{farm_id}/texture?layer=ndvi` | — | URL da textura espectral (nativa ou dinâmica) |
-| `GET` | `/api/talhao/{farm_id}/heightmap?size=256` | — | **Heightmap Copernicus DEM GL-30** (relevo p/ Three.js) |
-| `GET` | `/api/talhao/dates` | — | Datas Sentinel-2 e índices disponíveis |
-| `GET` | `/api/analytics/farm/{farm_id}` | — | Série temporal + zoneamento + estimativa de safras |
-| `GET` | `/api/weather/farm/{farm_id}` | — | Clima NASA POWER (cache TTL de 60 min por padrão) |
+| `GET` | `/api/farms` · `/api/farms/{id}` | 🔑 | **Privado por usuário** — lista/busca só as próprias fazendas (admin vê todas); farm de demo (id=1) é compartilhada (legível por qualquer usuário autenticado) |
+| `POST` | `/api/farms` | 🔑 | Cria fazenda **vinculada ao usuário logado** (gera texturas espectrais) |
+| `PUT` | `/api/farms/{id}` | 🔑 | Atualiza a **própria** fazenda (ou qualquer uma, se `admin`) |
+| `DELETE` | `/api/farms/{id}` | 🔑 | Remove a **própria** fazenda (ou qualquer uma, se `admin`) |
+| `GET` | `/api/talhao/{farm_id}/texture?layer=ndvi` | 🔑 | URL da textura espectral (nativa para farm demo, dinâmica autenticada p/ demais) |
+| `GET` | `/api/talhao/{farm_id}/heightmap?size=256` | 🔑 | **Heightmap Copernicus DEM GL-30** (relevo p/ Three.js) |
+| `GET` | `/api/talhao/dates` | — | Datas Sentinel-2 e índices disponíveis (catálogo — público) |
+| `GET` | `/api/analytics/farm/{farm_id}` | 🔑 | Série temporal + zoneamento + estimativa de safras (da fazenda acessível) |
+| `GET` | `/api/weather/farm/{farm_id}` | 🔑 | Clima NASA POWER (cache TTL de 60 min por padrão) |
 | `POST` | `/api/simulation/what-if` | 🔑 | Impacto de N/água/pragas sobre NDVI, safra e financeiro |
-| `GET` | `/api/reports/farm/{farm_id}/pdf` | — | Laudo técnico em PDF |
+| `GET` | `/api/reports/farm/{farm_id}/pdf` | 🔑 | Laudo técnico em PDF (da fazenda acessível) |
 
-> 🔑 = exige `Authorization: Bearer <access_token>` (401 sem token).
-> 🛡️ = exige, além do token, papel **admin** (403 Forbidden para papéis insuficientes).
+> 🔑 = exige `Authorization: Bearer <access_token>` (401 sem token). Leituras de fazenda
+> NÃO são mais públicas (PR #3 — privacidade multiusuário).
+
+### 🏡 Ownership de Fazendas (PR #3) — privacidade multiusuário
+
+Cada fazenda pertence a um **dono** (`farms.owner_id` → `users.id`). Regras:
+
+- **Usuário comum**: só enxerga/gere as **próprias** fazendas. `GET /api/farms` retorna apenas as
+  suas; `POST` cria vinculada a ele (o `owner_id` **nunca** vem do payload — fail-closed); `PUT`/`DELETE`
+  funcionam só na própria farm.
+- **Admin** (`admin`): tem **acesso global** — lista/ler/edita/exclui qualquer fazenda.
+- **Farm de demonstração (id=1)**: pertence ao admin demo, mas é marcada como **compartilhada**
+  (`is_shared=true`) para funcionar como vitrine — **qualquer usuário autenticado** pode lê-la
+  (analytics/clima/textura/heightmap/PDF), mas não editá-la/excluí-la.
+- **Anônimo**: qualquer leitura de fazenda → **401** (autenticação precede autorização).
+- **Fazenda de OUTRO usuário**: o backend responde **404** (e não 403), evitando expor a existência
+  do recurso alheio.
+
+> O usuário demo `admin@orion.com / 123456` possui role `admin` (seed) e é o dono da farm demo.
 
 ### 🛡️ RBAC — matriz de acesso
 
-| Rota | Anônimo | Usuário comum (`user`, `Produtor Rural`, `Operador de Máquinas`, `Engenheiro Agrônomo`) | Admin (`admin`) |
+| Rota | Anônimo | Usuário comum (própria farm / demo) | Admin (`admin`) |
 |------|:-------:|:---:|:---:|
-| `GET` (leitura) | 200 | 200 | 200 |
-| `POST /api/farms` | 401 | **201** | 201 |
-| `POST /api/simulation/what-if` | 401 | **200** | 200 |
-| `PUT /api/farms/{id}` | 401 | **403** | 200 |
-| `DELETE /api/farms/{id}` | 401 | **403** | 200 |
-
-> O usuário demo `admin@orion.com / 123456` possui role `admin` (seed).
+| `GET /api/farms` · `/api/farms/{id}` | **401** | **200** (própria / demo) · **404** (alheia) | 200 (todas) |
+| `POST /api/farms` | **401** | **201** (dono = usuário logado) | 201 |
+| `GET` `/api/talhao/...`, `/api/analytics/...`, `/api/weather/...`, `/api/reports/.../pdf` | **401** | **200** (própria / demo) · **404** (alheia) | 200 |
+| `PUT` / `DELETE /api/farms/{id}` | **401** | **200** (própria) · **404** (alheia/demo) | 200 (qualquer) |
+| `POST /api/simulation/what-if` | 401 | 200 | 200 |
 
 - A validação usa o claim `role` do **payload do token JWT** (snapshot do login), comparado à hierarquia `role_hierarchy` (`config.py`, sobrescrevível por `ROLE_HIERARCHY` no `.env`).
-- O papel de nível máximo (`admin`) tem **acesso global** a rotas protegidas por papéis específicos; papéis desconhecidos/ausentes caem no nível de `user` (**fail-closed**).
+- O papel de nível máximo (`admin`) tem **acesso global**; papéis desconhecidos/ausentes caem no nível de `user` (**fail-closed**).
 - Autenticação precede autorização: sem token (ou token inválido) o resultado é sempre **401**, nunca 403.
+
+## 🗄️ Migrações (Alembic)
+
+O esquema evolui via **Alembic** (`backend/alembic/`). A revisão
+`0001_farm_ownership` mantém `farms.owner_id` como FK física para `users.id`,
+adiciona `is_shared` e faz o **backfill seguro** de bancos legados (fazendas
+órfãs → admin demo; farm demo id=1 → compartilhada).
+
+Em SQLite, constraints não podem ser adicionadas por `ALTER TABLE ... ADD
+CONSTRAINT`. Por isso, quando o banco legado ainda não tem a estrutura final, a
+migration usa `batch_alter_table()` para reconstruir somente `farms` dentro da
+transação do Alembic. O processo preserva dados, IDs, talhões, constraints e
+índices existentes. `is_shared` usa `DEFAULT 0` apenas durante a cópia das
+linhas legadas; uma segunda etapa remove o default físico, deixando o schema
+final equivalente ao produzido por `Base.metadata.create_all()`.
+
+```bash
+cd backend
+# 1. Gere o arquivo .env a partir do exemplo (se ainda não tiver)
+cp .env.example .env
+# 2. Aplique as migrações pendentes (idempotente)
+alembic upgrade head
+# 3. (Opcional) criar nova revisão após mudar models.py
+alembic revision --autogenerate -m "descreva a mudança"
+```
+
+- O `DATABASE_URL` vem de `config.settings` (12-factor / `.env`) — não duplicado no `alembic.ini`.
+- O `env.py` controla explicitamente a transação SQLite e registra
+  `0001_farm_ownership` em `alembic_version`. Não há conexão AUTOCOMMIT paralela.
+- Durante o batch SQLite, o enforcement da conexão de migration é desligado
+  apenas para permitir a troca segura de uma tabela referenciada por
+  `talhoes`; a operação ocorre na transação explícita e o enforcement é
+  religado antes do fechamento da conexão. As conexões normais da aplicação
+  habilitam `PRAGMA foreign_keys=ON` centralmente em `database.py`.
+- O `lifespan` aplica `alembic upgrade head` no boot e interrompe a inicialização
+  se a migration falhar, evitando iniciar com schema divergente.
+- O teste dedicado `tests/test_schema_parity.py` compara banco novo e banco
+  legado migrado, incluindo colunas, defaults, índices, FKs, dados preservados,
+  `alembic_version` e idempotência.
 
 ## 🔐 Segurança
 
 - **Senhas** nunca em texto puro: hash bcrypt via `passlib` (`security.py`). Bases legadas com senha crua são **rehashed automaticamente** no primeiro login bem-sucedido.
 - **Sem auto-registro privilegiado**: `POST /api/auth/register` ignora qualquer `role` enviado no payload e atribui rigidamente o papel público (`DEFAULT_PUBLIC_ROLE = "Produtor Rural"` em `main.py`). O campo `role` nem faz parte do contrato `UserCreate`; contas `admin` existem apenas via seed interno (`seed_demo_data`) — impossibilitando escalada de privilégio pelo cadastro.
-- **JWT (HS256)**: o login emite `access_token` + `token_type` + `expires_in`. Endpoints de criação de fazendas/talhões e simulação exigem `Authorization: Bearer <token>` via dependência `get_current_user` (401 se ausente/inválido/expirado).
-- **RBAC**: `require_role("admin")` restringe rotas administrativas/destrutivas (`PUT`/`DELETE /api/farms`) validando o claim `role` do token — papéis insuficientes recebem **403 Forbidden** com mensagem clara (matriz na seção de endpoints).
+- **Ownership fail-closed**: `POST /api/farms` **ignora** qualquer `owner_id` no payload e sempre
+  usa o usuário autenticado como dono. Fazendas de outros usuários são inacessíveis (404).
+- **JWT (HS256)**: o login emite `access_token` + `token_type` + `expires_in`. Leituras de fazenda
+  e criação de fazendas/talhões e simulação exigem `Authorization: Bearer <token>` via dependência
+  `get_current_user` (401 se ausente/inválido/expirado).
+- **RBAC e ownership**: `PUT`/`DELETE /api/farms` permitem o **dono da fazenda ou admin**; o claim `role` do token dá acesso global ao admin, enquanto a checagem de `owner_id` restringe usuários comuns às próprias fazendas. Recursos alheios retornam **404** consistente e seguro (matriz acima).
 - **Segredo do token** vem de `JWT_SECRET_KEY` no `.env` (12-factor). Se ausente, um segredo **efêmero** é gerado no boot (adequado só p/ dev — tokens expiram no restart).
 - **CORS** restrito às origens declaradas em `CORS_ORIGINS` (`.env`) — nunca `*`.
 - **Validação** total com Pydantic (`Field` com faixas de lat/lon, áreas, parâmetros agronômicos e tamanho do heightmap).
+- **Texturas/heightmap privados**: os PNGs por fazenda são servidos por rotas autenticadas
+  (`/api/talhao/{id}/texture.png`, `/api/talhao/{id}/heightmap.png`) com checagem de ownership; o
+  `TextureLoader` do Three.js baixa URLs relativas ou absolutas via `fetch` com Bearer token,
+  converte a resposta para Blob e revoga o `blob:` URL após o carregamento. As texturas **nativas**
+  de demonstração (`sentinel-21KXQ-*`, servidas via `StaticFiles`) permanecem públicas por serem
+  asset de vitrine.
 
 ## ⛰️ Topografia — Copernicus DEM GL-30
 
@@ -188,15 +252,19 @@ curl http://localhost:8000/api/weather/farm/1
 
 ## 🧪 Suíte de testes automatizados (pytest)
 
-A suíte versionada em `tests/` cobre as 4 frentes exigidas — **129 testes**:
+A suíte versionada em `tests/` cobre as 4 frentes exigidas + ownership/migrações/paridade de
+schema e assets autenticados — **165 testes** (1 skip por dataset Sentinel-2 ausente fora do git):
 
 | Módulo | Testes | Abrangência |
 |---|---|---|
 | `test_auth_security.py` | 27 | Registro/login (201/400/401/422), **papel forçado no registro** (qualquer `role` enviado — inclusive `"admin"` — é ignorado; sem prerrogativas administrativas; admin isolado ao seed), bcrypt (hash, salt, verificação), migração transparente de senha legada → bcrypt, emissão e validação de JWT (claims, expirado, assinatura inválida, `sub` inexistente) |
-| `test_rbac.py` | 21 | Admin 200 (PUT/DELETE/POST/what-if), papel insuficiente 403 (dados intactos + mensagem clara), sem token / token inválido 401 (autenticação precede autorização), leituras públicas 200 |
-| `test_farms_sim.py` | 28 | Contratos Pydantic (criação + resposta + What-If exatos a 9 campos), 422 parametrizados, 404, texturas dinâmicas em disco, datas Sentinel-2, matemática da simulação (constantes por crop), analytics (série temporal, zoneamento, safras), laudo PDF |
-| `test_dem.py` | 17 | Nomenclatura SRTM/Copernicus, bounds (KML e por área), seleção de tile, endpoint de heightmap: recorte → normalização → PNG 256×256 servido estaticamente, `size`, 422, 404, indisponível com orientação |
+| `test_rbac.py` | 21 | Admin global 200 (PUT/DELETE/POST/what-if), leituras **privadas exigem token** (401 anônimo / 200 autenticado), usuário comum gerencia a **própria** farm (200), farm alheia → 404, sem token / token inválido 401 (autenticação precede autorização) |
+| `test_farms_sim.py` | 28 | Contratos Pydantic (criação + resposta + What-If exatos a 9 campos), 422 parametrizados, 404, texturas dinâmicas em disco (rota autenticada), datas Sentinel-2, matemática da simulação (constantes por crop), analytics (série temporal, zoneamento, safras), laudo PDF |
+| `test_dem.py` | 17 | Nomenclatura SRTM/Copernicus, bounds (KML e por área), seleção de tile, endpoint de heightmap: recorte → normalização → PNG 256×256 servido por rota autenticada, `size`, 422, 404, indisponível com orientação |
 | `test_services.py` | 36 | Cache de clima (hit, por coordenadas, TTL, fallback em erro, fallback cacheado), regras de negócio do what-if, estimativa de safra, zoneamento espectral, paletas espectrais |
+| `test_ownership.py` | 32 | **Ownership** (usuário cria/ler/edita/exclui a própria farm; `owner_id` correto; payload `owner_id` ignorado), **admin global**, **privacidade** (GETs exigem token → 401; analytics/clima/textura/heightmap/PDF não expõem farm alheia → 404), **migração Alembic** (adiciona `owner_id`/`is_shared` + backfill seguro em SQLite legado) |
+| `test_schema_parity.py` | 3 | Paridade banco novo × legado migrado: colunas, tipos, nullable, defaults, PK, índices, FKs, `alembic_version`, idempotência, preservação de dados e enforcement SQLite |
+| `test_frontend_texture_urls.py` | 1 | Fluxo frontend de texture.png/heightmap.png relativos e absolutos: classificação, Bearer no fetch, respostas 401/403/404 e revogação do Blob URL após o TextureLoader |
 
 ### Execução
 

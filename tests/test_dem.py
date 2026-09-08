@@ -15,7 +15,7 @@ import rasterio
 from PIL import Image
 from rasterio.transform import from_bounds
 
-from conftest import REPO_ROOT
+from conftest import REPO_ROOT, auth
 from services import dem_service
 from services.dem_service import srtm_tile_name, talhao_bounds
 
@@ -97,8 +97,8 @@ class TestFindLocalTile:
 # Endpoint /api/talhao/{farm_id}/heightmap
 # ---------------------------------------------------------------------------
 class TestHeightmapEndpoint:
-    def test_endpoint_disponivel_e_png_servido(self, client, dem_tile):
-        d = client.get("/api/talhao/1/heightmap").json()
+    def test_endpoint_disponivel_e_png_servido(self, client, dem_tile, admin_token):
+        d = client.get("/api/talhao/1/heightmap", headers=auth(admin_token)).json()
         assert d["available"] is True
         assert d["source"] == "copernicus_gl30"
         assert d["size"] == 256
@@ -106,11 +106,11 @@ class TestHeightmapEndpoint:
         # elevações plausíveis dentro da faixa da tile (480–520 m no recorte)
         assert 400 < d["min_elevation_m"] < d["max_elevation_m"] < 600
         assert len(d["bounds"]) == 4
-        # PNG servido estaticamente pelo FastAPI
-        assert client.get(d["heightmap_url"]).status_code == 200
+        # PNG servido por rota autenticada (PR #3 — heightmap privado por fazenda)
+        assert client.get(d["heightmap_url"], headers=auth(admin_token)).status_code == 200
 
-    def test_png_256x256_escalonado(self, client, dem_tile):
-        client.get("/api/talhao/1/heightmap")
+    def test_png_256x256_escalonado(self, client, dem_tile, admin_token):
+        client.get("/api/talhao/1/heightmap", headers=auth(admin_token))
         path = REPO_ROOT / "dynamic_talhoes" / "farm_1_talhao_1" / "heightmap.png"
         assert path.exists()
         img = Image.open(path)
@@ -123,23 +123,23 @@ class TestHeightmapEndpoint:
         # (o resize bilinear re-amostra os extremos, então o span encolhe um pouco)
         assert arr.max() - arr.min() >= 150
 
-    def test_size_parametro_respeitado(self, client, dem_tile):
-        d = client.get("/api/talhao/1/heightmap?size=128").json()
+    def test_size_parametro_respeitado(self, client, dem_tile, admin_token):
+        d = client.get("/api/talhao/1/heightmap?size=128", headers=auth(admin_token)).json()
         assert d["size"] == 128
         img = Image.open(REPO_ROOT / "dynamic_talhoes/farm_1_talhao_1/heightmap.png")
         assert img.size == (128, 128)
 
     @pytest.mark.parametrize("size", [16, 1000])
-    def test_size_fora_da_faixa_422(self, client, size):
-        assert client.get(f"/api/talhao/1/heightmap?size={size}").status_code == 422
+    def test_size_fora_da_faixa_422(self, client, size, admin_token):
+        assert client.get(f"/api/talhao/1/heightmap?size={size}", headers=auth(admin_token)).status_code == 422
 
-    def test_farm_inexistente_404(self, client):
-        assert client.get("/api/talhao/999999/heightmap").status_code == 404
+    def test_farm_inexistente_404(self, client, admin_token):
+        assert client.get("/api/talhao/999999/heightmap", headers=auth(admin_token)).status_code == 404
 
-    def test_indisponivel_sem_tile_retorna_disponibilidade_false(self, client, monkeypatch):
+    def test_indisponivel_sem_tile_retorna_disponibilidade_false(self, client, monkeypatch, admin_token):
         monkeypatch.setattr(dem_service, "_find_local_tile", lambda lat, lon: None)
         monkeypatch.setattr(dem_service, "_download_tile", lambda name: None)
-        d = client.get("/api/talhao/1/heightmap").json()
+        d = client.get("/api/talhao/1/heightmap", headers=auth(admin_token)).json()
         assert d["available"] is False
         assert d["source"] == "none"
         assert d["heightmap_url"] is None

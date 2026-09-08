@@ -501,8 +501,17 @@
     }
 
     function downloadPDFReport() {
-      const url = `${API_URL}/reports/farm/${activeFarm.id || 1}/pdf?layer=${currentLayer}&date_index=${currentIndex}&n_kg=${factorNitro}&w_mm=${factorWater}&pest_pct=${factorPest}`;
-      window.open(url, '_blank');
+      // PR #3 — rota privada por fazenda: usa fetch autenticado via ReportService
+      // (não window.open, que não envia o Bearer token).
+      ReportService.downloadFarmPdf(activeFarm.id || 1, {
+        layer: currentLayer,
+        dateIndex: currentIndex,
+        nKg: factorNitro,
+        wMm: factorWater,
+        pestPct: factorPest,
+      }).catch((e) => {
+        alert(e.message || 'Erro ao baixar o laudo em PDF.');
+      });
     }
 
     // 1. Inicializar Mapa 2D
@@ -578,7 +587,9 @@
 
     async function loadAnalyticsData() {
       try {
-        const res = await fetch(`${API_URL}/analytics/farm/${activeFarm.id || 1}?layer=${currentLayer}`);
+        const res = await fetch(`${API_URL}/analytics/farm/${activeFarm.id || 1}?layer=${currentLayer}`, { headers: { ...authHeaders() } });
+        if (res.status === 401) { AuthService.logout(); return; }
+        if (res.status === 403) { console.warn("Sem permissão para a analytics desta fazenda."); return; }
         if (!res.ok) return;
         const data = await res.json();
         analyticsTimelineCache = data.timeline || [];
@@ -679,7 +690,9 @@
 
     async function loadLiveWeather() {
       try {
-        const res = await fetch(`${API_URL}/weather/farm/${activeFarm.id || 1}`);
+        const res = await fetch(`${API_URL}/weather/farm/${activeFarm.id || 1}`, { headers: { ...authHeaders() } });
+        if (res.status === 401) { AuthService.logout(); return; }
+        if (res.status === 403) { console.warn("Sem permissão para o clima desta fazenda."); return; }
         if (!res.ok) return;
         const wData = await res.json();
 
@@ -819,6 +832,22 @@
     const textureCache = new Map();     // key -> THREE.Texture (ordem de inserção = LRU)
     const textureInFlight = new Map();  // key -> Promise<THREE.Texture> (dedupe de cargas paralelas)
 
+    /**
+     * Rotas autenticadas podem vir relativas ou absolutas (PUBLIC_BASE_URL).
+     * URL() resolve as relativas contra a página atual e pathname evita
+     * hardcode de localhost/host da API.
+     */
+    function isAuthenticatedAssetUrl(url) {
+      if (!url || typeof url !== 'string') return false;
+      try {
+        const parsed = new URL(url, window.location.href);
+        return parsed.pathname.startsWith('/api/');
+      } catch (e) {
+        console.warn(`URL de textura inválida: ${url}`, e);
+        return false;
+      }
+    }
+
     function getCachedTexture(key, url) {
       const hit = textureCache.get(key);
       if (hit) {
@@ -828,25 +857,88 @@
       }
       if (textureInFlight.has(key)) return textureInFlight.get(key);
 
+      // PR #3 — rotas de textura/heightmap por fazenda exigem Bearer token.
+      // A detecção usa pathname, portanto funciona para /api/... relativo e
+      // para URLs absolutas devolvidas por PUBLIC_BASE_URL. O TextureLoader
+      // não envia headers de autorização; por isso a resposta autenticada é
+      // convertida em blob: URL antes do carregamento.
+      const isAuthUrl = isAuthenticatedAssetUrl(url);
+
       const pending = new Promise((resolve, reject) => {
-        textureLoader.load(url, (tex) => {
-          tex.generateMipmaps = true;
-          tex.minFilter = THREE.LinearMipmapLinearFilter;
-          tex.magFilter = THREE.LinearFilter;
-          textureCache.set(key, tex);
-          while (textureCache.size > MAX_CACHED_TEXTURES) {
-            const oldestKey = textureCache.keys().next().value; // LRU
-            textureCache.get(oldestKey).dispose();              // libera VRAM
-            textureCache.delete(oldestKey);
+        const loadViaLoader = (finalUrl, onSettled = null) => {
+          let cleanedUp = false;
+          const cleanup = () => {
+            if (cleanedUp) return;
+            cleanedUp = true;
+            if (onSettled) onSettled();
+          };
+
+          const onLoad = (tex) => {
+            try {
+              tex.generateMipmaps = true;
+              tex.minFilter = THREE.LinearMipmapLinearFilter;
+              tex.magFilter = THREE.LinearFilter;
+              textureCache.set(key, tex);
+              while (textureCache.size > MAX_CACHED_TEXTURES) {
+                const oldestKey = textureCache.keys().next().value; // LRU
+                textureCache.get(oldestKey).dispose();              // libera VRAM
+                textureCache.delete(oldestKey);
+              }
+              resolve(tex);
+            } catch (err) {
+              reject(err);
+            } finally {
+              // Para blob: URLs, o loader já terminou de ler a imagem neste
+              // callback; só agora é seguro liberar o objeto temporário.
+              cleanup();
+            }
+          };
+          const onError = (err) => {
+            cleanup();
+            console.warn(`Falha ao carregar textura: ${finalUrl}`, err);
+            reject(err);
+          };
+
+          try {
+            textureLoader.load(finalUrl, onLoad, undefined, onError);
+          } catch (err) {
+            cleanup();
+            reject(err);
           }
-          resolve(tex);
-        }, undefined, (err) => {
-          console.warn(`Falha ao carregar textura: ${url}`, err);
-          reject(err);
-        });
+        };
+
+        if (!isAuthUrl) {
+          loadViaLoader(url);
+          return;
+        }
+
+        const token = localStorage.getItem('orion_auth_token');
+        fetch(url, { headers: token ? { 'Authorization': `Bearer ${token}` } : {} })
+          .then((res) => {
+            if (res.status === 401) {
+              AuthService.logout();
+              throw new Error('Sessão expirada.');
+            }
+            if (res.status === 403) throw new Error('Sem permissão para esta textura.');
+            if (res.status === 404) throw new Error('Textura não encontrada.');
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return res.blob();
+          })
+          .then((blob) => {
+            const blobUrl = URL.createObjectURL(blob);
+            // Mantém a URL viva durante todo o TextureLoader.load() e revoga
+            // somente no callback de sucesso/erro do loader.
+            loadViaLoader(blobUrl, () => URL.revokeObjectURL(blobUrl));
+          })
+          .catch((err) => { reject(err); });
       });
       textureInFlight.set(key, pending);
-      pending.finally(() => textureInFlight.delete(key));
+      // then(..., ...) evita criar uma promise rejeitada não observada apenas
+      // para remover a entrada de in-flight.
+      pending.then(
+        () => textureInFlight.delete(key),
+        () => textureInFlight.delete(key),
+      );
       return pending;
     }
 
@@ -953,16 +1045,15 @@
 
       let textureUrl = `sentinel-21KXQ-${dateStr}/${currentLayer}_cloudless_min_max.png`;
 
-      if (activeFarm.id !== 1) {
-        try {
-          const res = await fetch(`${API_URL}/talhao/${activeFarm.id}/texture?layer=${currentLayer}`);
-          if (res.ok) {
-            const data = await res.json();
-            textureUrl = data.texture_url;
-          }
-        } catch (e) {
-          console.warn("Usando textura padrão local.");
+      try {
+        const res = await fetch(`${API_URL}/talhao/${activeFarm.id}/texture?layer=${currentLayer}`, { headers: { ...authHeaders() } });
+        if (res.status === 401) { AuthService.logout(); }
+        else if (res.ok) {
+          const data = await res.json();
+          if (data && data.texture_url) textureUrl = data.texture_url;
         }
+      } catch (e) {
+        console.warn("Usando textura padrão local.", e);
       }
 
       // Cache LRU: evita realocar a mesma textura e o .dispose() na evicção

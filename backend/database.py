@@ -2,7 +2,7 @@
 Engine e sessão SQLAlchemy. A URL vem de `config.settings` (12-factor),
 em vez de um caminho relative hardcoded.
 """
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from config import settings
@@ -13,6 +13,19 @@ if settings.database_url.startswith("sqlite"):
     _connect_args["check_same_thread"] = False
 
 engine = create_engine(settings.database_url, connect_args=_connect_args)
+
+
+if settings.database_url.startswith("sqlite"):
+    @event.listens_for(engine, "connect")
+    def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record):
+        """Habilita enforcement de FK em toda conexão SQLite da aplicação."""
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA foreign_keys=ON")
+        finally:
+            cursor.close()
+
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()

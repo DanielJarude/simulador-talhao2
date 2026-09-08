@@ -35,7 +35,7 @@ class TestRBACAdmin:
     def test_admin_exclui_200(self, client, admin_token):
         fid = _create_farm(client, admin_token)
         assert client.delete(f"/api/farms/{fid}", headers=auth(admin_token)).status_code == 200
-        assert client.get(f"/api/farms/{fid}").status_code == 404
+        assert client.get(f"/api/farms/{fid}", headers=auth(admin_token)).status_code == 404
 
     def test_admin_pode_tambem_criar_e_simular(self, client, admin_token):
         assert _create_farm(client, admin_token) > 0
@@ -44,36 +44,48 @@ class TestRBACAdmin:
 
 
 class TestRBACUsuarioComum:
-    def test_usuario_excluir_403_e_dados_intactos(self, client, user_token):
+    # PR #3 — usuário comum GERENCIA a PRÓPRIA fazenda (200), mas NÃO a de outro.
+    def test_usuario_excluir_propria_200(self, client, user_token):
         fid = _create_farm(client, user_token)          # uso padrão permitido
         r = client.delete(f"/api/farms/{fid}", headers=auth(user_token))
-        assert r.status_code == 403
-        assert client.get(f"/api/farms/{fid}").status_code == 200  # NADA foi excluído
+        assert r.status_code == 200
+        assert client.get(f"/api/farms/{fid}", headers=auth(user_token)).status_code == 404
 
-    def test_usuario_atualizar_403(self, client, user_token):
+    def test_usuario_atualizar_propria_200(self, client, user_token):
         fid = _create_farm(client, user_token)
         r = client.put(f"/api/farms/{fid}", json=FARM_BODY, headers=auth(user_token))
-        assert r.status_code == 403
-        assert client.get(f"/api/farms/{fid}").status_code == 200  # NADA foi alterado
+        assert r.status_code == 200
+        assert client.get(f"/api/farms/{fid}", headers=auth(user_token)).status_code == 200
 
-    def test_usuario_papel_generico_user_403(self, client):
-        email = unique_email("generico")
-        register_user(client, email, role="user")
-        token = login(client, email, "abc12345")["access_token"]
-        fid = _create_farm(client, token)
-        assert client.delete(f"/api/farms/{fid}", headers=auth(token)).status_code == 403
+    def test_usuario_papel_generico_user_403_em_farm_alheia(self, client):
+        # Farm de OUTRO usuário (criada por um 2º usuário) → 404 para um 3º
+        # usuário comum (PR #3: não expõe a existência do recurso alheio).
+        # A farm demo (id=1) é compartilhada e NÃO é tocada aqui.
+        owner_email = unique_email("dono")
+        register_user(client, owner_email)
+        owner_token = login(client, owner_email, "abc12345")["access_token"]
+        fid = _create_farm(client, owner_token)
+
+        intruso_email = unique_email("intruso")
+        register_user(client, intruso_email, role="user")
+        intruso_token = login(client, intruso_email, "abc12345")["access_token"]
+        assert client.delete(f"/api/farms/{fid}", headers=auth(intruso_token)).status_code == 404
+        assert client.put(f"/api/farms/{fid}", json=FARM_BODY, headers=auth(intruso_token)).status_code == 404
 
     def test_usuario_mantem_uso_padrao_200(self, client, user_token):
         assert _create_farm(client, user_token) > 0
         r = client.post("/api/simulation/what-if", json=WHATIF_BODY, headers=auth(user_token))
         assert r.status_code == 200
 
-    def test_mensagem_403_clara(self, client, user_token):
-        fid = _create_farm(client, user_token)
-        r = client.delete(f"/api/farms/{fid}", headers=auth(user_token))
-        detail = r.json()["detail"]
-        assert "admin" in detail
-        assert "Produtor Rural" in detail
+    def test_usuario_nao_ve_farms_de_outros(self, client, user_token):
+        # Usuário comum só enxerga as próprias fazendas na listagem.
+        _create_farm(client, user_token)
+        r = client.get("/api/farms", headers=auth(user_token))
+        assert r.status_code == 200
+        body = r.json()
+        assert all(f["owner_id"] is not None for f in body)
+        # A farm demo (id=1, do admin) NÃO aparece para o usuário comum.
+        assert all(f["id"] != 1 for f in body)
 
 
 class TestRBACSemToken:
@@ -96,15 +108,42 @@ class TestRBACSemToken:
         assert r.status_code == 401
 
 
-class TestLeiturasPublicas:
+class TestLeiturasPrivadas:
+    """PR #3 — leituras de fazenda exigem autenticação (401 anônimo).
+
+    Para qualquer usuário autenticado (mesmo comum) a farm demo (id=1,
+    compartilhada) é legível (200). Rotas de propriedade alheia retornam 404.
+    """
     @pytest.mark.parametrize("path", [
         "/api/farms",
         "/api/farms/1",
-        "/api/talhao/dates",
         "/api/talhao/1/texture?layer=ndvi",
         "/api/analytics/farm/1",
         "/api/weather/farm/1",
         "/api/reports/farm/1/pdf",
     ])
-    def test_get_publico_sem_token_200(self, client, path):
-        assert client.get(path).status_code == 200
+    def test_get_sem_token_401(self, client, path):
+        # Autenticação precede autorização: anônimo → sempre 401.
+        assert client.get(path).status_code == 401
+
+    @pytest.mark.parametrize("path", [
+        "/api/farms",
+        "/api/farms/1",
+        "/api/talhao/1/texture?layer=ndvi",
+        "/api/analytics/farm/1",
+        "/api/weather/farm/1",
+    ])
+    def test_get_com_token_200_farm_compartilhada(self, client, user_token, path):
+        # Qualquer usuário autenticado lê a farm demo compartilhada (200).
+        assert client.get(path, headers=auth(user_token)).status_code == 200
+
+    def test_farm_alheia_404_para_usuario_comum(self, client, user_token, admin_token):
+        fid = _create_farm(client, admin_token)  # dono = admin
+        # Usuário comum não enxerga a fazenda alheia (404, não expõe existência).
+        assert client.get(f"/api/farms/{fid}", headers=auth(user_token)).status_code == 404
+        # O dono (admin) enxerga normalmente.
+        assert client.get(f"/api/farms/{fid}", headers=auth(admin_token)).status_code == 200
+
+    def test_dates_segue_publico_200(self, client):
+        # Endpoint de catálogo (sem dado de fazenda) continua público.
+        assert client.get("/api/talhao/dates").status_code == 200

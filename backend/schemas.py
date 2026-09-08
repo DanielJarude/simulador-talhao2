@@ -95,6 +95,10 @@ class FarmResponse(BaseModel):
     total_area: float
     latitude: float
     longitude: float
+    # Ownership (PR #3) — somente-leitura: o dono é SEMPRE derivado do
+    # usuário autenticado no backend; o payload de criação o ignora.
+    owner_id: Optional[int] = None
+    is_shared: bool = False
     talhoes: list[TalhaoResponse] = []
 
     model_config = {"from_attributes": True}

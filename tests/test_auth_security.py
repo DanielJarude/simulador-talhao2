@@ -89,13 +89,25 @@ class TestRegistroPapelForcado:
         assert d["user"]["role"] == "Produtor Rural"
         token = d["access_token"]
 
-        # ...e o RBAC de fato bloqueia as rotas administrativas (403, não 200):
-        assert client.delete("/api/farms/1", headers=auth(token)).status_code == 403
-        r = client.put("/api/farms/1", headers=auth(token), json={
-            "name": "Ataque", "city": "X", "total_area": 1, "talhao_name": "T",
+        # ...e o RBAC de fato bloqueia o acesso a fazenda de OUTRO usuário
+        # (404 — PR #3: a existência do recurso alheio não é exposta). Usamos
+        # uma fazenda de um SEGUNDO usuário (não a demo id=1) para não poluir
+        # o estado compartilhado da suíte.
+        other_email = unique_email("alvo")
+        register_user(client, other_email)
+        other_token = login(client, other_email, "abc12345")["access_token"]
+        other_farm = client.post("/api/farms", headers=auth(other_token), json={
+            "name": "Fazenda Alvo", "city": "Cidade", "total_area": 10, "talhao_name": "T",
+            "crop": "Soja", "latitude": -22.2, "longitude": -51.95,
+        }).json()
+        assert other_farm["owner_id"] == login(client, other_email, "abc12345")["user"]["id"]
+        # O evasor (role "Produtor Rural") NÃO acessa a fazenda do outro usuário:
+        assert client.delete(f"/api/farms/{other_farm['id']}", headers=auth(token)).status_code == 404
+        r = client.put(f"/api/farms/{other_farm['id']}", headers=auth(token), json={
+            "name": "Ataque", "city": "Cidade", "total_area": 1, "talhao_name": "T",
             "crop": "Soja", "latitude": -22.2, "longitude": -51.95,
         })
-        assert r.status_code == 403
+        assert r.status_code == 404
 
     def test_seed_admin_mantem_papel_administrativo(self, client):
         """Isolamento: a restrição do registro não afeta o admin semeado."""
