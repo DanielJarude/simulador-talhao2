@@ -41,6 +41,7 @@ def run_migrations_offline() -> None:
         dialect_opts={"paramstyle": "named"},
         render_as_batch=True,  # suporta ALTER em SQLite
         compare_type=True,
+        compare_server_default=True,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -53,18 +54,39 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
-        if connection.dialect.name == "sqlite":
-            from sqlalchemy import text as _text
-            connection.execute(_text("PRAGMA foreign_keys=ON"))
-        context.configure(
-            connection=connection,
-            target_metadata=target_metadata,
-            render_as_batch=True,  # suporta ALTER em SQLite
-            compare_type=True,
-            compare_server_default=True,
-        )
+        is_sqlite = connection.dialect.name == "sqlite"
+        if is_sqlite:
+            # Uma reconstrução SQLite em batch precisa remover a tabela antiga.
+            # Como farms é referenciada por talhoes, o SQLite exige que a
+            # checagem de FK esteja desligada durante a reconstrução. Fazemos
+            # isso antes da transação explícita; a conexão é religada ao final
+            # da migration e as conexões normais da aplicação permanecem com
+            # PRAGMA foreign_keys=ON (database.py).
+            connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
+            connection.commit()
+
+        configure_kwargs = {
+            "connection": connection,
+            "target_metadata": target_metadata,
+            "render_as_batch": is_sqlite,
+            "compare_type": True,
+            "compare_server_default": True,
+        }
+        if is_sqlite:
+            # O SQLite recebe uma fronteira transacional real e explícita.
+            # Assim DDL, DML da migration e alembic_version são commitados
+            # juntos, sem conexão AUTOCOMMIT paralela.
+            configure_kwargs["transactional_ddl"] = True
+
+        context.configure(**configure_kwargs)
         with context.begin_transaction():
             context.run_migrations()
+
+        if is_sqlite:
+            # O batch foi concluído e a transação do Alembic foi commitada.
+            # Reative o enforcement na própria conexão antes de fechá-la.
+            connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+            connection.commit()
 
 
 if context.is_offline_mode():

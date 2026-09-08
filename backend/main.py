@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 import models
 import schemas
 from config import settings
-from database import Base, SessionLocal, engine, ensure_owner_columns, get_db
+from database import Base, SessionLocal, engine, get_db
 from security import create_access_token, get_current_user, get_auth_context, hash_password, require_role, verify_password
 from services.analytics_service import get_farm_temporal_series
 from services.dem_service import process_talhao_heightmap
@@ -102,10 +102,10 @@ async def lifespan(_: FastAPI):
         )
     Base.metadata.create_all(bind=engine)
 
-    # Migrações Alembic (PR #3): em bancos já existentes, garante as colunas
-    # de ownership (owner_id, is_shared) e roda o backfill seguro. Não apaga o
-    # banco — apenas aplica as revisões pendentes (fallback idempotente em
-    # database.ensure_owner_columns para quem sobe a app sem rodar migrations).
+    # Migrações Alembic (PR #3): bancos novos já nascem com a FK via
+    # Base.metadata.create_all; bancos legados recebem a mesma estrutura via
+    # batch migration. Falhas de migration são fatais para não iniciar a API
+    # com um schema divergente.
     _apply_migrations()
 
     with SessionLocal() as db:
@@ -119,27 +119,22 @@ def _apply_migrations() -> None:
     """
     Aplica as migrações pendentes (idempotente) ao subir a aplicação.
 
-    Tenta `alembic upgrade head` em processo (preferido em produção/dev). Se o
-    Alembic não estiver disponível ou falhar, cai no fallback
-    `database.ensure_owner_columns()` (ALTER idempotente) para não quebrar bancos
-    SQLite legados. Em qualquer caso, NUNCA recria/apaga o banco.
+    Executa `alembic upgrade head` no mesmo processo do boot. O Alembic é uma
+    dependência obrigatória da aplicação: se o arquivo de configuração estiver
+    ausente ou a migration falhar, interrompemos o boot em vez de mascarar o
+    erro e iniciar com um schema sem a FK física.
     """
     ini = os.path.join(BACKEND_DIR, "alembic.ini")
     if not os.path.exists(ini):
-        logger.info("alembic.ini ausente — usando fallback de colunas de ownership.")
-        ensure_owner_columns()
-        return
-    try:
-        from alembic import command
-        from alembic.config import Config
+        raise RuntimeError(f"Arquivo Alembic ausente: {ini}")
 
-        cfg = Config(ini)
-        cfg.set_main_option("script_location", os.path.join(BACKEND_DIR, "alembic"))
-        command.upgrade(cfg, "head")
-        logger.info("Migrações Alembic aplicadas (upgrade head).")
-    except Exception as exc:  # noqa: BLE001 — nunca deve impedir o boot
-        logger.warning("Falha ao aplicar migrações Alembic (%s) — fallback de colunas.", exc)
-        ensure_owner_columns()
+    from alembic import command
+    from alembic.config import Config
+
+    cfg = Config(ini)
+    cfg.set_main_option("script_location", os.path.join(BACKEND_DIR, "alembic"))
+    command.upgrade(cfg, "head")
+    logger.info("Migrações Alembic aplicadas (upgrade head).")
 
 
 app = FastAPI(

@@ -147,10 +147,18 @@ Cada fazenda pertence a um **dono** (`farms.owner_id` → `users.id`). Regras:
 
 ## 🗄️ Migrações (Alembic)
 
-O esquema evolui via **Alembic** (`backend/alembic/`). A migração inicial
-`0001_farm_ownership` adiciona `owner_id` e `is_shared` à tabela `farms` e faz o **backfill
-seguro** de bancos já existentes (fazendas órfãs → admin demo; farm demo id=1 → compartilhada).
-**Nunca** recria/apaga o banco.
+O esquema evolui via **Alembic** (`backend/alembic/`). A revisão
+`0001_farm_ownership` mantém `farms.owner_id` como FK física para `users.id`,
+adiciona `is_shared` e faz o **backfill seguro** de bancos legados (fazendas
+órfãs → admin demo; farm demo id=1 → compartilhada).
+
+Em SQLite, constraints não podem ser adicionadas por `ALTER TABLE ... ADD
+CONSTRAINT`. Por isso, quando o banco legado ainda não tem a estrutura final, a
+migration usa `batch_alter_table()` para reconstruir somente `farms` dentro da
+transação do Alembic. O processo preserva dados, IDs, talhões, constraints e
+índices existentes. `is_shared` usa `DEFAULT 0` apenas durante a cópia das
+linhas legadas; uma segunda etapa remove o default físico, deixando o schema
+final equivalente ao produzido por `Base.metadata.create_all()`.
 
 ```bash
 cd backend
@@ -163,12 +171,18 @@ alembic revision --autogenerate -m "descreva a mudança"
 ```
 
 - O `DATABASE_URL` vem de `config.settings` (12-factor / `.env`) — não duplicado no `alembic.ini`.
-- Ao subir a aplicação, o `lifespan` tenta `alembic upgrade head` automaticamente; se o Alembic
-  não estiver disponível, há um **fallback idempotente** em `database.ensure_owner_columns()`
-  (ALTER em SQLite legado). Em produção, prefira rodar `alembic upgrade head` explicitamente
-  antes de iniciar o serviço.
-- **Bancos legados (SQLite)**: a migração adiciona as colunas e rebind o dono das fazendas
-  existentes ao admin demo; nada é perdido.
+- O `env.py` controla explicitamente a transação SQLite e registra
+  `0001_farm_ownership` em `alembic_version`. Não há conexão AUTOCOMMIT paralela.
+- Durante o batch SQLite, o enforcement da conexão de migration é desligado
+  apenas para permitir a troca segura de uma tabela referenciada por
+  `talhoes`; a operação ocorre na transação explícita e o enforcement é
+  religado antes do fechamento da conexão. As conexões normais da aplicação
+  habilitam `PRAGMA foreign_keys=ON` centralmente em `database.py`.
+- O `lifespan` aplica `alembic upgrade head` no boot e interrompe a inicialização
+  se a migration falhar, evitando iniciar com schema divergente.
+- O teste dedicado `tests/test_schema_parity.py` compara banco novo e banco
+  legado migrado, incluindo colunas, defaults, índices, FKs, dados preservados,
+  `alembic_version` e idempotência.
 
 ## 🔐 Segurança
 
@@ -237,8 +251,8 @@ curl http://localhost:8000/api/weather/farm/1
 
 ## 🧪 Suíte de testes automatizados (pytest)
 
-A suíte versionada em `tests/` cobre as 4 frentes exigidas + ownership/migrações — **161 testes**
-(1 skip por dataset Sentinel-2 ausente fora do git):
+A suíte versionada em `tests/` cobre as 4 frentes exigidas + ownership/migrações/paridade de
+schema — **164 testes** (1 skip por dataset Sentinel-2 ausente fora do git):
 
 | Módulo | Testes | Abrangência |
 |---|---|---|
@@ -248,6 +262,7 @@ A suíte versionada em `tests/` cobre as 4 frentes exigidas + ownership/migraç�
 | `test_dem.py` | 17 | Nomenclatura SRTM/Copernicus, bounds (KML e por área), seleção de tile, endpoint de heightmap: recorte → normalização → PNG 256×256 servido por rota autenticada, `size`, 422, 404, indisponível com orientação |
 | `test_services.py` | 36 | Cache de clima (hit, por coordenadas, TTL, fallback em erro, fallback cacheado), regras de negócio do what-if, estimativa de safra, zoneamento espectral, paletas espectrais |
 | `test_ownership.py` | 32 | **Ownership** (usuário cria/ler/edita/exclui a própria farm; `owner_id` correto; payload `owner_id` ignorado), **admin global**, **privacidade** (GETs exigem token → 401; analytics/clima/textura/heightmap/PDF não expõem farm alheia → 404), **migração Alembic** (adiciona `owner_id`/`is_shared` + backfill seguro em SQLite legado) |
+| `test_schema_parity.py` | 3 | Paridade banco novo × legado migrado: colunas, tipos, nullable, defaults, PK, índices, FKs, `alembic_version`, idempotência, preservação de dados e enforcement SQLite |
 
 ### Execução
 
