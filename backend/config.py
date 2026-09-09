@@ -78,5 +78,28 @@ class Settings(BaseSettings):
     ]
     spectral_indices: list[str] = ["ndvi", "evi", "ndre", "ndmi"]
 
+    # --- Copernicus Data Space Ecosystem (CDSE) — dados REAIS ---
+    # PR #4 etapa 2: Sentinel-2 L2A real via CDSE (STAC + Process API).
+    # Sem client_id/client_secret o serviço fica DESATIVADO e o sistema usa o
+    # fallback procedural explícito — nunca quebra, nunca inventa dado real.
+    # Endpoints confirmados na documentação oficial (documentation.dataspace.
+    # copernicus.eu): token OAuth2 client_credentials, Catalog/STAC e Process.
+    cdse_enabled: bool = True                   # desativa tudo se False
+    cdse_client_id: str = ""                    # nunca versionar segredo
+    cdse_client_secret: str = ""                # nunca versionar segredo
+    cdse_token_url: str = (
+        "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/"
+        "protocol/openid-connect/token"
+    )
+    cdse_stac_url: str = "https://stac.dataspace.copernicus.eu/v1"
+    cdse_process_url: str = "https://sh.dataspace.copernicus.eu/process/v1"
+    cdse_lookback_days: int = Field(default=60, ge=1, le=730)
+    cdse_max_cloud_cover: float = Field(default=20.0, ge=0.0, le=100.0)
+    cdse_timeout_s: float = Field(default=45.0, gt=0.0, le=300.0)
+    cdse_cache_hours: int = Field(default=12, ge=0, le=720)
+    cdse_retry_on_429: bool = True
+    cdse_retry_backoff_s: float = Field(default=2.0, gt=0.0, le=30.0)
+    cdse_raster_size: int = Field(default=256, ge=64, le=512)
+
 
 settings = Settings()

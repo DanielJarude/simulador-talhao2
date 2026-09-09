@@ -15,7 +15,12 @@ from typing import Literal, Optional
 from pydantic import BaseModel, EmailStr, Field
 
 #: Camadas espectrais suportadas (validação em todos os endpoints)
-SpectralLayer = Literal["ndvi", "evi", "ndre", "ndmi"]
+#: "rgb" = true color real (Sentinel-2 B04/B03/B02) quando disponível.
+SpectralLayer = Literal["rgb", "ndvi", "evi", "ndre", "ndmi"]
+
+#: Camadas de ÍNDICE (analytics/estatísticas): RGB não tem zonal/estatística
+#: de vigor, apenas visualização.
+AnalyticsLayer = Literal["ndvi", "evi", "ndre", "ndmi"]
 
 
 # ---------------------------------------------------------------- AUTENTICAÇÃO
@@ -143,6 +148,10 @@ class HeightmapResponse(BaseModel):
     bounds: Optional[list[float]] = Field(
         default=None, description="[min_lon, min_lat, max_lon, max_lat]"
     )
-    source: Literal["copernicus_gl30", "local_geotiff", "none"] = "none"
+    #: copernicus_30/90 = render remoto real via Process API CDSE;
+    #: copernicus_gl30/local_geotiff = tile local; none = aproximado.
+    source: Literal[
+        "copernicus_30", "copernicus_90", "copernicus_gl30", "local_geotiff", "none"
+    ] = "none"
     heightmap_url: Optional[str] = None
     reason: Optional[str] = None

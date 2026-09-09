@@ -110,6 +110,7 @@ def get_farm_temporal_series(
     layer: str = "ndvi",
     total_area_ha: float = 42.54,
     talhao_id: int | None = None,
+    real_calendar: list | None = None,
 ):
     """
     Série temporal de índices espectrais da fazenda.
@@ -126,6 +127,23 @@ def get_farm_temporal_series(
     series_data = []
 
     for d in dates:
+        # PR #4b — estatísticas REAIS (Sentinel-2 L2A via CDSE) cacheadas em
+        # disco têm prioridade: se a aquisição real da data fez parte da
+        # timeline, o índice/zonas vêm do raster real (nunca da cor do PNG).
+        real_stats = _real_stats_cached(farm_id, talhao_id, d, layer, total_area_ha)
+        if real_stats:
+            series_data.append({
+                "date": d,
+                "formatted_date": "/".join(d.split("-")[::-1]),
+                "mean": real_stats["mean_index"],
+                "zones": real_stats["zones"],
+                "data_origin": "sentinel",
+                "real_data_status": "ok",
+                "processing_level": "L2A",
+                "collection": "sentinel-2-l2a",
+            })
+            continue
+
         if farm_id == 1:
             img_path = os.path.join(BASE_DIR, f"sentinel-21KXQ-{d}", f"{layer}_cloudless_min_max.png")
             fallback_img_path = os.path.join(
@@ -180,5 +198,29 @@ def get_farm_temporal_series(
         "farm_id": farm_id,
         "layer": layer,
         "timeline": series_data,
-        "yield_predictions": yield_predictions
+        "yield_predictions": yield_predictions,
+        "real_calendar": real_calendar or [],
     }
+
+
+def _real_stats_cached(farm_id: int, talhao_id: int, date_str: str, layer: str, area_ha: float):
+    """
+    Lê as estatísticas REAIS do CDSE cacheadas em disco (se existirem) e
+    converte para o formato da série (pct + ha). Sem cache → None (fallback).
+    """
+    try:
+        from services.copernicus_service import load_cached_real_stats
+        stats = load_cached_real_stats(farm_id, talhao_id, date_str, layer)
+    except Exception:
+        return None
+    if not stats or "zones" not in stats:
+        return None
+    zones_in = stats["zones"]
+    zones = {}
+    for name in ("stress", "medium", "good", "dense"):
+        pct = float(zones_in.get(name, 0.0)) if isinstance(zones_in, dict) else 0.0
+        zones[name] = {"pct": round(pct, 1), "ha": round(pct / 100.0 * area_ha, 2)}
+    mean = stats.get("mean_index")
+    if mean is None:
+        return None
+    return {"mean_index": float(mean), "zones": zones}

@@ -206,15 +206,64 @@ alembic revision --autogenerate -m "descreva a mudança"
   de demonstração (`sentinel-21KXQ-*`, servidas via `StaticFiles`) permanecem públicas por serem
   asset de vitrine.
 
-## ⛰️ Topografia — Copernicus DEM GL-30
+## ⛰️ Topografia — Copernicus DEM (CDSE real + GL-30 local)
 
-O terreno 3D usa **relevo real** a partir do Copernicus DEM GL-30 em vez de um plano com displacement genérico:
+O terreno 3D usa **relevo real** em vez de um plano com displacement genérico, com fonte reportada em `source`:
 
-- `GET /api/talhao/{farm_id}/heightmap` recorta a tile SRTM que cobre a fazenda (ex.: `s23_w056`), normaliza a elevação para 0–255 e resampleia para `size`×`size` (potência de 2, ideal p/ mipmaps), servindo um PNG cinza em `/dynamic_talhoes/…/heightmap.png` + mín/máx em metros.
-- O frontend aplica esse heightmap como `displacementMap` (o canal lido pelo Three.js), **mantendo as texturas NDVI como cor** e reutilizando o **mesmo cache LRU de VRAM** de antes (1 heightmap por fazenda — sem custo extra).
-- **Sem tile disponível**, o endpoint responde `available=false` e o 3D mantém o fallback (deslocamento via NDVI).
+- **CDSE configurado** (`CDSE_CLIENT_ID/SECRET`) → `GET /api/talhao/{farm_id}/heightmap` tenta primeiro o **DEM COPERNICUS_30** (GLO-30, infill GLO-90) via Process API; se indisponível, **COPERNICUS_90** (GLO-90 global). `source` = `copernicus_30`/`copernicus_90`, sem baixar produto inteiro (raster só da área do talhão).
+- **Sem CDSE** → recorte da tile local (`s23_w056`, etc.), normalização 0–255 e resample para `size`×`size`; `source` = `copernicus_gl30`/`local_geotiff`.
+- **Sem tile/sem CDSE** → `available=false` + `reason`; o 3D mantém o fallback explícito (deslocamento via NDVI) — nunca tela branca.
+- O frontend aplica o heightmap como `displacementMap` (canal lido pelo Three.js), mantendo as texturas de cor (NDVI/RGB) e o **mesmo cache LRU de VRAM** (1 heightmap por fazenda).
 
-**Como obter a tile:** baixe a tile `Copernicus_Dem_GLO30_<sN>_w<NNN>` correspondente à região (OpenTopography ou portal Copernicus) e coloque em `backend/data/dem/`. A API também tenta **baixar automaticamente** a tile dos espelhos públicos (best-effort, `DEM_DOWNLOAD_ENABLED`), cacheando o resultado localmente.
+**Como obter a tile (modo offline):** baixe `Copernicus_Dem_GLO30_<sN>_w<NNN>` (OpenTopography ou portal Copernicus) e coloque em `backend/data/dem/`; a API também tenta baixar automaticamente (best-effort, `DEM_DOWNLOAD_ENABLED`).
+
+## 🛰️ Dados REAIS Sentinel-2 — Copernicus Data Space Ecosystem (CDSE)
+
+O backend busca observação real sempre que possível, com fallback procedural explícito quando não há dado (sem credenciais, sem cena, erro/rate-limit). Nada é marcado como Sentinel sem ser.
+
+**Configuração (`backend/.env`, ver `.env.example`):**
+```
+CDSE_ENABLED=true
+CDSE_CLIENT_ID=...        # OAuth Client do dataspace.copernicus.eu
+CDSE_CLIENT_SECRET=...    # NUNCA versionado; nunca enviado ao frontend
+CDSE_STAC_URL=https://stac.dataspace.copernicus.eu/v1
+CDSE_PROCESS_URL=https://sh.dataspace.copernicus.eu/process/v1
+CDSE_LOOKBACK_DAYS=60
+CDSE_MAX_CLOUD_COVER=20
+CDSE_TIMEOUT_S=45
+CDSE_CACHE_HOURS=12
+CDSE_RASTER_SIZE=256
+```
+
+**Fluxo (funções puras em `backend/services/copernicus_service.py`):**
+```
+polígono do talhão (KML ≥ 3 pts) → STAC search sentinel-2-l2a (intersects)
+  → seleção explícita: mais recente ≤ 20% nuvem; relaxa (+15, +35, teto 100)
+  → Process API (bounds da FAZENDA, evalscript B02/B03/B04/B05/B08/B11+SCL+dataMask)
+  → máscara SCL (exclui nuvem/sombra/nodata) → RGB/NDVI/EVI/NDRE/NDMI reais
+  → PNG 256×256 mascarado + estatísticas + proveniência, cache em disco
+    (dynamic_talhoes/farm_X_talhao_Y/cdse/<data>/) e memória (TTL config).
+```
+
+**Fórmulas documentadas (validadas numericamente em `tests/test_copernicus_service.py`):**
+- NDVI = (B08−B04)/(B08+B04) · NDRE = (B08−B05)/(B08+B05) · NDMI = (B08−B11)/(B08+B11)
+- EVI = 2.5·(B08−B04)/(B08+6·B04−7.5·B02+1)
+- RGB = [2.5·B04, 2.5·B03, 2.5·B02] clampado a [0,1] (padrão visual CDSE)
+
+**Camadas novas na API (mantendo compatibilidade):**
+- `GET /api/talhao/{id}/texture?layer=rgb|ndvi|evi|ndre|ndmi&date=YYYY-MM-DD` → `data_origin` (`sentinel`|`procedural`) + proveniência (`collection`, `product_id`, `acquisition_date`, `cloud_cover`, `processing_level`, `bands`, `valid_pixel_percentage`, `selection_reason`) quando real; `real_data_status` (`not_configured`|`no_scene`|`error`|`ok`) + `real_data_message` quando não.
+- `GET /api/talhao/{id}/texture.png?layer=...&date=YYYY-MM-DD` → PNG (real cacheado ou procedural).
+- `GET /api/talhao/{id}/dates` → calendário real (6–12 cenas úteis, `source: "sentinel-cdse"`) ou a grade oficial (`source: "config"`).
+- `GET /api/talhao/dates` → `visual_layers` agora inclui `rgb`.
+
+**Validação de integração real (opcional, FORA da suíte):**
+```
+python scripts/test_cdse_connection.py --lat -22.7182 --lon -55.5421 --area 42.54 --demo
+```
+Sem rede/credenciais este script apenas informa o status — nunca imprime segredo/token.
+
+**Sem credenciais** o app segue 100% funcional (texturas procedurais com badge
+`VISUALIZAÇÃO APROXIMADA` e mensagem **DADOS SATELITAIS REAIS NÃO CONFIGURADOS**).
 
 ## 🧊 Simulador 3D — pipeline (PR #4)
 
@@ -231,10 +280,11 @@ what-if → /api/simulation/what-if → delta_ndvi
         → textura simulada via canvas (pixel a pixel) no lado direito
 ```
 
-- **Dado real vs aproximado**: a API devolve `data_origin` (`sentinel` = dataset
-  nativo presente na máquina; `procedural` = textura espectral gerada). O badge
-  do simulador mostra `SENTINEL-2 REAL` ou `VISUALIZAÇÃO APROXIMADA` — nunca um
-  terreno branco silencioso.
+- **Dado real vs aproximado**: a API devolve `data_origin` (`sentinel` = CDSE ou
+  dataset nativo presente na máquina; `procedural` = textura espectral gerada) +
+  `real_data_status`/`real_data_message` quando não há real. O badge do simulador
+  mostra `SENTINEL-2 REAL`, `VISUALIZAÇÃO APROXIMADA` ou
+  `DADOS SATELITAIS REAIS NÃO CONFIGURADOS` — nunca um terreno branco silencioso.
 - **Fallback visual**: se o load do asset falhar (rede/CORS/404), o 3D aplica uma
   textura de fallback claramente marcada (`VISUALIZAÇÃO APROXIMADA`) + status de
   erro; a malha, o relevo e os controles continuam funcionando.

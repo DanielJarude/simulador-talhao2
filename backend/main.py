@@ -14,6 +14,7 @@ from config import settings
 from database import Base, SessionLocal, engine, get_db
 from security import create_access_token, get_current_user, get_auth_context, hash_password, require_role, verify_password
 from services.analytics_service import get_farm_temporal_series
+from services.copernicus_service import cdse_dir, fetch_real_calendar, process_farm_layer
 from services.dem_service import process_talhao_heightmap
 from services.pdf_service import generate_farm_pdf_report
 from services.satellite_service import generate_all_spectral_layers
@@ -456,6 +457,51 @@ def get_talhao_texture(
     farm = _require_farm_access(db, farm_id, user)
     request_date = date or (settings.sentinel_dates[0] if settings.sentinel_dates else "2025-04-07")
 
+    # PR #4b — DADOS REAIS via CDSE (Sentinel-2 L2A) quando configurado.
+    # A chamada NUNCA quebra: sem credenciais/sem cena/erro → status explícito
+    # e o fluxo cai no fallback procedural (nunca tela branca).
+    talhao = farm.talhoes[0] if farm.talhoes else None
+    try:
+        cdse_result = process_farm_layer(
+            farm_id=farm.id,
+            talhao_id=_resolve_talhao_id(farm),
+            lat=farm.latitude,
+            lon=farm.longitude,
+            area_ha=farm.total_area,
+            kml_coordinates=talhao.kml_coordinates if talhao else None,
+            layer=layer,
+            date_str=request_date,
+        )
+    except Exception:
+        logger.exception("CDSE: falha inesperada no processamento")
+        cdse_result = {
+            "data_origin": "procedural",
+            "real_data_status": "error",
+            "real_data_message": "DADOS REAIS INDISPONÍVEIS (ERRO INESPERADO)",
+            "layer": layer,
+            "date": request_date,
+        }
+
+    if cdse_result.get("data_origin") == "sentinel" and cdse_result.get("texture_url"):
+        # Proveniência + textura REAL (fase 13). `type` mantém compatibilidade.
+        return {
+            "type": "dynamic",
+            "data_origin": "sentinel",
+            "date": cdse_result.get("date", request_date),
+            "texture_url": cdse_result["texture_url"],
+            "collection": cdse_result.get("collection"),
+            "product_id": cdse_result.get("product_id"),
+            "acquisition_date": cdse_result.get("acquisition_date"),
+            "cloud_cover": cdse_result.get("cloud_cover"),
+            "processing_level": cdse_result.get("processing_level"),
+            "bands": cdse_result.get("bands"),
+            "valid_pixel_percentage": cdse_result.get("valid_pixel_percentage"),
+            "selection_reason": cdse_result.get("selection_reason"),
+            "index_formulas": cdse_result.get("index_formulas"),
+            "stats": cdse_result.get("stats"),
+            "real_data_status": cdse_result.get("real_data_status"),
+        }
+
     if farm_id == 1:
         native_path = _sentinel_native_texture_path(layer, request_date)
         if os.path.exists(native_path):
@@ -507,6 +553,10 @@ def get_talhao_texture(
         "texture_url": (
             f"{settings.public_base_url}/api/talhao/{farm.id}/texture.png?layer={layer}"
         ),
+        **{
+            k: v for k, v in cdse_result.items()
+            if k.startswith("real_data_")
+        },
     }
 
 
@@ -514,12 +564,22 @@ def get_talhao_texture(
 def get_talhao_texture_png(
     farm_id: int,
     layer: schemas.SpectralLayer = "ndvi",
+    date: str | None = Query(default=None, description="Data real da aquisição (YYYY-MM-DD)"),
     db: Session = Depends(get_db),
     user: models.User = Depends(get_current_user),  # exige Bearer token
 ):
     """Streaming autenticado do PNG da textura espectral (PR #3 — privacidade)."""
     farm = _require_farm_access(db, farm_id, user)
     talhao_id = _resolve_talhao_id(farm)
+
+    # PR #4b — textura REAL (Sentinel-2 L2A) cacheadada em disco pelo CDSE.
+    if date:
+        real_path = os.path.join(
+            cdse_dir(farm.id, talhao_id, date), f"{layer}.png"
+        )
+        if os.path.exists(real_path):
+            return StreamingResponse(open(real_path, "rb"), media_type="image/png")
+
     folder_name = f"farm_{farm.id}_talhao_{talhao_id}"
     file_path = os.path.join(dynamic_path, folder_name, f"{layer}_cloudless_min_max.png")
     if not os.path.exists(file_path):
@@ -545,6 +605,51 @@ def get_available_dates():
     return {
         "dates": settings.sentinel_dates,
         "indices": settings.spectral_indices,
+        "visual_layers": ["rgb", *settings.spectral_indices],
+    }
+
+
+@app.get("/api/talhao/{farm_id}/dates")
+def get_farm_dates(
+    farm_id: int,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """
+    Calendário temporal da fazenda: passagens REAIS Sentinel-2 (CDSE)
+    quando configurado — 6–12 cenas úteis, mais recente primeiro —
+    ou a lista oficial de datas da aplicação como fallback explícito.
+    O campo `source` diferencia: "sentinel-cdse" | "config".
+    """
+    farm = _require_farm_access(db, farm_id, user)
+    talhao = farm.talhoes[0] if farm.talhoes else None
+    try:
+        calendar, status = fetch_real_calendar(
+            lat=farm.latitude,
+            lon=farm.longitude,
+            area_ha=farm.total_area,
+            kml_coordinates=talhao.kml_coordinates if talhao else None,
+            limit=12,
+        )
+    except Exception:
+        logger.exception("CDSE: falha ao obter calendário real")
+        calendar, status = [], "error"
+    if calendar:
+        return {
+            "dates": [c["date"] for c in calendar],
+            "calendar": calendar,
+            "source": "sentinel-cdse",
+            "status": status,
+            "indices": settings.spectral_indices,
+            "visual_layers": ["rgb", *settings.spectral_indices],
+        }
+    return {
+        "dates": settings.sentinel_dates,
+        "calendar": [],
+        "source": "config",
+        "status": status or ("not_configured" if not calendar else "no_scene"),
+        "indices": settings.spectral_indices,
+        "visual_layers": ["rgb", *settings.spectral_indices],
     }
 
 
@@ -554,17 +659,34 @@ def get_available_dates():
 @app.get("/api/analytics/farm/{farm_id}")
 def get_farm_analytics(
     farm_id: int,
-    layer: schemas.SpectralLayer = "ndvi",
+    layer: schemas.AnalyticsLayer = "ndvi",
     db: Session = Depends(get_db),
     user: models.User = Depends(get_current_user),  # exige Bearer token
 ):
     farm = _require_farm_access(db, farm_id, user)  # ownership (PR #3)
     talhao_id = _resolve_talhao_id(farm)  # ID real do talhão (fix multi-talhão)
+    talhao = farm.talhoes[0] if farm.talhoes else None
+
+    # PR #4b — calendário REAL (STAC) é anexado como diagnóstico; a série em
+    # si continua na grade oficial, usando estatísticas REAIS quando cacheadas.
+    real_calendar: list = []
+    try:
+        real_calendar, _ = fetch_real_calendar(
+            lat=farm.latitude,
+            lon=farm.longitude,
+            area_ha=farm.total_area,
+            kml_coordinates=talhao.kml_coordinates if talhao else None,
+            limit=12,
+        )
+    except Exception:
+        logger.exception("CDSE: falha ao obter calendário para analytics")
+
     return get_farm_temporal_series(
         farm_id=farm.id,
         layer=layer,
         total_area_ha=farm.total_area,
         talhao_id=talhao_id,
+        real_calendar=real_calendar,
     )
 
 
@@ -670,7 +792,7 @@ def simulate_what_if(req: schemas.WhatIfRequest, user: models.User = Depends(get
 @app.get("/api/reports/farm/{farm_id}/pdf")
 def download_farm_report_pdf(
     farm_id: int,
-    layer: schemas.SpectralLayer = "ndvi",
+    layer: schemas.AnalyticsLayer = "ndvi",
     date_index: int = Query(default=0, ge=0, le=len(settings.sentinel_dates) - 1),
     n_kg: float = Query(default=0.0, ge=-200, le=500),
     w_mm: float = Query(default=0.0, ge=-100, le=300),

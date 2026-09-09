@@ -206,6 +206,16 @@
     #data-source-badge.real { color: #7ee787; border-color: #2ea043; }
     #data-source-badge.approx { color: #e3b341; border-color: #d29922; }
     #data-source-badge.unavailable { color: #ff7b72; border-color: #da3633; }
+    #provenance-3d {
+      position: absolute; top: 76px; left: 16px; z-index: 26; max-width: 320px;
+      padding: 6px 10px; border-radius: 6px; font-size: 0.7rem; font-weight: 600;
+      background: rgba(22, 27, 34, 0.92); border: 1px solid #30363d; color: #8b949e;
+      line-height: 1.5;
+    }
+    #provenance-3d .prov-title { color: #58a6ff; font-weight: 800; letter-spacing: 0.05em; }
+    #provenance-3d .prov-real { color: #7ee787; }
+    #provenance-3d .prov-fallback { color: #e3b341; }
+    #provenance-3d pre { margin: 4px 0 0 0; font-family: inherit; white-space: pre-wrap; }
   </style>
 </head>
 <body>
@@ -243,6 +253,7 @@
           <div class="timeline-header">
             <h4>🛰️ Passagens do Satélite Sentinel-2</h4>
             <div class="layer-pill-group">
+              <button class="layer-pill" onclick="setSpectralLayer('rgb')">RGB (True Color)</button>
               <button class="layer-pill active" onclick="setSpectralLayer('ndvi')">NDVI (Biomassa)</button>
               <button class="layer-pill" onclick="setSpectralLayer('evi')">EVI (Vigor Denso)</button>
               <button class="layer-pill" onclick="setSpectralLayer('ndre')">NDRE (Nitrogênio/Clorofila)</button>
@@ -412,8 +423,8 @@
 
     <!-- TELA 3: SIMULADOR 3D -->
     <div id="screen-3d" class="screen-view">
-      <div id="label-left" class="view-label">🛰️ CENÁRIO REAL (SENTINEL-2)</div>
-      <div id="label-right" class="view-label">🧪 CENÁRIO SIMULADO (WHAT-IF)</div>
+      <div id="label-left" class="view-label">🛰️ CENÁRIO REAL — OBSERVAÇÃO SATELITAL</div>
+      <div id="label-right" class="view-label">🧪 CENÁRIO SIMULADO — PROJEÇÃO WHAT-IF</div>
       <div class="divider-line"></div>
 
       <div id="whatif-panel-3d">
@@ -443,6 +454,7 @@
         <input type="range" id="timeline-slider" min="0" max="12" value="0" step="1" style="flex:1;">
         <span id="date-label" style="font-size:0.8rem; font-weight:bold; width:80px;">07/04/2025</span>
         <select id="layer-select">
+          <option value="rgb">RGB</option>
           <option value="ndvi">NDVI</option>
           <option value="evi">EVI</option>
           <option value="ndre">NDRE</option>
@@ -454,6 +466,12 @@
       <div id="status-texture-3d" class="status-3d">CARREGANDO DADOS DO TERRENO...</div>
       <div id="status-dem-3d" class="status-3d">CARREGANDO ELEVAÇÃO...</div>
       <div id="data-source-badge" class="unavailable">DADOS: —</div>
+
+      <!-- PROVENIÊNCIA (PR #4b): satélite/produto/data/nuvens/real vs aproximado -->
+      <div id="provenance-3d">
+        <span class="prov-title">🛰️ PROVENIÊNCIA</span>
+        <pre id="prov-lines">aguardando dados…</pre>
+      </div>
 
       <div id="canvas-container"></div>
     </div>
@@ -483,7 +501,10 @@
     let isFetchingFarm = false;
     let analyticsTimelineCache = [];
 
-    const dates = [
+    // Grade temporal padrão (fallback explícito da aplicação). Quando o CDSE
+    // está configurado, `refreshRealTimeline()` substitui pelas passagens
+    // REAIS do Sentinel-2 (6–12 cenas úteis) devolvidas pelo backend.
+    let dates = [
       "2025-04-07", "2025-04-22", "2025-05-02", "2025-06-11",
       "2025-10-04", "2025-10-11", "2025-11-18", "2025-11-20",
       "2025-12-10", "2025-12-18", "2026-01-27", "2026-02-11", "2026-03-08"
@@ -625,6 +646,36 @@
       updateTextures();
       loadLiveWeather();
       loadHeightmap(); // Copernicus DEM GL-30 (fire-and-forget; fallback p/ NDVI)
+      refreshRealTimeline();
+    }
+
+    /**
+     * PR #4b — timeline temporal com passagens REAIS do Sentinel-2 (CDSE).
+     * Sem CDSE configurado / sem cenas, mantém a grade oficial (fallback
+     * explícito) e comunica via console — nunca inventa data real.
+     */
+    async function refreshRealTimeline() {
+      try {
+        const res = await fetch(
+          `${API_URL}/talhao/${activeFarm.id || 1}/dates`,
+          { headers: { ...authHeaders() } }
+        );
+        if (res.status === 401) { AuthService.logout(); return; }
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.source === 'sentinel-cdse' && Array.isArray(data.dates) && data.dates.length > 0) {
+          const prevIdx = Math.min(currentIndex, dates.length - 1);
+          dates = data.dates;
+          currentIndex = Math.min(prevIdx, dates.length - 1);
+          document.getElementById('timeline-slider').max = dates.length - 1;
+          document.getElementById('timeline-slider').value = currentIndex;
+          renderDatePills();
+          selectDateIndex(currentIndex);
+          console.info(`timeline: ${dates.length} passagens reais Sentinel-2 carregadas`);
+        }
+      } catch (err) {
+        console.warn('timeline: calendário real indisponível — usando grade oficial', err);
+      }
     }
 
     async function loadAnalyticsData() {
@@ -1007,13 +1058,54 @@
       el.innerText = message;
     }
 
-    function setDataSourceBadge(kind) {
+    function setDataSourceBadge(kind, message) {
       const el = document.getElementById('data-source-badge');
       if (!el) return;
       el.className = kind;
-      if (kind === 'real') el.innerText = 'DADOS: SENTINEL-2 REAL';
+      if (kind === 'real') el.innerText = '🛰️ DADOS: SENTINEL-2 L2A REAL';
       else if (kind === 'approx') el.innerText = 'DADOS: VISUALIZAÇÃO APROXIMADA';
+      else if (kind === 'not_configured') {
+        el.innerText = message || 'DADOS SATELITAIS REAIS NÃO CONFIGURADOS';
+      }
       else el.innerText = 'DADOS: INDISPONÍVEL';
+    }
+
+    /**
+     * Painel de PROVENIÊNCIA (PR #4b): satélite/sensor, produto, data de
+     * aquisição, nuvens, bandas, % pixels válidos e REAL vs APROXIMADO.
+     * Nunca afirma ser Sentinel sem o backend dizer `data_origin=sentinel`.
+     */
+    function renderProvenance(data) {
+      const el = document.getElementById('prov-lines');
+      if (!el) return;
+      if (!data) { el.innerText = 'aguardando dados…'; return; }
+      // Nativo (`type:"native"`) também é Sentinel-2 real, mas não vem do CDSE.
+      const isReal = data.data_origin === 'sentinel' &&
+        (data.real_data_status === undefined || data.real_data_status === null || data.real_data_status === 'ok');
+      if (isReal) {
+        const acq = (data.acquisition_date || data.date || '').split('-').reverse().join('/');
+        const cc = (typeof data.cloud_cover === 'number') ? `${data.cloud_cover.toFixed(1)}%` : '—';
+        const vpp = (typeof data.valid_pixel_percentage === 'number')
+          ? `${data.valid_pixel_percentage.toFixed(1)}%` : '—';
+        const lines = [
+          `AQUISIÇÃO: ${acq} · NUVENS: ${cc}`,
+          `SATÉLITE: ${data.platform || 'Sentinel-2'} (${data.constellation || 'S2'})`,
+          `PRODUTO: ${data.collection || 'sentinel-2-l2a'} · ${data.processing_level || 'L2A'}`,
+          `ID ITEM: ${data.product_id || '—'}`,
+          `BANDAS: ${Array.isArray(data.bands) ? data.bands.join(', ') : '—'}`,
+          `PIXELS VÁLIDOS: ${vpp}`,
+          `SELEÇÃO: ${String(data.selection_reason || '—').toUpperCase()}`,
+          `FORNECEDOR: ${data.provider || 'Copernicus Data Space Ecosystem'}`,
+        ];
+        el.className = 'prov-real';
+        el.innerText = lines.join('\n');
+      } else {
+        el.className = 'prov-fallback';
+        el.innerText = (
+          data.real_data_message
+          || 'FONTE: VISUALIZAÇÃO APROXIMADA (SEM SENTINEL-2 REAL)'
+        );
+      }
     }
 
     // [3D-PIPELINE-HELPERS-START]
@@ -1270,10 +1362,14 @@
     let terrainScale = 4.0;
 
     async function loadHeightmap() {
-      set3DStatus('loading', 'CARREGANDO ELEVAÇÃO (COPERNICUS DEM GL-30)...', 'status-dem-3d');
+      set3DStatus('loading', 'CARREGANDO DEM (COPERNICUS 30/90)...', 'status-dem-3d');
       let info = null;
       try {
-        info = await SatelliteService.getTalhaoHeightmap(activeFarm.id);
+        // Timeout de 90s: sem resposta, diagnóstico + fallback (nunca branco).
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 90000);
+        info = await SatelliteService.getTalhaoHeightmap(activeFarm.id, controller.signal);
+        clearTimeout(timer);
       } catch (e) {
         console.error('heightmap: falha ao consultar o endpoint', e);
       }
@@ -1303,12 +1399,13 @@
         matSim.needsUpdate = true;
         calculateImpact(); // re-aplica a escala what-if no lado simulado
 
+        const sourceLabel = (info.source || 'unknown').replace(/_/g, ' ').toUpperCase();
         set3DStatus(
           'ok',
-          `ELEVAÇÃO REAL ATIVA (${info.min_elevation_m}–${info.max_elevation_m} m, alívio ~${relief.toFixed(0)} m)`,
+          `ELEVAÇÃO REAL ATIVA — ${sourceLabel} (${info.min_elevation_m}–${info.max_elevation_m} m, alívio ~${relief.toFixed(0)} m)`,
           'status-dem-3d'
         );
-        console.info(`DEM GL-30: relevo real ativo (alívio ~${relief.toFixed(0)} m, ${info.min_elevation_m}–${info.max_elevation_m} m)`);
+        console.info(`DEM ${sourceLabel}: relevo real ativo (alívio ~${relief.toFixed(0)} m, ${info.min_elevation_m}–${info.max_elevation_m} m)`);
       } catch (e) {
         console.error('heightmap: falha ao aplicar heightmap DEM', e);
         set3DStatus('warn', 'ELEVAÇÃO APROXIMADA: FALHA AO APLICAR DEM', 'status-dem-3d');
@@ -1441,16 +1538,29 @@
 
       let textureUrl = null;
       let dataOrigin = null;
+      let realDataStatus = null;
+      let realDataMessage = null;
+      let metadata = null;
+
+      // PR #4b — estados de progresso explícitos (Buscando → Processando).
+      set3DStatus('loading', `BUSCANDO IMAGEM SENTINEL-2 (${currentLayer.toUpperCase()})...`);
 
       try {
+        // Timeout de 75s: além disso, erro diagnosticável → fallback (nunca bloqueia o 3D).
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 75000);
         const res = await fetch(
           `${API_URL}/talhao/${activeFarm.id}/texture?layer=${currentLayer}&date=${dateStr}`,
-          { headers: { ...authHeaders() } }
+          { headers: { ...authHeaders() }, signal: controller.signal }
         );
+        clearTimeout(timer);
         if (res.status === 401) { AuthService.logout(); return; }
         if (res.ok) {
           const data = await res.json();
+          metadata = data;
           dataOrigin = data && (data.data_origin || (data.type === 'native' ? 'sentinel' : 'procedural'));
+          realDataStatus = data && (data.real_data_status || null);
+          realDataMessage = data && (data.real_data_message || null);
           textureUrl = resolveTextureUrl(data, currentLayer, dateStr);
         } else {
           console.error(`texture: metadados HTTP ${res.status} para farm ${activeFarm.id}`);
@@ -1458,6 +1568,13 @@
       } catch (e) {
         // Diagnóstico contextualizado — nunca catch silencioso.
         console.error(`texture: falha ao consultar metadados (farm ${activeFarm.id})`, e);
+      }
+
+      if (textureUrl) {
+        set3DStatus('loading', `PROCESSANDO ${currentLayer.toUpperCase()} (RASTER REAL)...`);
+      } else {
+        // Sem URL utilizável → proveniência informa o motivo (fallback explícito).
+        renderProvenance(metadata || { real_data_message: 'FONTE: VISUALIZAÇÃO APROXIMADA (SEM SENTINEL-2 REAL)' });
       }
 
       if (!textureUrl) {
@@ -1469,8 +1586,13 @@
             applyTextureToMaterial(matReal, fb, heightTexture || fb);
             applyTextureToMaterial(matSim, fb, heightTexture || fb);
             baseTextureForSim = fb;
-            set3DStatus('warn', 'DADO SENTINEL INDISPONÍVEL · MODO DE VISUALIZAÇÃO APROXIMADA');
-            setDataSourceBadge('approx');
+            if (realDataStatus === 'not_configured') {
+              set3DStatus('warn', 'DADOS SATELITAIS REAIS NÃO CONFIGURADOS · VISUALIZAÇÃO APROXIMADA');
+              setDataSourceBadge('not_configured', realDataMessage);
+            } else {
+              set3DStatus('warn', 'DADO SENTINEL INDISPONÍVEL · MODO DE VISUALIZAÇÃO APROXIMADA');
+              setDataSourceBadge('approx');
+            }
           } else {
             set3DStatus('error', 'DADO SENTINEL INDISPONÍVEL');
             setDataSourceBadge('unavailable');
@@ -1492,14 +1614,24 @@
       const key = `${activeFarm.id}|${currentLayer}|${textureUrl}`;
       const result = await loadTextureOrFallback(key, textureUrl, matReal, matSim);
 
+      renderProvenance(metadata);
+
       if (!result.ok || !result.texture) {
-        set3DStatus('warn', 'DADO SENTINEL INDISPONÍVEL · MODO DE VISUALIZAÇÃO APROXIMADA');
-        setDataSourceBadge('approx');
+        if (realDataStatus === 'not_configured') {
+          set3DStatus('warn', 'DADOS SATELITAIS REAIS NÃO CONFIGURADOS · VISUALIZAÇÃO APROXIMADA');
+          setDataSourceBadge('not_configured', realDataMessage);
+        } else {
+          set3DStatus('warn', 'DADO SENTINEL INDISPONÍVEL · MODO DE VISUALIZAÇÃO APROXIMADA');
+          setDataSourceBadge('approx');
+        }
       } else {
         baseTextureForSim = result.texture;
         if (dataOrigin === 'sentinel') {
-          set3DStatus('ok', 'CENÁRIO REAL: TEXTURA SENTINEL-2 APLICADA');
+          set3DStatus('ok', 'CENÁRIO REAL — OBSERVAÇÃO SATELITAL: TEXTURA SENTINEL-2 APLICADA');
           setDataSourceBadge('real');
+        } else if (realDataStatus === 'not_configured') {
+          set3DStatus('warn', 'DADOS SATELITAIS REAIS NÃO CONFIGURADOS · VISUALIZAÇÃO APROXIMADA');
+          setDataSourceBadge('not_configured', realDataMessage);
         } else {
           set3DStatus('warn', 'MODO DE VISUALIZAÇÃO APROXIMADA (SEM SENTINEL-2 REAL)');
           setDataSourceBadge('approx');

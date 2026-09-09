@@ -117,6 +117,7 @@ def generate_all_spectral_layers(farm_id: int, talhao_id: int, lat: float, lon: 
     # Bandas espectrais calibradas
     nir = 0.35 + (spatial_variance * 0.50)
     red = 0.08 + ((1.0 - spatial_variance) * 0.25)
+    green = 0.09 + (spatial_variance * 0.18)
     blue = 0.05 + ((1.0 - spatial_variance) * 0.15)
     red_edge = 0.20 + (spatial_variance * 0.35)
     swir = 0.10 + ((1.0 - spatial_variance) * 0.28)
@@ -147,5 +148,18 @@ def generate_all_spectral_layers(farm_id: int, talhao_id: int, lat: float, lon: 
         img = Image.fromarray(color_map, 'RGBA')
         out_file = os.path.join(target_dir, f"{layer_name}_cloudless_min_max.png")
         img.save(out_file)
+
+    # PR #4b — RGB true color (B04→R, B03→G, B02→B, escala ×2.5 — mesmo
+    # padrão visual da documentação CDSE para Sentinel-2 L2A). É o fallback
+    # PROCEDURAL quando não há dado real; nunca se apresenta como Sentinel.
+    rgb_map = np.zeros((size, size, 4), dtype=np.uint8)
+    rgb_map[..., 3] = 255
+    rgb_map[..., 0] = np.clip(red * 2.5 * 255.0, 0, 255).astype(np.uint8)
+    rgb_map[..., 1] = np.clip(green * 2.5 * 255.0, 0, 255).astype(np.uint8)
+    rgb_map[..., 2] = np.clip(blue * 2.5 * 255.0, 0, 255).astype(np.uint8)
+    rgb_map[~mask] = [13, 17, 23, 255]
+    Image.fromarray(rgb_map, "RGBA").save(
+        os.path.join(target_dir, "rgb_cloudless_min_max.png")
+    )
 
     return target_dir

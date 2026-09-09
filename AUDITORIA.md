@@ -818,3 +818,22 @@ Correção dos dados        MÉDIO   MÉDIO     A3 — números falsos sem alert
 Portabilidade             ALTO    MÉDIO     A5 — não roda fora do localhost
 Manutenibilidade          ALTO    BAIXO/MED M1/M5/M6/M7/M8
 ```
+
+---
+
+## Anexo C — Dados REAIS do Talhão (Sentinel-2 + DEM via CDSE) — auditoria da etapa
+
+Executada em **08/09/2026** antes da implementação do serviço CDSE:
+
+| Item | Achado | Fonte |
+|------|--------|-------|
+| Catálogo STAC | **Coleção `sentinel-2-l2a`**; busca `POST {STAC}/search` com `intersects`, `datetime`, `limit` | documentation.dataspace.copernicus.eu/APIs/SentinelHub/Catalog.html |
+| Process API | `POST https://sh.dataspace.copernicus.eu/process/v1`; `bounds.geometry` (Polygon) + `maxCloudCoverage`; respostas `image/tiff` | BeginnersGuide + Process/Examples/S2L2A.html |
+| AUTH | OAuth2 `client_credentials` em `identity.dataspace.copernicus.eu/.../token` | Authentication.html |
+| DEM | `input.data.type: "dem"` + `demInstance` `COPERNICUS_30` (infill GLO-90) → `COPERNICUS_90` | Data/DEM.html |
+| Bandas L2A | B01..B12; true color `2.5*[B04,B03,B02]`; `units:"DN"`/`harmonizeValues:"false"` p/ valores originais | Process/Examples/S2L2A.html |
+| Qualidade | SCL e `dataMask` no evalscript; classes 0-3/8-11 tratadas como inválidas | sentinelhub-py docs (referência) |
+| Legado | `catalogue.dataspace.copernicus.eu/stac` **descontinuado** — NÃO usar | (comparação das docs) |
+| Conectividade | Sandbox sem acesso TCP aos hosts do CDSE (curl → exit 35/000) — integração real fica no script opcional, fora da suíte | execução local |
+
+**Decisões aplicadas:** endpoints centralizados em `services/copernicus_service.py`; nunca versionar `CDSE_CLIENT_SECRET`; sem credenciais → `real_data_status="not_configured"` e fallback procedural explícito; índices com fórmulas documentadas e validadas numericamente; What-If permanece modelo/projeção (nunca "imagem futura do Sentinel"); autenticação dos assets continua via Bearer no frontend.
