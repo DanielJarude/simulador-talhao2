@@ -91,6 +91,16 @@
     }
     .date-pill:hover { border-color: #58a6ff; color: #58a6ff; }
     .date-pill.active { background: #1f6feb; border-color: #388bfd; color: #ffffff; box-shadow: 0 0 10px rgba(31, 111, 235, 0.4); }
+    /* Estados discretos da timeline (PR #5e): disponível / carregando /
+       pronta / aplicada / erro — representados por um ponto minúsculo. */
+    .date-pill .state-dot {
+      display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+      margin-left: 5px; background: #30363d; vertical-align: 1px;
+    }
+    .date-pill.loading .state-dot { background: #58a6ff; box-shadow: 0 0 5px rgba(88,166,255,0.8); }
+    .date-pill.ready .state-dot { background: #7ee787; }
+    .date-pill.applied .state-dot { background: #f0f6fc; }
+    .date-pill.error .state-dot { background: #ff7b72; }
 
     .kpi-grid {
       display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -261,6 +271,45 @@
     }
     #dem-line.ok { color: #7ee787; }
     #dem-line.warn { color: #e3b341; }
+    /* PR #5e — elevação REAL (nunca inventada) + exagero visual 1×/2×/3× */
+    #dem-exag-row { display: flex; align-items: center; gap: 6px; margin-top: 5px; font-size: 0.66rem; color: #8b949e; }
+    #elevation-line { color: #7ee787; font-weight: 700; }
+    .exag-btn {
+      background: #21262d; border: 1px solid #30363d; color: #c9d1d9;
+      border-radius: 4px; padding: 1px 7px; font-size: 0.64rem; font-weight: 700;
+      cursor: pointer; transition: 0.15s;
+    }
+    .exag-btn:hover { border-color: #58a6ff; color: #58a6ff; }
+    .exag-btn.active { background: #1f6feb; border-color: #388bfd; color: #fff; }
+
+    /* PR #5e — controles do calendário real (períodos + Mais recente) */
+    #timeline-controls {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px;
+    }
+    .period-pill {
+      background: #0d1117; border: 1px solid #30363d; color: #8b949e;
+      padding: 3px 9px; border-radius: 6px; font-size: 0.68rem; font-weight: 700;
+      cursor: pointer; white-space: nowrap; transition: 0.15s;
+    }
+    .period-pill:hover { border-color: #58a6ff; color: #58a6ff; }
+    .period-pill.active { background: #1f6feb; border-color: #388bfd; color: #fff; }
+    #btn-latest {
+      background: #21262d; border: 1px solid #30363d; color: #7ee787;
+      padding: 3px 9px; border-radius: 6px; font-size: 0.68rem; font-weight: 700; cursor: pointer;
+    }
+    #btn-latest:hover { border-color: #7ee787; }
+    #custom-period-row { display: inline-flex; gap: 5px; align-items: center; }
+    #custom-period-row input[type="date"] {
+      background: #0d1117; border: 1px solid #30363d; color: #c9d1d9;
+      border-radius: 5px; padding: 2px 6px; font-size: 0.68rem; color-scheme: dark;
+    }
+    #custom-apply {
+      background: #21262d; border: 1px solid #30363d; color: #58a6ff;
+      border-radius: 5px; padding: 2px 8px; font-size: 0.68rem; font-weight: 700; cursor: pointer;
+    }
+    #preload-status { font-size: 0.68rem; font-weight: 700; color: #58a6ff; white-space: nowrap; }
+    #preload-status.done { color: #7ee787; }
+    #timeline-meta { font-size: 0.66rem; color: #8b949e; white-space: nowrap; }
 
     /* Erro compacto (não bloqueia a cena) */
     #error-toast {
@@ -522,6 +571,13 @@
         <span id="load-indicator"><span class="spinner"></span><span id="load-indicator-text">Carregando…</span></span>
         <input type="range" id="timeline-slider" min="0" max="12" value="0" step="1" style="flex:1;">
         <span id="date-label" style="font-size:0.8rem; font-weight:bold; width:80px; text-align:right;">07/04/2025</span>
+        <!-- Pausa entre cenas do Play (configurável; transições visuais apenas). -->
+        <select id="play-interval" title="Pausa entre cenas do Play">
+          <option value="1000">1 s</option>
+          <option value="1600" selected>1,6 s</option>
+          <option value="3000">3 s</option>
+          <option value="5000">5 s</option>
+        </select>
         <select id="layer-select">
           <option value="rgb">RGB</option>
           <option value="ndvi">NDVI</option>
@@ -529,6 +585,19 @@
           <option value="ndre">NDRE</option>
           <option value="ndmi">NDMI</option>
         </select>
+      </div>
+      <!-- PR #5e — calendário REAL (STAC): "Mais recente", períodos e
+           progresso discreto do pré-carregamento. Nunca bloqueia exploração. -->
+      <div id="timeline-controls">
+        <button id="btn-latest" type="button" title="Selecionar a aquisição válida mais recente do catálogo">⇥ Mais recente</button>
+        <span id="period-pills"></span>
+        <span id="custom-period-row" hidden>
+          <input type="date" id="custom-start">
+          <input type="date" id="custom-end">
+          <button id="custom-apply" type="button">Aplicar</button>
+        </span>
+        <span id="preload-status" hidden></span>
+        <span id="timeline-meta"></span>
       </div>
 
       <!-- METADADOS COMPACTOS (PR #5d): 1 linha + Detalhes retrátil.
@@ -543,6 +612,13 @@
         </div>
         <!-- Rodapé discreto: elevação NUNCA compete com os status principais -->
         <div id="dem-line" class="dem-line">DEM: consultando…</div>
+        <div id="dem-exag-row" hidden>
+          <span id="elevation-line">Elevação real: —</span>
+          <span>Exagero visual:</span>
+          <button class="exag-btn" type="button" data-exag="1">1×</button>
+          <button class="exag-btn active" type="button" data-exag="2">2×</button>
+          <button class="exag-btn" type="button" data-exag="3">3×</button>
+        </div>
       </div>
 
       <!-- Erro compacto de cena (com retry manual — não bloqueia o 3D) -->
@@ -587,6 +663,9 @@
       "2025-10-04", "2025-10-11", "2025-11-18", "2025-11-20",
       "2025-12-10", "2025-12-18", "2026-01-27", "2026-02-11", "2026-03-08"
     ];
+    // PR #5e — metadados do calendário REAL (fonte/status/última aquisição).
+    let calendarMeta = null;
+    let currentPeriod = 60;    // 30/60/90/180/365 | 'custom'
 
     function renderDatePills() {
       const container = document.getElementById('dashboard-dates-bar');
@@ -595,9 +674,13 @@
       dates.forEach((d, idx) => {
         const formatted = d.split('-').reverse().join('/');
         const btn = document.createElement('button');
-        btn.className = `date-pill ${idx === currentIndex ? 'active' : ''}`;
+        btn.className = `date-pill ${idx === currentIndex ? 'active' : ''} available`;
         btn.id = `date-pill-${idx}`;
         btn.innerText = formatted;
+        // Ponto discreto de estado (PR #5e): disponível/pronta/aplicada/erro.
+        const dot = document.createElement('span');
+        dot.className = 'state-dot';
+        btn.appendChild(dot);
         btn.onclick = () => selectDateIndex(idx);
         container.appendChild(btn);
       });
@@ -649,6 +732,9 @@
       // Congela avanço automático durante a troca (preserva intenção de Play).
       playerBeginLayerSwap(player, layer);
       loadScene(player.appliedIndex, layer, { layerSwap: true });
+      // PR #5e — PRELOAD DA NOVA LAYER em background: a cena atual da nova
+      // layer é carregada primeiro (acima); as demais entram na fila depois.
+      schedulePreloadForTimeline(layer);
     }
 
     function downloadPDFReport() {
@@ -744,11 +830,12 @@
       }
 
       renderDatePills();
+      renderPeriodPills();
       loadAnalyticsData();
       updateTextures();
       loadLiveWeather();
-      loadHeightmap(); // Copernicus DEM GL-30 (fire-and-forget; fallback p/ NDVI)
-      refreshRealTimeline();
+      loadHeightmap(); // Copernicus DEM GL-30 (fire-and-forget; falha → aproximado)
+      refreshRealTimeline(currentPeriod); // STAC real como fonte principal
     }
 
     /**
@@ -756,27 +843,82 @@
      * Sem CDSE configurado / sem cenas, mantém a grade oficial (fallback
      * explícito) e comunica via console — nunca inventa data real.
      */
-    async function refreshRealTimeline() {
+    /**
+     * PR #5e — calendário REAL como fonte principal da timeline.
+     * `period` ∈ {30,60,90,180,365} usa janela de dias; 'custom' usa
+     * start/end explícitos. A consulta é SÓ metadados STAC (o processamento
+     * da cena continua sob demanda, no clique/Play). Sem CDSE, mantém a grade
+     * oficial como fallback explícito — nunca inventa data real.
+     */
+    async function refreshRealTimeline(period = 60, customStart = null, customEnd = null) {
       try {
+        const params = new URLSearchParams();
+        if (customStart && customEnd && period === 'custom') {
+          params.set('start', customStart);
+          params.set('end', customEnd);
+          params.set('limit', '60');
+        } else {
+          params.set('period_days', String(Math.min(730, Math.max(30, Number(period) || 60))));
+          params.set('limit', String(calendarLimitForPeriod(Number(period) || 60)));
+        }
         const res = await fetch(
-          `${API_URL}/talhao/${activeFarm.id || 1}/dates`,
+          `${API_URL}/talhao/${activeFarm.id || 1}/dates?${params.toString()}`,
           { headers: { ...authHeaders() } }
         );
         if (res.status === 401) { AuthService.logout(); return; }
         if (!res.ok) return;
         const data = await res.json();
         if (data.source === 'sentinel-cdse' && Array.isArray(data.dates) && data.dates.length > 0) {
-          // Preserva a cena APLICADA (player) ao trocar para o calendário real.
-          const prevApplied = player.appliedIndex;
+          // Preserva a data APLICADA se ainda existir na nova janela; senão
+          // seleciona a MAIS RECENTE (data válida do catálogo, nunca "hoje").
+          const appliedDate = (player.appliedMeta && player.appliedMeta.date) || dates[player.appliedIndex] || null;
           dates = data.dates;
-          player = createTimelineMachine(Math.min(prevApplied, dates.length - 1), dates.length);
+          calendarMeta = { ...data, count: data.count || dates.length };
+          preloadStates.clear();          // chaves antigas saem da timeline
+          preloadQueue.length = 0;
+          preloadQueuedKeys.clear();
+          const keepIdx = appliedDate ? dates.indexOf(appliedDate) : -1;
+          const startIdx = keepIdx >= 0 ? keepIdx : 0; // 0 = mais recente SEMPRE
+          player = createTimelineMachine(startIdx, dates.length);
           document.getElementById('timeline-slider').max = dates.length - 1;
           renderDatePills();
-          selectDateIndex(player.appliedIndex);
-          console.info(`timeline: ${dates.length} passagens reais Sentinel-2 carregadas`);
+          renderTimelineMeta();
+          selectDateIndex(startIdx);
+          // Após aplicar a data escolhida, o commit dispara o preload (janela).
+          console.info(`timeline: ${dates.length} passagens reais Sentinel-2 (janela ${period}d)`);
+        } else {
+          // Fallback explícito (config): nunca vira "real" na UI.
+          calendarMeta = { source: data.source || 'config', status: data.status, count: 0 };
+          renderTimelineMeta();
+          console.warn('timeline: calendário STAC indisponível — usando grade oficial', data.status);
         }
       } catch (err) {
         console.warn('timeline: calendário real indisponível — usando grade oficial', err);
+      }
+    }
+
+    /** Limite de cenas por janela (calendário ainda leve, metadados apenas). */
+    function calendarLimitForPeriod(periodDays) {
+      if (periodDays >= 365) return 80;
+      if (periodDays >= 180) return 60;
+      if (periodDays >= 90) return 40;
+      if (periodDays >= 60) return 24;
+      return 12;
+    }
+
+    /** Rodapé discreto: "Última aquisição disponível: …" + fonte da janela. */
+    function renderTimelineMeta() {
+      const el = document.getElementById('timeline-meta');
+      if (!el) return;
+      if (calendarMeta && calendarMeta.source === 'sentinel-cdse') {
+        const latest = calendarMeta.latest_date || dates[0] || '';
+        el.innerText = latest
+          ? `Última aquisição disponível: ${formatSceneDate(latest)} • ${calendarMeta.count || dates.length} cenas`
+          : `${dates.length} cenas reais`;
+      } else if (calendarMeta && calendarMeta.source === 'config') {
+        el.innerText = `Grade oficial (CDSE não configurado) • ${dates.length} datas`;
+      } else {
+        el.innerText = '';
       }
     }
 
@@ -986,6 +1128,97 @@
       }
     }
 
+    // [3D-TERRAIN-HELPERS-START] — TERRAIN 3D REAL (DEM) — helpers PUROS.
+    // O DEM (Copernicus COPERNICUS_30/90) é normalizado 0–1 pelo backend;
+    // aqui ele desloca os VÉRTICES da malha (eixo local Z → mundo Y) e
+    // recalcula as normais — o terreno é GEOMETRIA, não truque de câmera.
+    // =====================================================================
+    const DEM_EXAGGERATION_STEPS = [1, 2, 3];
+    const DEM_EXAGGERATION_DEFAULT = 2;
+
+    /** Configuração da câmera 3D (oblíqua aérea, órbita/zoom/limites). */
+    // «var» para ficar visível ao harness Node (VM); no navegador continua local.
+    var CAMERA_PRESET = {
+      fov: 45,
+      position: [26, 58, 66],           // visão oblíqua inicial (relevo visível)
+      target: [0, 0, 0],
+      minDistance: 14,
+      maxDistance: 240,
+      minPolarAngle: 0.10,              // permite quase top-down
+      maxPolarAngle: Math.PI * 0.46,    // nunca abaixo do horizonte
+      rotate: true, zoom: true, pan: true,
+      rotateSpeed: 0.85, zoomSpeed: 1.0, panSpeed: 0.75,
+    };
+    /** Regras do terreno expostas para teste (const não viram global em VM). */
+    var DEM_RULES = { steps: DEM_EXAGGERATION_STEPS, default: DEM_EXAGGERATION_DEFAULT };
+
+    /**
+     * Converte o alívio real (metros) para unidades do mundo 3D:
+     * o plano tem `planeUnits` unidades representando `spanMeters` no campo.
+     * Ex.: talhão de 900 m → 1 unidade ≈ 18 m; alívio 45 m ≈ 2,5 unidades.
+     * NUNCA inventa elevação: se o DEM falhou, o chão fica plano e o rótulo
+     * diz "elevação aproximada".
+     */
+    function demReliefWorldUnits(reliefMeters, spanMeters, planeUnits = 50) {
+      const span = Math.max(Number(spanMeters) || 1, 1);
+      const relief = Math.max(Number(reliefMeters) || 0, 0);
+      return relief / (span / planeUnits);
+    }
+
+    /** Amostra bilinear do grid do heightmap (0–255 → 0–1) em (u,v) ∈ [0,1]. */
+    function demGridSample(grid, cols, u, v) {
+      if (!grid || cols < 2) return 0;
+      const rows = Math.floor(grid.length / cols);
+      const x = Math.max(0, Math.min(1, Number(u) || 0)) * (cols - 1);
+      const y = Math.max(0, Math.min(1, Number(v) || 0)) * (rows - 1);
+      const x0 = Math.floor(x), y0 = Math.floor(y);
+      const x1 = Math.min(x0 + 1, cols - 1), y1 = Math.min(y0 + 1, rows - 1);
+      const fx = x - x0, fy = y - y0;
+      const g = (cx, cy) => grid[cy * cols + cx] === undefined ? 0 : grid[cy * cols + cx];
+      const top = g(x0, y0) * (1 - fx) + g(x1, y0) * fx;
+      const bottom = g(x0, y1) * (1 - fx) + g(x1, y1) * fx;
+      return (top * (1 - fy) + bottom * fy) / 255.0;
+    }
+
+    /**
+     * Aplica o DEM à malha: `sampleFn(u, v)` → 0–1 (altura normalizada do
+     * heightmap), `reliefWorld` = alívio em unidades de mundo na escala 1×,
+     * `exaggeration` = 1|2|3 (APENAS visual — as elevações reais em metros
+     * continuam as do DEM original). Recalcula normais para o relevo ganhar
+     * sombreamento real no render.
+     */
+    function applyDemToGeometry(geometry, sampleFn, reliefWorld, exaggeration) {
+      const pos = geometry.attributes.position;
+      if (!pos || !pos.array) return false;
+      const segments = (geometry.parameters && geometry.parameters.widthSegments) || 64;
+      const cols = segments + 1;
+      const rows = (geometry.parameters && geometry.parameters.heightSegments || segments) + 1;
+      const arr = pos.array;
+      const exag = Math.max(1, Number(exaggeration) || 1);
+      for (let iy = 0; iy < rows; iy++) {
+        const v = iy / (rows - 1);
+        for (let ix = 0; ix < cols; ix++) {
+          const u = ix / (cols - 1);
+          const i = (iy * cols + ix) * 3;
+          arr[i + 2] = sampleFn(u, v) * reliefWorld * exag; // eixo local Z (→ Y no mundo)
+        }
+      }
+      pos.needsUpdate = true;
+      if (typeof geometry.computeVertexNormals === 'function') geometry.computeVertexNormals();
+      return true;
+    }
+
+    /** Zera o relevo (DEM indisponível) e recalcula normais — chão plano. */
+    function flattenDemGeometry(geometry) {
+      const pos = geometry.attributes.position;
+      if (!pos || !pos.array) return false;
+      const arr = pos.array;
+      for (let i = 2; i < arr.length; i += 3) arr[i] = 0;
+      pos.needsUpdate = true;
+      if (typeof geometry.computeVertexNormals === 'function') geometry.computeVertexNormals();
+      return true;
+    }
+    // [3D-TERRAIN-HELPERS-END]
     // 3. Three.js - Simulador 3D Split-View
     const container = document.getElementById('canvas-container');
     const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -1000,28 +1233,55 @@
     const sceneSim = new THREE.Scene();
     sceneSim.background = new THREE.Color(0x0d1117);
 
-    const camera = new THREE.PerspectiveCamera(45, (window.innerWidth / 2) / (window.innerHeight - 56), 0.1, 1000);
-    camera.position.set(0, -60, 52);
+    // PR #5e — câmera com PERSPECTIVA REAL + OrbitControls melhorado:
+    // visão oblíqua aérea inicial, órbita/rotação, zoom com limite e
+    // inclinação limitada (nunca abaixo do horizonte). O terreno agora fica
+    // no plano XZ (Y para cima) com deslocamento do DEM em Y — não é mais
+    // um "pôster" vertical inclinado pela câmera. A configuração é a mesma
+    // constante testável de [3D-TERRAIN-HELPERS] (CAMERA_PRESET).
+    const CAMERA_SETTINGS = CAMERA_PRESET;
+    const camera = new THREE.PerspectiveCamera(CAMERA_SETTINGS.fov, (window.innerWidth / 2) / (window.innerHeight - 56), 0.1, 1000);
+    camera.position.set(...CAMERA_SETTINGS.position);
     const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.target.set(...CAMERA_SETTINGS.target);
     controls.enableDamping = true;
+    controls.enableRotate = CAMERA_SETTINGS.rotate;
+    controls.enableZoom = CAMERA_SETTINGS.zoom;
+    controls.enablePan = CAMERA_SETTINGS.pan;
+    controls.minDistance = CAMERA_SETTINGS.minDistance;
+    controls.maxDistance = CAMERA_SETTINGS.maxDistance;
+    controls.minPolarAngle = CAMERA_SETTINGS.minPolarAngle;
+    controls.maxPolarAngle = CAMERA_SETTINGS.maxPolarAngle;
+    controls.rotateSpeed = CAMERA_SETTINGS.rotateSpeed;
+    controls.zoomSpeed = CAMERA_SETTINGS.zoomSpeed;
+    controls.panSpeed = CAMERA_SETTINGS.panSpeed;
 
     [sceneReal, sceneSim].forEach(sc => {
-      sc.add(new THREE.AmbientLight(0xffffff, 0.8));
-      const dl = new THREE.DirectionalLight(0xffffff, 0.9);
-      dl.position.set(40, 50, 60);
+      sc.add(new THREE.AmbientLight(0xffffff, 0.45));
+      // Luz direcional baixa (ângulo rasante) para o RELEVO ganhar sombra
+      // e profundidade — essencial para o terreno 3D real não "achatar".
+      const dl = new THREE.DirectionalLight(0xffffff, 1.05);
+      dl.position.set(-45, 55, 70);
       sc.add(dl);
+      const fill = new THREE.DirectionalLight(0x9cc7ff, 0.35);
+      fill.position.set(60, 40, -50);
+      sc.add(fill);
       const grid = new THREE.GridHelper(80, 20, 0x1f6feb, 0x161b22);
-      grid.rotation.x = Math.PI / 2;
-      grid.position.z = -0.15;
+      grid.position.y = -0.15; // grade horizontal sob o terreno (XZ, Y up)
       sc.add(grid);
     });
 
-    const geo = new THREE.PlaneGeometry(50, 50, 64, 64);
+    // Subdivisão do terreno: 96×96 (≈9 m por quad em talhão de ~900 m) —
+    // suficiente para o DEM COPERNICUS_30 (30 m) sem custo de VRAM relevante.
+    const TERRAIN_SEGMENTS = 96;
+    const geo = new THREE.PlaneGeometry(50, 50, TERRAIN_SEGMENTS, TERRAIN_SEGMENTS);
 
     // ---------- CACHE DE TEXTURAS (gerenciamento de VRAM) ----------
     // LRU com limite de texturas ativas: na evicção o .dispose() libera a
     // memória GPU, corrigindo o vazamento ao trocar datas/camadas.
-    const MAX_CACHED_TEXTURES = 8; // 8 texturas 256×256 RGBA ≈ 2,6 MB de VRAM
+    // PR #5e — 16 texturas em VRAM acompanham o cache de cenas (12) + DEM:
+    // o terreno troca TEXTURA entre datas; o DEM é carregado 1× e reutilizado.
+    const MAX_CACHED_TEXTURES = 16;
     const textureLoader = new THREE.TextureLoader();
     textureLoader.setCrossOrigin('anonymous');
     const textureCache = new Map();     // key -> THREE.Texture (ordem de inserção = LRU)
@@ -1078,6 +1338,10 @@
                 const oldestKey = textureCache.keys().next().value; // LRU
                 textureCache.get(oldestKey).dispose();              // libera VRAM
                 textureCache.delete(oldestKey);
+                // NUNCA deixe uma cena "pronta" apontar para textura disposta:
+                // a entrada correspondente sai do cache de cenas (será refeita
+                // sob demanda se o usuário voltar a ela).
+                if (typeof evictSceneEntriesForTexture === 'function') evictSceneEntriesForTexture(oldestKey);
               }
               resolve(tex);
             } catch (err) {
@@ -1137,13 +1401,34 @@
       return pending;
     }
 
-    const matReal = new THREE.MeshStandardMaterial({ roughness: 0.85, displacementScale: 4.0, side: THREE.DoubleSide });
+    const matReal = new THREE.MeshStandardMaterial({ roughness: 0.85, side: THREE.DoubleSide });
     const meshReal = new THREE.Mesh(geo, matReal);
+    // Terreno no plano XZ (Y para cima): o deslocamento do DEM (eixo Z local
+    // da PlaneGeometry) vira elevação real no eixo Y do mundo.
+    meshReal.rotation.x = -Math.PI / 2;
     sceneReal.add(meshReal);
 
-    const matSim = new THREE.MeshStandardMaterial({ roughness: 0.85, displacementScale: 4.0, side: THREE.DoubleSide });
+    const matSim = new THREE.MeshStandardMaterial({ roughness: 0.85, side: THREE.DoubleSide });
     const meshSim = new THREE.Mesh(geo, matSim);
+    meshSim.rotation.x = -Math.PI / 2;
     sceneSim.add(meshSim);
+
+    // Par extra para CROSSFADE visual (200–500 ms) entre cenas já prontas.
+    // A transição altera APENAS a opacidade das texturas — nunca interpola
+    // valores científicos entre duas aquisições.
+    const matRealFade = new THREE.MeshStandardMaterial({ roughness: 0.85, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide });
+    const meshRealFade = new THREE.Mesh(geo, matRealFade);
+    meshRealFade.rotation.x = -Math.PI / 2;
+    meshRealFade.visible = false;
+    meshRealFade.renderOrder = 1;
+    sceneReal.add(meshRealFade);
+
+    const matSimFade = new THREE.MeshStandardMaterial({ roughness: 0.85, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide });
+    const meshSimFade = new THREE.Mesh(geo, matSimFade);
+    meshSimFade.rotation.x = -Math.PI / 2;
+    meshSimFade.visible = false;
+    meshSimFade.renderOrder = 1;
+    sceneSim.add(meshSimFade);
 
     // =====================================================================
     // PIPELINE 3D (PR #4) — helpers puros + fallback visual + What-If visual.
@@ -1442,11 +1727,11 @@
       return null;
     }
 
-    /** Atribui textura (cor) + displacement (relevo) a um material 3D. */
-    function applyTextureToMaterial(mat, mapTex, dispTex) {
+    /** Atribui textura de COR a um material 3D. O RELEVO vem da GEOMETRIA
+     *  (DEM aplicado nos vértices) — nunca do displacementMap do material. */
+    function applyTextureToMaterial(mat, mapTex) {
       if (!mat || !mapTex) return false;
       mat.map = mapTex;
-      if (dispTex) mat.displacementMap = dispTex;
       mat.needsUpdate = true;
       return true;
     }
@@ -1511,17 +1796,22 @@
           (fx((p[1] - minLon) / spanLon) - 0.5) * width,
           (0.5 - fx((maxLat - p[0]) / spanLat)) * height,
         ]);
-        return { points, width, height };
+        // Escala real (metros por unidade de mundo) para o DEM: o plano de
+        // 50 unidades representa max(spanLatM, spanLonM) metros no campo.
+        return { points, width, height, metersPerUnit: Math.max(spanLatM, spanLonM) / 50.0 };
       }
       // Sem polígono: elipse idêntica à do backend (bbox 12%–88%).
+      // A escala é aproximada (área → lado equivalente) e documentada como tal;
+      // com KML real o `metersPerUnit` é exato.
       const radius = 0.35;
       const width = 50.0, height = 50.0;
+      const sideM = Math.sqrt(Math.max(Number(areaHa) || 30, 1) * 10000);
       const points = [];
       for (let i = 0; i < 32; i++) {
         const a = (i / 32) * Math.PI * 2.0;
         points.push([Math.cos(a) * radius * width, Math.sin(a) * radius * height]);
       }
-      return { points, width, height };
+      return { points, width, height, metersPerUnit: sideM / 50.0 };
     }
 
     /** Textura de FALLBACK visual — NÃO finge ser Sentinel-2 real. */
@@ -1603,8 +1893,8 @@
     async function loadTextureOrFallback(key, url, matA, matB, signal = undefined) {
       try {
         const tex = await getCachedTexture(key, url, signal);
-        applyTextureToMaterial(matA, tex, heightTexture || tex);
-        applyTextureToMaterial(matB, tex, heightTexture || tex);
+        applyTextureToMaterial(matA, tex); // relevo é GEOMETRIA (DEM) — sem displacementMap
+        applyTextureToMaterial(matB, tex);
         return { ok: true, texture: tex };
       } catch (err) {
         // Abort (pause/troca manual) NÃO pode trocar a cena aplicada por
@@ -1614,8 +1904,8 @@
         try {
           const fb = createFallbackTexture();
           if (fb) {
-            applyTextureToMaterial(matA, fb, heightTexture || fb);
-            applyTextureToMaterial(matB, fb, heightTexture || fb);
+            applyTextureToMaterial(matA, fb);
+            applyTextureToMaterial(matB, fb);
             return { ok: false, texture: fb };
           }
         } catch (e2) {
@@ -1626,16 +1916,132 @@
     }
     // [3D-PIPELINE-HELPERS-END]
 
+    // =====================================================================
+
+    // =====================================================================
+    // [3D-SCENE-CACHE-HELPERS-START] — CACHE DE CENAS + PLANO DE PRELOAD (puros).
+    // Chave: farmId|talhao|date|layer (contrato PR #5e).
+    // =====================================================================
+    const SCENE_CACHE_MAX = 12;
+    const PRELOAD_ALL_LIMIT = 12;      // calendário ≤ 12 cenas → preload TODAS
+    const PRELOAD_WINDOW = 5;          // ≥ 13 cenas: 1 anterior + atual + 3 próximas
+    const PRELOAD_CONCURRENCY = 2;     // fetches simultâneos de cena (máx)
+    /** Limites expostos para teste (const não viram global em VM). */
+    var SCENE_CACHE_LIMITS = {
+      max: SCENE_CACHE_MAX, allLimit: PRELOAD_ALL_LIMIT,
+      window: PRELOAD_WINDOW, concurrency: PRELOAD_CONCURRENCY,
+    };
+
+    function sceneCacheKey(farmId, talhaoId, dateStr, layer) {
+      return `${farmId}|${talhaoId || 0}|${dateStr}|${layer}`;
+    }
+
+    /** LRU real (Map preserva ordem de inserção; get() re-ordena p/ MRU). */
+    function createSceneCache(maxEntries) {
+      const map = new Map();
+      return {
+        maxEntries,
+        get(key) {
+          if (!map.has(key)) return null;
+          const value = map.get(key);
+          map.delete(key);
+          map.set(key, value);
+          return value;
+        },
+        has(key) { return map.has(key); },
+        /** Insere/atualiza e devolve as chaves EVICTED (para revogar de fato). */
+        set(key, value) {
+          if (map.has(key)) map.delete(key);
+          map.set(key, value);
+          const evicted = [];
+          while (map.size > this.maxEntries) {
+            const oldest = map.keys().next().value;
+            evicted.push(oldest);
+            map.delete(oldest);
+          }
+          return evicted;
+        },
+        delete(key) { return map.delete(key); },
+        size() { return map.size; },
+        keys() { return map.keys(); },
+        entries() { return map.entries(); },
+      };
+    }
+
+    /** Remove do cache de CENAS toda entrada que dependa de uma textura
+     *  descartada pelo LRU de texturas (VRAM) — nunca uma cena "pronta"
+     *  apontando para textura já disposta (retorna o nº de remoções). */
+    function evictSceneEntriesForTexture(textureKey) {
+      let removed = 0;
+      const stale = [];
+      // Snapshot: get() re-ordena (LRU) e não se pode iterar o Map vivo.
+      for (const k of Array.from(sceneCache.keys())) {
+        const entry = sceneCache.get(k);
+        if (entry && entry.textureKey === textureKey) stale.push(k);
+      }
+      for (const k of stale) { sceneCache.delete(k); removed += 1; }
+      return removed;
+    }
+
+    /**
+     * Plano de pré-carregamento (documentação de limites dos requisitos):
+     *  - calendário com ≤ 12 cenas → TODAS as cenas da layer ativa;
+     *  - calendário maior → 1 anterior + atual + 3 próximas (janela 5) e o
+     *    restante como preenchimento em background (mais próximo primeiro).
+     */
+    function computePreloadPlan(total, activeIndex, options = {}) {
+      const allLimit = options.allLimit || PRELOAD_ALL_LIMIT;
+      const windowSize = options.windowSize || PRELOAD_WINDOW;
+      const n = Math.max(1, Number(total) || 1);
+      const idx = Math.max(0, Math.min(Number(activeIndex) || 0, n - 1));
+      const priority = [];
+      const background = [];
+      const seen = new Set();
+      const add = (i, list) => {
+        if (i < 0 || i >= n || seen.has(i)) return;
+        seen.add(i);
+        list.push(i);
+      };
+      if (n <= allLimit) {
+        for (let i = 0; i < n; i++) add(i, priority);
+        return { target: idx, window: priority.slice(), priority, background: [], all: true };
+      }
+      add(idx - 1, priority);                       // 1 anterior
+      for (let d = 0; d < windowSize - 1; d++) add(idx + d, priority); // atual + próximas
+      for (let d = 0; d < n; d++) add(idx + d, background);  // preenchimento
+      for (let d = 1; d < n; d++) add(idx - d, background);
+      return { target: idx, window: priority.slice(), priority, background, all: false };
+    }
+
+    /** Estado discreto da timeline p/ UI: available|loading|ready|applied|error. */
+    function timelineSceneState(state, cache, preloadStates, key, index, layer) {
+      if (state.appliedIndex === index && state.appliedLayer === layer) return 'applied';
+      const st = preloadStates && preloadStates.get ? preloadStates.get(key) : null;
+      if (st === 'error') return 'error';
+      if (st === 'loading' || st === 'queued') return 'loading';
+      if (st === 'ready' || (cache && cache.has(key))) return 'ready';
+      return 'available';
+    }
+    // [3D-SCENE-CACHE-HELPERS-END]
+
     // ---------- Geometria real do talhão (contorno + proporção real) ----------
     let talhaoOutlineReal = null;
     let talhaoOutlineSim = null;
 
     function applyTalhaoGeometry(kmlCoordinates, lat, lon, areaHa) {
       const g = talhaoWorldGeometry(kmlCoordinates, lat, lon, areaHa);
-      const newGeo = new THREE.PlaneGeometry(g.width, g.height, 64, 64);
+      const newGeo = new THREE.PlaneGeometry(g.width, g.height, TERRAIN_SEGMENTS, TERRAIN_SEGMENTS);
       meshReal.geometry.dispose();
       meshReal.geometry = newGeo;
       meshSim.geometry = newGeo; // compartilha a geometria (mesmo recorte)
+      meshRealFade.geometry = newGeo;
+      meshSimFade.geometry = newGeo;
+      terrainGeometry = newGeo;
+      terrainMetersPerUnit = g.metersPerUnit || 50.0;
+      // Se o DEM já foi carregado, aplica-o à nova malha SEM novo fetch
+      // (o DEM é carregado 1× por fazenda e reutilizado em qualquer data).
+      if (demGrid) applyDemToGeometry(newGeo, (u, v) => demGridSample(demGrid, DEM_GRID_SIZE, u, v), demReliefWorld, demExaggeration);
+      else flattenDemGeometry(newGeo);
 
       if (talhaoOutlineReal) { sceneReal.remove(talhaoOutlineReal); talhaoOutlineReal.geometry.dispose(); talhaoOutlineReal = null; }
       if (talhaoOutlineSim) { sceneSim.remove(talhaoOutlineSim); talhaoOutlineSim.geometry.dispose(); talhaoOutlineSim = null; }
@@ -1643,7 +2049,11 @@
       const pts = g.points.map((p) => new THREE.Vector3(p[0], p[1], 0.05));
       const lineGeo = new THREE.BufferGeometry().setFromPoints(pts);
       talhaoOutlineReal = new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: 0x58a6ff }));
+      talhaoOutlineReal.rotation.x = -Math.PI / 2; // acompanha o plano Y-up
+      talhaoOutlineReal.position.y = 0.05 + demExaggeration * demReliefWorld;
       talhaoOutlineSim = new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: 0xe3b341 }));
+      talhaoOutlineSim.rotation.x = -Math.PI / 2;
+      talhaoOutlineSim.position.y = 0.05 + demExaggeration * demReliefWorld;
       sceneReal.add(talhaoOutlineReal);
       sceneSim.add(talhaoOutlineSim);
     }
@@ -1661,15 +2071,92 @@
     let activeTextureAbort = null;
     let lastSimBaseMeta = null;
     let lastFailedScene = null;
-    const PLAY_INTERVAL_MS = 1600;
+    // Pausa entre cenas do Play — configurável pela UI (#play-interval).
+    let PLAY_INTERVAL_MS = 1600;
     const sceneLoadGate = createSceneLoadGate();
     let player = createTimelineMachine(0, dates.length);
 
-    // ---------- TOPOGRAFIA REAL (Copernicus DEM GL-30) ----------
-    // heightTexture = heightmap do DEM (ou null → fallback p/ NDVI)
-    // terrainScale  = escala de deslocamento derivada do alívio real
-    let heightTexture = null;
-    let terrainScale = 4.0;
+    // ---------- PR #5e: estado do cache/preload de cenas ----------
+    const sceneCache = createSceneCache(SCENE_CACHE_MAX);
+    const sceneFetchInFlight = new Map();   // key -> Promise<entry> (dedupe)
+    const preloadQueue = [];                // {index, layer, key, priority}
+    const preloadQueuedKeys = new Set();    // dedupe de pendências
+    const preloadStates = new Map();        // key -> queued|loading|ready|error
+    let preloadRunning = false;
+    let preloadActiveCount = 0;
+
+    // ---------- TOPOGRAFIA REAL (Copernicus DEM GL-30) — PR #5e ----------
+    // O DEM é carregado 1× por fazenda e REUTILIZADO: trocar a data troca a
+    // TEXTURA, nunca reconstrói o DEM. O relevo é gravado nos VÉRTICES da
+    // malha (Y no mundo) com recomputação de normais — geometria real 3D.
+    let heightTexture = null;                 // THREE.Texture do heightmap (se houver)
+    let demGrid = null;                       // grid 0–255 (canvas → Float32) do DEM
+    let demGridSize = 0;
+    let demReliefWorld = 0;                   // alívio real em unidades do mundo (1×)
+    let demExaggeration = DEM_EXAGGERATION_DEFAULT; // 1×|2×|3× — só visual
+    let demInfo = null;                       // {min, max, relief, source, provider}
+    let terrainGeometry = null;               // geometria COMPARTILHADA real×sim
+    let terrainMetersPerUnit = 50.0;          // metros por unidade do plano 3D
+
+    /** Decodifica a textura do heightmap em grid 0–255 (1× só, cacheado). */
+    function sampleDemTexture(tex, size) {
+      try {
+        const img = tex && tex.image;
+        if (!img || !img.width || !img.height) return null;
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return null;
+        ctx.drawImage(img, 0, 0, size, size);
+        const data = ctx.getImageData(0, 0, size, size).data;
+        const grid = new Float32Array(size * size);
+        for (let i = 0; i < grid.length; i++) grid[i] = data[i * 4]; // canal vermelho (L)
+        return grid;
+      } catch (e) {
+        console.error('DEM: falha ao amostrar heightmap', e);
+        return null;
+      }
+    }
+
+    /** Aplica (ou re-aplica) o DEM à malha com o exagero atual. */
+    function bakeDemGeometry() {
+      if (!terrainGeometry) return false;
+      if (demGrid && demGridSize > 1) {
+        return applyDemToGeometry(
+          terrainGeometry,
+          (u, v) => demGridSample(demGrid, demGridSize, u, v),
+          demReliefWorld,
+          demExaggeration
+        );
+      }
+      return flattenDemGeometry(terrainGeometry);
+    }
+
+    /** Atualiza o rótulo discreto de elevação real + exagero visual. */
+    function updateElevationUI() {
+      const line = document.getElementById('elevation-line');
+      if (line) {
+        line.innerText = demInfo
+          ? `Elevação real: ${demInfo.min}–${demInfo.max} m`
+          : 'Elevação aproximada (DEM indisponível)';
+      }
+      const row = document.getElementById('dem-exag-row');
+      if (row) row.hidden = false;
+      document.querySelectorAll('.exag-btn').forEach(btn => {
+        btn.classList.toggle('active', Number(btn.getAttribute('data-exag')) === demExaggeration);
+      });
+    }
+
+    function setExaggeration(mult) {
+      if (!DEM_EXAGGERATION_STEPS.includes(Number(mult))) return;
+      demExaggeration = Number(mult);
+      bakeDemGeometry();
+      updateElevationUI();
+      // Contorno acompanha o novo teto do relevo (evita linha "enterrada").
+      if (talhaoOutlineReal) talhaoOutlineReal.position.y = 0.05 + demExaggeration * demReliefWorld;
+      if (talhaoOutlineSim) talhaoOutlineSim.position.y = 0.05 + demExaggeration * demReliefWorld;
+    }
 
     async function loadHeightmap() {
       setDemLine('', 'DEM: consultando (COPERNICUS 30/90)…');
@@ -1684,30 +2171,40 @@
         console.error('heightmap: falha ao consultar o endpoint', e);
       }
       if (!info || !info.available || !info.heightmap_url) {
-        // Fallback EXPLÍCITO: relevo continua via índice (ou plano), mas o
-        // usuário é informado — nada de falha silenciosa.
-        console.info('DEM: heightmap indisponível — usando NDVI como deslocamento.', info && info.reason);
-        setDemLine('warn', 'DEM: indisponível • relevo aproximado (via índice)');
+        // Fallback EXPLÍCITO: NUNCA chama o relevo de "real" sem o DEM.
+        console.info('DEM: heightmap indisponível — elevação aproximada (plano).', info && info.reason);
+        demGrid = null;
+        demInfo = null;
+        demReliefWorld = 0;
+        bakeDemGeometry();
+        updateElevationUI();
+        setDemLine('warn', 'DEM: indisponível • Elevação aproximada');
         return;
       }
       try {
-        // Mesma LRU de texturas: 1 heightmap por fazenda, sem custo extra de VRAM
+        // Mesma LRU de texturas: 1 heightmap por fazenda, sem custo extra de VRAM.
         const key = `height|${activeFarm.id}|${info.heightmap_url}`;
         const tex = await getCachedTexture(key, info.heightmap_url);
-        // Dados de altura são lineares — sem conversão sRGB (r152+ ignora em r128)
+        // Dados de altura são lineares — sem conversão sRGB (r152+ ignora em r128).
         if ("colorSpace" in tex) tex.colorSpace = THREE.NoColorSpace;
 
         heightTexture = tex;
-        // Escala de relevo: 8 m de alívio ≈ 2 unidades do mundo (teto 8)
         const relief = Math.max(1, (info.max_elevation_m || 0) - (info.min_elevation_m || 0));
-        terrainScale = Math.min(8, Math.max(2, relief / 8));
-
-        matReal.displacementMap = tex;
-        matReal.displacementScale = terrainScale;
-        matReal.needsUpdate = true;
-        matSim.displacementMap = tex;
-        matSim.needsUpdate = true;
-        calculateImpact(); // re-aplica a escala what-if no lado simulado
+        demGrid = sampleDemTexture(tex, TERRAIN_SEGMENTS + 1);
+        demGridSize = TERRAIN_SEGMENTS + 1;
+        demInfo = {
+          min: info.min_elevation_m,
+          max: info.max_elevation_m,
+          relief,
+          source: info.source || 'unknown',
+          provider: info.provider || 'Copernicus DEM',
+        };
+        // Escala REAL: metros → unidades do mundo (nunca um número arbitrário).
+        demReliefWorld = demReliefWorldUnits(relief, terrainMetersPerUnit * 50.0, 50.0);
+        // Geometria real (os dois cenários compartilham a MESMA malha).
+        bakeDemGeometry();
+        calculateImpact(); // re-aplica efeitos What-If (mesma base geométrica)
+        updateElevationUI();
 
         const sourceLabel = (info.source || 'unknown').replace(/_/g, ' ').toUpperCase();
         setDemLine(
@@ -1717,7 +2214,12 @@
         console.info(`DEM ${sourceLabel}: relevo real ativo (alívio ~${relief.toFixed(0)} m, ${info.min_elevation_m}–${info.max_elevation_m} m)`);
       } catch (e) {
         console.error('heightmap: falha ao aplicar heightmap DEM', e);
-        setDemLine('warn', 'DEM: falha ao aplicar • relevo aproximado (via índice)');
+        demGrid = null;
+        demInfo = null;
+        demReliefWorld = 0;
+        bakeDemGeometry();
+        updateElevationUI();
+        setDemLine('warn', 'DEM: falha ao aplicar • Elevação aproximada');
       }
     }
 
@@ -1743,15 +2245,14 @@
         // Sem canvas: mantém o tint de cor antigo como fallback visual.
         simTextureActive = false;
         matSim.map = base;
-        matSim.displacementMap = heightTexture || base;
-        matSim.needsUpdate = true;
+        matSim.needsUpdate = true; // geometria DEM permanece (nunca reconstrói)
         return;
       }
       if (simTexture) simTexture.dispose();
       simTexture = tex;
       matSim.map = tex;
-      matSim.displacementMap = heightTexture || base;
-      matSim.color.setRGB(1.0, 1.0, 1.0); // variação já codificada na textura
+      // PR #5e: relevo é GEOMETRIA compartilhada (Real e What-If) — a troca
+      // de textura NUNCA reconstrói nem desloca a malha DEM.
       matSim.needsUpdate = true;
       simTextureActive = true;
     }
@@ -1793,7 +2294,8 @@
       document.getElementById('dash-yield-val').innerText = `${deltaYield >= 0 ? '+' : ''}${deltaYield} sc/ha`;
       document.getElementById('dash-money-val').innerText = `${totalFinance >= 0 ? '+' : ''}${totalFinance.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`;
 
-      matSim.displacementScale = Math.max(1.0, terrainScale + (deltaNDVI * 8.0));
+      // PR #5e: o relevo é GEOMETRIA (DEM) — What-If muda apenas a TEXTURA.
+      // O exagero vertical é o único controle de escala e é operado no DEM.
 
       // Com textura simulada ativa, a variação visual vem do canvas (map);
       // o tint de cor só é usado como fallback quando não há canvas.
@@ -1857,6 +2359,288 @@
         const idx = parseInt((el.id || '').replace('date-pill-', ''), 10);
         el.classList.toggle('active', idx === index);
       });
+      updateTimelinePillStates();
+    }
+
+    /** Estados discretos da timeline: disponível/carregando/pronta/aplicada/erro. */
+    function updateTimelinePillStates() {
+      const container = document.getElementById('dashboard-dates-bar');
+      if (!container || typeof container.querySelectorAll !== 'function') return;
+      container.querySelectorAll('.date-pill').forEach(el => {
+        const idx = parseInt((el.id || '').replace('date-pill-', ''), 10);
+        const dateStr = dates[idx];
+        if (!dateStr) return;
+        const key = sceneCacheKey(activeFarm.id, activeTalhaoId(), dateStr, currentLayer);
+        const state = timelineSceneState(player, sceneCache, preloadStates, key, idx, currentLayer);
+        el.classList.remove('available', 'loading', 'ready', 'applied', 'error');
+        el.classList.add(state);
+      });
+      for (let i = 0; i < dates.length; i++) {
+        const key = sceneCacheKey(activeFarm.id, activeTalhaoId(), dates[i], currentLayer);
+        if (!preloadStates.has(key)) {
+          // datas sem estado de preload permanecem "disponível" (nunca parecem)
+          // selecionáveis como se fossem outra data: a pílula só é "active"
+          // quando o player aplica (updateTimelineUI).
+        }
+      }
+    }
+
+    // =====================================================================
+    // PR #5e — PREPARAÇÃO × REPRODUÇÃO: cache de cenas + fila de preload.
+    //  - cache: farmId|talhao|date|layer (LRU 12) — cena pronta não refaz rede;
+    //  - preload: ≤12 cenas → TODAS; >12 → janela 5 (anterior+atual+3) +
+    //    preenchimento em background; prioridade manual > play > preload;
+    //  - Play só avança para cena PRONTA; se chegar numa incompleta, espera
+    //    AQUELA cena (nunca pula, nunca inventa);
+    //  - preload NUNCA altera a cena aplicada sozinho.
+    // =====================================================================
+
+    /** Id do talhão para a chave de cache (0 = talhão único/desconhecido). */
+    function activeTalhaoId() {
+      const t = activeFarm && activeFarm.talhoes && activeFarm.talhoes[0];
+      return (t && (t.id || t.talhao_id)) || 0;
+    }
+
+    /**
+     * Busca metadata + textura de uma cena e devolve a ENTRADA de cache.
+     * Não aplica nada (preparação pura); Metadados/textura podem vir do cache
+     * do backend (que já evita reprocessar o CDSE) e da LRU local de texturas.
+     */
+    async function fetchSceneForCache(index, layer, controller) {
+      const dateStr = dates[index];
+      const key = sceneCacheKey(activeFarm.id, activeTalhaoId(), dateStr, layer);
+      const dedupe = sceneFetchInFlight.get(key);
+      if (dedupe) return dedupe;
+      const task = (async () => {
+        const res = await fetch(
+          `${API_URL}/talhao/${activeFarm.id}/texture?layer=${layer}&date=${dateStr}`,
+          { headers: { ...authHeaders() }, signal: controller ? controller.signal : undefined }
+        );
+        if (res.status === 401) {
+          AuthService.logout();
+          throw new Error('Sessão expirada.');
+        }
+        if (!res.ok) throw new Error(`metadados HTTP ${res.status} (${dateStr})`);
+        const metadata = await res.json();
+        const textureUrl = resolveTextureUrl(metadata, layer, dateStr);
+        const dataOrigin = metadata && (metadata.data_origin || (metadata.type === 'native' ? 'sentinel' : 'procedural'));
+        const realDataStatus = metadata && metadata.real_data_status;
+        const texKey = textureUrl ? `${activeFarm.id}|${layer}|${textureUrl}` : null;
+        let texture = null;
+        if (textureUrl) {
+          texture = await getCachedTexture(texKey, textureUrl, controller ? controller.signal : undefined);
+        } else {
+          texture = createFallbackTexture();
+        }
+        const meta = metadata || {
+          date: dateStr,
+          data_origin: dataOrigin || 'procedural',
+          real_data_status: realDataStatus || 'error',
+          real_data_message: 'Falha ao obter metadados da cena.',
+        };
+        return {
+          key,
+          farmId: activeFarm.id,
+          talhaoId: activeTalhaoId(),
+          date: dateStr,
+          layer,
+          textureUrl,
+          textureKey: texKey, // p/ invalidar cena se a VRAM evictar
+          meta,
+          texture,
+          dataOrigin,
+          realDataStatus,
+          acquisitionDate: meta.acquisition_date || meta.date || dateStr,
+          cloudCover: (typeof meta.cloud_cover === 'number') ? meta.cloud_cover : null,
+          stats: meta.stats || null,
+          preparedAt: Date.now(),
+        };
+      })();
+      sceneFetchInFlight.set(key, task);
+      task.then(
+        () => sceneFetchInFlight.delete(key),
+        () => sceneFetchInFlight.delete(key),
+      );
+      return task;
+    }
+
+    /**
+     * Crossfade 100% VISUAL (≈260 ms): a textura NOVA entra com opacidade
+     * crescente sobre a antiga e, ao final, torna-se a principal. NUNCA
+     * interpola índices/valores entre duas aquisições — só opacidade.
+     */
+    function crossfadeRealTexture(mapTex) {
+      try {
+        if (!matRealFade || !meshRealFade || !matReal || !meshReal || typeof requestAnimationFrame !== 'function') return false;
+        const fadeMs = 260;
+        applyTextureToMaterial(matRealFade, mapTex);
+        matReal.transparent = true;
+        matRealFade.opacity = 0;
+        meshRealFade.visible = true;
+        matRealFade.needsUpdate = true;
+        const now = (typeof performance !== 'undefined' && performance.now) ? () => performance.now() : () => Date.now();
+        const t0 = now();
+        const step = () => {
+          const t = Math.min(1, (now() - t0) / fadeMs);
+          matReal.opacity = 1 - t;
+          matRealFade.opacity = t;
+          if (t < 1) { requestAnimationFrame(step); return; }
+          // Fade concluído: a nova textura é a principal; o par de fade volta
+          // a ficar oculto (será reutilizado na próxima transição).
+          applyTextureToMaterial(matReal, mapTex);
+          matReal.opacity = 1;
+          matReal.transparent = false;
+          meshRealFade.visible = false;
+          matRealFade.opacity = 0;
+        };
+        requestAnimationFrame(step);
+        return true;
+      } catch (e) {
+        console.warn('crossfade: falha — aplicação direta da textura', e);
+        return false;
+      }
+    }
+
+    /** Aplica uma cena pronta (cache ou recém-buscada) nos dois materiais. */
+    function applySceneEntry(entry, index, layer) {
+      // Cenário REAL: crossfade visual quando já existe cena aplicada; senão,
+      // aplicação direta (primeira carga — sem tela grande de loading).
+      const hasPrevious = !!(player.appliedMeta || matReal.map);
+      if (hasPrevious && !crossfadeRealTexture(entry.texture)) {
+        applyTextureToMaterial(matReal, entry.texture);
+      } else if (!hasPrevious) {
+        applyTextureToMaterial(matReal, entry.texture);
+      }
+      // Cenário SIMULADO: textura base atualizada (o renderSimulatedTexture do
+      // COMMIT regenera a projeção What-If sobre ela com a MESMA geometria DEM).
+      applyTextureToMaterial(matSim, entry.texture);
+      baseTextureForSim = entry.texture;
+    }
+
+    /** COMMIT: única função que torna uma cena APLICADA (player + UI + What-If). */
+    function commitScene(index, layer, meta, texture, opts = {}) {
+      currentIndex = index;
+      playerFinishLoad(player, index, layer, true, null, meta);
+      lastSimBaseMeta = buildSimBaseMeta(meta);   // What-If usa a MESMA cena
+      if (lastSimBaseMeta) lastSimBaseMeta.layer = layer; // contrato: layer aplicada
+      updateTimelineUI(index);
+      setLoadingIndicator(false);
+      setSceneOverlay(false);
+      renderProvenanceSummary(meta);
+      renderProvenanceDetails(meta);
+      setScenarioStatus(meta);
+      setSimScenarioStatus(lastSimBaseMeta);
+      renderSimulatedTexture();
+      calculateImpact();
+      updateZoneCards(index);
+      // Pré-carrega a nova layer/janela após cada cena aplicada (em background).
+      // Só depois que o calendário STAC chegou (evita preload da grade antiga).
+      if (calendarMeta) schedulePreloadForTimeline();
+      if (player.mode === 'playing') schedulePlayNext();  // LOADING→READY→intervalo
+      console.info(`cena aplicada: ${dates[index]} (${layer})${opts.fromCache ? ' [cache]' : ''}`);
+      return meta;
+    }
+
+    // ---------- FILA DE PRELOAD (prioridade manual > play > preload) ----------
+    const PRELOAD_PRIORITY_RANK = { manual: 0, play: 1, preload: 2 };
+
+    function preloadKeyFor(index, layer) {
+      return sceneCacheKey(activeFarm.id, activeTalhaoId(), dates[index], layer);
+    }
+
+    function enqueuePreload(index, layer, priority = 'preload') {
+      if (!dates[index]) return false;
+      const key = preloadKeyFor(index, layer);
+      if (sceneCache.has(key)) { preloadStates.set(key, 'ready'); return false; }
+      // Já está sendo buscada (por um load manual/Play ou outro preload):
+      // NUNCA duplica a requisição da mesma cena.
+      if (sceneFetchInFlight.has(key)) { preloadStates.set(key, 'queued'); return false; }
+      if (preloadQueuedKeys.has(key) || preloadStates.get(key) === 'loading') return false;
+      preloadQueuedKeys.add(key);
+      preloadStates.set(key, 'queued');
+      preloadQueue.push({ index, layer, key, priority });
+      renderPreloadStatus();
+      schedulePreloadRun();
+      return true;
+    }
+
+    function schedulePreloadForTimeline(layerOverride) {
+      const idx = player.appliedIndex >= 0 ? player.appliedIndex : currentIndex;
+      const layer = layerOverride || player.appliedLayer || currentLayer;
+      enqueuePreload(idx, layer, 'play');           // atual primeiro (se pronta, no-op)
+      const plan = computePreloadPlan(dates.length, idx);
+      plan.priority.forEach(i => enqueuePreload(i, layer, 'play'));
+      plan.background.forEach(i => enqueuePreload(i, layer, 'preload'));
+    }
+
+    let preloadDrainTimer = null;
+    function schedulePreloadRun() {
+      if (preloadDrainTimer) return;
+      preloadDrainTimer = setTimeout(() => {
+        preloadDrainTimer = null;
+        drainPreloadQueue();
+      }, 0);
+    }
+
+    async function drainPreloadQueue() {
+      if (preloadRunning) return;
+      preloadRunning = true;
+      try {
+        while (preloadQueue.length > 0) {
+          if (preloadActiveCount >= PRELOAD_CONCURRENCY) break; // limite de fetches
+          // Prioridade manual > play > preload (escolhe a melhor pendente).
+          let bestIdx = 0;
+          for (let i = 0; i < preloadQueue.length; i++) {
+            if (PRELOAD_PRIORITY_RANK[preloadQueue[i].priority] < PRELOAD_PRIORITY_RANK[preloadQueue[bestIdx].priority]) bestIdx = i;
+          }
+          const task = preloadQueue.splice(bestIdx, 1)[0];
+          preloadQueuedKeys.delete(task.key);
+          if (sceneCache.has(task.key)) { preloadStates.set(task.key, 'ready'); continue; }
+          preloadActiveCount += 1;
+          preloadStates.set(task.key, 'loading');
+          renderPreloadStatus();
+          try {
+            const entry = await fetchSceneForCache(task.index, task.layer, null);
+            if (entry && entry.texture) {
+              sceneCache.set(entry.key, entry);   // evictados → só o cache descarta
+              preloadStates.set(entry.key, 'ready');
+            } else {
+              preloadStates.set(task.key, 'error');
+            }
+          } catch (err) {
+            if (!isAbortError(err)) {
+              preloadStates.set(task.key, 'error');
+              console.warn(`preload: falha na cena ${dates[task.index]} (${task.layer})`, err);
+            }
+          } finally {
+            preloadActiveCount -= 1;
+            renderPreloadStatus();
+          }
+        }
+      } finally {
+        preloadRunning = false;
+        renderPreloadStatus();
+      }
+    }
+
+    /** Progresso discreto ("Preparando cenas: 3/7") — nunca bloqueia a UI. */
+    function renderPreloadStatus() {
+      const el = document.getElementById('preload-status');
+      if (!el) return;
+      const total = preloadQueue.length + preloadActiveCount;
+      const ready = preloadStates && Array.from(preloadStates.values()).filter(s => s === 'ready').length;
+      if (total > 0) {
+        el.hidden = false;
+        el.classList.remove('done');
+        el.innerText = `Preparando cenas: ${Math.min(ready + 1, total)}/${total}`;
+      } else if (ready > 0) {
+        el.hidden = false;
+        el.classList.add('done');
+        el.innerText = `Cenas prontas: ${ready}`;
+      } else {
+        el.hidden = true;
+        el.innerText = '';
+      }
     }
 
     function schedulePlayNext() {
@@ -1895,6 +2679,7 @@
       setLoadingIndicator(false);
       setSceneOverlay(false);
       setPlayButtonUI();
+      updateTimelinePillStates();
     }
 
     /** Backwards-compat: carrega a data APLICADA atual com a layer atual. */
@@ -1904,14 +2689,17 @@
 
     /**
      * Carrega (metadata → textura → aplica) uma cena.
-     * Retorna {ok:true, meta} quando aplicada; {ok:false,error} em falha;
-     * {cancelled:true} quando uma requisição mais nova/substituição/pause.
+     * CENA PRONTA NO CACHE → aplica SEM rede (Play fluido, sem refetch).
+     * CENA INCOMPLETA → espera apenas aquela cena (nunca pula para outra).
+     * Retorna {ok:true, meta, fromCache} quando aplicada; {ok:false,error} em
+     * falha; {cancelled:true} quando uma requisição mais nova/substituição/pause.
      */
     async function loadScene(index, layer, opts = {}) {
-      const dateStr = dates[index];
+      const safe = Math.max(0, Math.min(Number(index) || 0, dates.length - 1));
+      const dateStr = dates[safe];
       if (!dateStr) {
-        playerFinishLoad(player, index, layer, false, sceneErrorLabel(''), null);
-        showErrorToast('Datas da timeline indisponíveis.', () => { lastFailedScene = null; loadScene(0, currentLayer); });
+        playerFinishLoad(player, safe, layer, false, sceneErrorLabel(''), null);
+        showErrorToast('Datas da timeline indisponíveis.', () => { loadScene(0, currentLayer); });
         return { ok: false, error: 'calendário vazio' };
       }
       const gen = sceneLoadGate.beginLoad();          // invalida carregamentos anteriores
@@ -1920,96 +2708,44 @@
       if (playTimer) { clearTimeout(playTimer); playTimer = null; }
       const controller = new AbortController();
       activeTextureAbort = controller;
-      playerStartLoad(player, index, layer);
+      playerStartLoad(player, safe, layer);
       hideErrorToast();
+
+      const cacheKey = sceneCacheKey(activeFarm.id, activeTalhaoId(), dateStr, layer);
+      const cached = sceneCache.get(cacheKey);
+      if (cached && cached.texture && cached.meta) {
+        // PR #5e — CENA PRONTA: aplica instantaneamente, sem espera de rede.
+        applySceneEntry(cached, safe, layer);
+        preloadStates.set(cacheKey, 'ready');
+        const meta = commitScene(safe, layer, cached.meta, cached.texture, { fromCache: true });
+        return { ok: true, meta, fromCache: true };
+      }
 
       const loadLabel = `Carregando ${formatSceneDate(dateStr)}…`;
       setLoadingIndicator(true, loadLabel);
       setSceneOverlay(true, loadLabel);
 
-      let metadata = null;
-      let textureUrl = null;
-      let dataOrigin = null;
-      let realDataStatus = null;
       let timedOut = false;
-
       let loadTimer = null;
       try {
         // 1) Metadados + textura sob UM timeout de 75s (nenhuma etapa pode
         // travar). Timeout NÃO é cancelamento: vira erro → pausa + retry.
         loadTimer = setTimeout(() => { timedOut = true; controller.abort(); }, 75000);
-        const res = await fetch(
-          `${API_URL}/talhao/${activeFarm.id}/texture?layer=${layer}&date=${dateStr}`,
-          { headers: { ...authHeaders() }, signal: controller.signal }
-        );
+        const entry = await fetchSceneForCache(safe, layer, controller);
         if (!sceneLoadGate.isCurrent(gen)) return { cancelled: true };
-        if (res.status === 401) {
-          playerCancelLoad(player);
-          setLoadingIndicator(false);
-          setSceneOverlay(false);
-          setPlayButtonUI();
-          AuthService.logout();
-          return { cancelled: true };
-        }
-        if (res.ok) {
-          metadata = await res.json();
-          dataOrigin = metadata && (metadata.data_origin || (metadata.type === 'native' ? 'sentinel' : 'procedural'));
-          realDataStatus = metadata && metadata.real_data_status;
-          textureUrl = resolveTextureUrl(metadata, layer, dateStr);
-        } else {
-          // Falha REAL (não é "sem cena"): vira erro → pausa + retry manual.
-          // Nunca troca silenciosamente por dado incorreto.
-          throw new Error(`metadados HTTP ${res.status} (${dateStr})`);
-        }
-        if (!sceneLoadGate.isCurrent(gen)) return { cancelled: true };
+        if (!entry || !entry.texture) throw new Error('cena sem textura');
 
-        // 2) Textura: real (cache LRU + abort) ou fallback explícito.
-        if (textureUrl) {
-          setLoadingIndicator(true, `Processando ${layer.toUpperCase()}…`);
-          setSceneOverlay(true, `Processando ${layer.toUpperCase()}…`);
-          const key = `${activeFarm.id}|${layer}|${textureUrl}`;
-          const result = await loadTextureOrFallback(key, textureUrl, matReal, matSim, controller.signal);
-          if (!sceneLoadGate.isCurrent(gen)) return { cancelled: true };
-          if (!result.ok || !result.texture) {
-            // Fallback já aplicado aos materiais: mantém o What-If coerente com
-            // o que está visível; o erro abaixo pausa + retry (nunca silencioso).
-            if (result.texture) baseTextureForSim = result.texture;
-            throw new Error('falha ao carregar a textura da cena');
-          }
-          baseTextureForSim = result.texture;
-        } else {
-          setLoadingIndicator(true, 'Aplicando visualização aproximada…');
-          const fb = createFallbackTexture();
-          if (!fb) throw new Error('fallback visual indisponível');
-          applyTextureToMaterial(matReal, fb, heightTexture || fb);
-          applyTextureToMaterial(matSim, fb, heightTexture || fb);
-          baseTextureForSim = fb;
-        }
-        if (!sceneLoadGate.isCurrent(gen)) return { cancelled: true };
+        // 2) GUARDA no cache ANTES de aplicar (Play seguinte não refaz rede).
+        const evicted = sceneCache.set(cacheKey, entry);
+        // Eviction de cena: o blob/objeto URL de textura é descartado apenas
+        // aqui (o cache de textura LRU ainda pode reutilizá-lo; o dispose de
+        // VRAM fica a cargo do LRU de texturas — nunca revoga em uso).
+        if (evicted.length > 0) console.info(`cache de cena: evicted ${evicted.join(', ')}`);
+        preloadStates.set(cacheKey, 'ready');
 
         // 3) COMMIT: somente a requisição MAIS RECENTE aplica data/textura/meta.
-        const meta = metadata || {
-          date: dateStr,
-          data_origin: dataOrigin || 'procedural',
-          real_data_status: realDataStatus || 'error',
-          real_data_message: 'Falha ao obter metadados da cena.',
-        };
-        currentIndex = index;
-        playerFinishLoad(player, index, layer, true, null, meta);
-        lastSimBaseMeta = buildSimBaseMeta(meta);   // What-If usa a MESMA cena
-        if (lastSimBaseMeta) lastSimBaseMeta.layer = layer; // contrato: layer aplicada
-        updateTimelineUI(index);
-        setLoadingIndicator(false);
-        setSceneOverlay(false);
-        renderProvenanceSummary(meta);
-        renderProvenanceDetails(meta);
-        setScenarioStatus(meta);
-        setSimScenarioStatus(lastSimBaseMeta);
-        renderSimulatedTexture();
-        calculateImpact();
-        updateZoneCards(index);
-        if (player.mode === 'playing') schedulePlayNext();  // LOADING→READY→intervalo
-        console.info(`cena aplicada: ${dateStr} (${layer})`);
+        applySceneEntry(entry, safe, layer);
+        const meta = commitScene(safe, layer, entry.meta, entry.texture, {});
         return { ok: true, meta };
       } catch (err) {
         if (!sceneLoadGate.isCurrent(gen) || (isAbortError(err) && !timedOut)) {
@@ -2017,12 +2753,12 @@
           return { cancelled: true };
         }
         const msg = sceneErrorLabel(dateStr);
-        playerFinishLoad(player, index, layer, false, msg, null);
-        lastFailedScene = { index, layer };
+        playerFinishLoad(player, safe, layer, false, msg, null);
+        lastFailedScene = { index: safe, layer };
         setLoadingIndicator(false);
         setSceneOverlay(false);
         setPlayButtonUI();          // erro → mode paused (botão volta a ▶ Play)
-        showErrorToast(msg, () => { lastFailedScene = null; loadScene(index, layer); });
+        showErrorToast(msg, () => { lastFailedScene = null; loadScene(safe, layer); });
         console.error(`texture: erro ao carregar cena ${dateStr}`, err);
         return { ok: false, error: msg };
       } finally {
@@ -2039,6 +2775,72 @@
     document.getElementById('layer-select').addEventListener('change', e => {
       setSpectralLayer(e.target.value);
     });
+
+    // ---------- PR #5e — calendário REAL: períodos + personalizado ----------
+    const PERIOD_OPTIONS = [30, 60, 90, 180, 365];
+
+    function renderPeriodPills() {
+      const holder = document.getElementById('period-pills');
+      if (!holder) return;
+      holder.innerHTML = '';
+      PERIOD_OPTIONS.forEach(p => {
+        const btn = document.createElement('button');
+        btn.className = `period-pill ${currentPeriod === p ? 'active' : ''}`;
+        btn.type = 'button';
+        btn.innerText = `${p} dias`;
+        btn.onclick = () => applyPeriod(p);
+        holder.appendChild(btn);
+      });
+      const customBtn = document.createElement('button');
+      customBtn.className = `period-pill ${currentPeriod === 'custom' ? 'active' : ''}`;
+      customBtn.type = 'button';
+      customBtn.innerText = 'Personalizado';
+      customBtn.onclick = () => {
+        currentPeriod = 'custom';
+        renderPeriodPills();
+        const row = document.getElementById('custom-period-row');
+        if (row) row.hidden = false;
+      };
+      holder.appendChild(customBtn);
+    }
+
+    function applyPeriod(p) {
+      currentPeriod = p;
+      renderPeriodPills();
+      const row = document.getElementById('custom-period-row');
+      if (row) row.hidden = true;
+      refreshRealTimeline(p, null, null);
+    }
+
+    function applyCustomPeriod() {
+      const sEl = document.getElementById('custom-start');
+      const eEl = document.getElementById('custom-end');
+      if (!sEl || !eEl || !sEl.value || !eEl.value) return;
+      currentPeriod = 'custom';
+      renderPeriodPills();
+      refreshRealTimeline('custom', sEl.value, eEl.value);
+    }
+
+    document.getElementById('btn-latest').addEventListener('click', () => {
+      // "Mais recente" = cena válida MAIS RECENTE do catálogo STAC (índice 0),
+      // nunca a data de hoje.
+      if (dates.length > 0) selectDateIndex(0);
+    });
+    document.getElementById('custom-apply').addEventListener('click', applyCustomPeriod);
+
+    // Exagero vertical: 1×/2×/3× — APENAS visual (elevações reais intactas).
+    document.querySelectorAll('.exag-btn').forEach(btn => {
+      btn.addEventListener('click', () => setExaggeration(Number(btn.getAttribute('data-exag'))));
+    });
+
+    // Pausa entre cenas do Play: lê a preferência da UI (1/1,6/3/5 s).
+    const playIntervalSel = document.getElementById('play-interval');
+    if (playIntervalSel) {
+      playIntervalSel.addEventListener('change', () => {
+        const ms = parseInt(playIntervalSel.value, 10);
+        PLAY_INTERVAL_MS = (ms >= 500 && ms <= 15000) ? ms : 1600;
+      });
+    }
 
     document.getElementById('play-btn').addEventListener('click', () => {
       hideErrorToast();

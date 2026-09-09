@@ -930,3 +930,112 @@ aplicação) e tornar o carregamento assíncrono determinístico e race-safe.
 8. **Metadados** → "Detalhes" abre 9 linhas; DEM no rodapé; botão "Fechar".
 
 **Status: PRONTO PARA PLAYTEST HUMANO.** Sem merge; branch `arena/01a083cd-simulador-talhao2`.
+
+---
+
+## Anexo F — Simulador 3D fluido com dados reais: cache/preload + terreno DEM real (PR #5e, 09/09/2026)
+
+**Objetivo:** transformar o Split-View em experiência fluida fundamentada em dados reais:
+calendário STAC como fonte da timeline, pré-carregamento/cache de cenas, terreno 3D real
+(DEM nos VÉRTICES, não displacement de material) e câmera oblíqua com órbita.
+
+### F1 — Calendário real (STAC) + períodos
+
+- `GET /api/talhao/{farm_id}/dates` passou a aceitar `period_days` (30–730), `start`/`end`
+  (janela personalizada, precedência) e `limit` (1–120), com `eff_limit` adaptado ao período
+  (365d→80, 180d→60, 90d→40, 60d→24, senão 12) e resposta ampliada: `period_days`,
+  `window_start`/`window_end`, `latest_date` (cena válida mais recente), `count`.
+- `fetch_real_calendar` ganhou `start_date`/`end_date` e continua SOMENTE-metadados STAC
+  (nenhum asset processado para montar o calendário); `status ∈ {ok, not_configured, error, no_scene}`.
+- Frontend: `refreshRealTimeline(period_days | 'custom', start, end)` substitui a timeline;
+  preserva a data APLICADA se ainda existir na nova janela, senão seleciona a **mais recente
+  do catálogo** (índice 0 — nunca "hoje"). UI: `#btn-latest`, `#period-pills` (30/60/90/180/365/
+  Personalizado), `#custom-period-row`, `#timeline-meta` ("Última aquisição disponível: …").
+- Sem CDSE → grade oficial marcada como `source: config` (nunca "real"); sem cena na janela →
+  `no_scene` + fallback aproximado explícito.
+
+### F2 — Cache de cenas (chave `farmId|talhao|date|layer`)
+
+- `sceneCacheKey(farmId, talhaoId, dateStr, layer)`; `createSceneCache(12)` = LRU real
+  (Map preserva ordem; `get` re-ordena p/ MRU; `set` devolve evicted).
+- Entrada guarda textura + proveniência (`meta`), `dataOrigin`, `realDataStatus`,
+  `acquisitionDate`, `cloudCover`, `stats`, `textureKey`, `preparedAt` — nada é refetch
+  se o combo estiver válido; Play→Pause→Play e voltar/avançar não refazem request de cena pronta.
+- `MAX_CACHED_TEXTURES = 16` (LRU de VRAM) e `SCENE_CACHE_MAX = 12` (LRU de cenas); quando a
+  VRAM descarta uma textura, `evictSceneEntriesForTexture` invalida a(s) cena(s) associada(s) —
+  nunca uma cena "pronta" apontando para textura disposta. `blob:` URL revogada só após o
+  TextureLoader terminar.
+
+### F3 — Preload separado da reprodução
+
+- Ao abrir: número da timeline recebida → `computePreloadPlan`:
+  - ≤ 12 cenas → **TODAS** da layer ativa (`all: true`);
+  - > 12 → janela = 1 anterior + atual + 3 próximas (prioridade) + restante em background.
+- Fila própria: `enqueuePreload(index, layer, priority)` (manual=0 < play=1 < preload=2),
+  dedupe por chave (`sceneFetchInFlight`/`preloadQueuedKeys`), `PRELOAD_CONCURRENCY = 2`,
+  **preload nunca altera a cena aplicada** (só `commitScene` comita).
+- Progresso discreto "Preparando cenas: 3/7" (`#preload-status`); estados da timeline
+  disponível/carregando/pronta/aplicada/erro via `timelineSceneState` + `.state-dot` por pílula.
+- Troca de layer: cena atual da nova layer primeiro (via `loadScene`), depois `schedulePreloadForTimeline(layer)`.
+- Play: avanço só com cena pronta (`loadScene` cache-first); se chegar a cena incompleta,
+  espera só aquela; intervalo configurável 1/1,6/3/5 s (`#play-interval`); crossfade ~260 ms
+  apenas opacidade (nunca interpola índices).
+
+### F4 — Terreno 3D REAL (DEM na geometria)
+
+- Helpers puros (`[3D-TERRAIN-HELPERS]`): `demReliefWorldUnits` (metros → unidades de mundo,
+  span≤0 tratado como 1 — nunca Infinity), `demGridSample` (bilinear), `applyDemToGeometry`
+  (desloca `pos.z` com `computeVertexNormals`), `flattenDemGeometry` (fallback plano).
+- Mesh `PlaneGeometry(w, h, 96, 96)` compartilhada entre Real/What-If/Fade — trocar data troca
+  **textura apenas**; o DEM é carregado 1× (`loadHeightmap` + LRU) e re-aplicado ao trocar a
+  geometria do talhão. Exagero 1×/2×/3× (default 2×) só escala o deslocamento visual;
+  rótulo "Elevação real: X–Y m" vem do backend (ex.: 592–615 m).
+- `displacementMap` do material **removido** do fluxo (relevo é geometria — sem deslocamento
+  duplicado); iluminação direcional + `AmbientLight` com ângulo que revela relevo.
+- Falha de DEM → "Elevação aproximada" (plano) — nunca "real"; sem cena → `no_scene` explícito.
+
+### F5 — Câmera 3D
+
+- `CAMERA_PRESET`: `fov 45`, posição oblíqua aérea `[26, 58, 66]`, target `[0,0,0]`,
+  `minDistance 14`/`maxDistance 240`, `minPolarAngle 0.10`/`maxPolarAngle 0.46π` (nunca abaixo
+  do horizonte), órbita/zoom/pan habilitados com damping; terreno no plano XZ (Y-up), grade horizontal.
+- Configuração centralizada e testável (extraída junto dos helpers).
+
+### F6 — Testes
+
+- `tests/test_3d_scene_cache_preload.py` (novo, VM Node): chave sem colisão (fazenda/data/layer),
+  LRU (evicção MRU), plano ≤12/`>12` + limites documentados, estados discretos, escala real,
+  bilinear, vértices+normais, 1×/2×/3× só visual, fallback plano, `CAMERA_PRESET`.
+- `tests/test_3d_load_scene_wiring.py` (ampliado, 9 blocos): cache-hit sem fetch, preload NÃO
+  altera aplicada, Play avança sem request nas prontas, textura descartada invalida cena.
+- `tests/test_frontend_3d_pipeline.py`: `applyTextureToMaterial` não usa `displacementMap`.
+- `tests/test_copernicus_service.py`: contrato ampliado do `/dates` (período/personalizado,
+  precedência, limit, `latest_date`/`count`/janelas na resposta).
+- Suíte: **256 passed, 1 skipped** (antes: 255+1); `node --check` OK.
+
+### F7 — Playtest manual (pós-merge, 20 passos)
+
+1. Abrir Simulador 3D → timeline mostra "Última aquisição disponível: <data do STAC>" e
+   `Preparando cenas: n/m` sem tela grande de loading.
+2. "Mais recente" seleciona a cena válida mais recente do catálogo (não "hoje").
+3. Períodos 30/60/90/180/365 e Personalizado refazem **só metadados**; data aplicada preservada.
+4. Pílula de data sem aquisição não aparece como selecionável.
+5. Play + Pause + Play na mesma cena pronta → **zero** request de rede (DevTools) e sem flicker.
+6. Avançar/voltar (seta/slider) entre cenas prontas → troca instantânea com crossfade ~260 ms.
+7. Cena incompleta: Play espera SÓ aquela; nenhuma data é pulada.
+8. Preload continua em background durante exploração manual; progresso discreto atualiza.
+9. Trocar layer → cena atual da nova layer primeiro; preload da nova camada em background;
+   Play retoma se ativo.
+10. DEM: relevo real visível (não só inclinação de câmera); a troca de data NÃO recarrega DEM.
+11. "Elevação real: X–Y m" coerente com o backend; exagero 1×/2×/3× muda só a escala visual.
+12. Sem DEM (offline) → "Elevação aproximada"; nenhum rótulo "real".
+13. Órbita/zoom/inclinação funcionam; câmera nunca atravessa o chão.
+14. What-If usa a MESMA geometria DEM da data aplicada; Real/Simulado alinhados.
+15. Falha de rede em uma cena → toast + retry; nunca muda de data sozinho.
+16. Backend + CDSE real: cada data da timeline corresponde a uma aquisição Sentinel-2 real.
+17. Metadados: 1 linha + "Detalhes" (9 campos) refletem a cena aplicada.
+18. Perf: sem vazamento visível de VRAM ao navegar por 20+ cenas (LRU ativo).
+19. Sem regressões em Apucarana/Capão Bonito, mapa 2D, weather e PDF da fazenda.
+20. `pytest` completo continua verde.
+
+**Status: PRONTO PARA PLAYTEST HUMANO.** Sem merge; branch `arena/01a083cd-simulador-talhao2`.

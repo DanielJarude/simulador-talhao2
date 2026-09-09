@@ -2,6 +2,7 @@ import logging
 import os
 import secrets
 from contextlib import asynccontextmanager
+from datetime import date
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -612,24 +613,47 @@ def get_available_dates():
 @app.get("/api/talhao/{farm_id}/dates")
 def get_farm_dates(
     farm_id: int,
+    period_days: int | None = Query(
+        default=None, ge=30, le=730,
+        description="Janela em dias a partir de hoje (30/60/90/180/365/início-fim).",
+    ),
+    start: date | None = Query(default=None, description="Início da janela personalizada (YYYY-MM-DD)."),
+    end: date | None = Query(default=None, description="Fim da janela personalizada (YYYY-MM-DD)."),
+    limit: int = Query(default=12, ge=1, le=120, description="Máximo de cenas devolvidas."),
     db: Session = Depends(get_db),
     user: models.User = Depends(get_current_user),
 ):
     """
     Calendário temporal da fazenda: passagens REAIS Sentinel-2 (CDSE)
-    quando configurado — 6–12 cenas úteis, mais recente primeiro —
-    ou a lista oficial de datas da aplicação como fallback explícito.
+    quando configurado — mais recente primeiro, dentro da janela pedida
+    (padrão 60 dias) — ou a lista oficial de datas da aplicação como
+    fallback explícito. A consulta usa SOMENTE metadados STAC: nenhum
+    asset é processado para montar o calendário.
     O campo `source` diferencia: "sentinel-cdse" | "config".
     """
     farm = _require_farm_access(db, farm_id, user)
     talhao = farm.talhoes[0] if farm.talhoes else None
+    # Janela personalizada (start/end) tem precedência; senão, `period_days`
+    # define o lookback a partir de hoje; sem nenhum dos dois, usa o padrão.
+    eff_limit = limit
+    if start or end:
+        lookback_days = None
+        eff_limit = max(limit, 60) if (start and end) else limit
+    elif period_days:
+        lookback_days = period_days
+        eff_limit = max(limit, min(60, max(12, period_days // 5)))
+    else:
+        lookback_days = None
     try:
         calendar, status, detail = fetch_real_calendar(
             lat=farm.latitude,
             lon=farm.longitude,
             area_ha=farm.total_area,
             kml_coordinates=talhao.kml_coordinates if talhao else None,
-            limit=12,
+            limit=eff_limit,
+            lookback_days=lookback_days,
+            start_date=start,
+            end_date=end,
         )
     except Exception:
         logger.exception("CDSE: falha ao obter calendário real")
@@ -643,6 +667,11 @@ def get_farm_dates(
             "stac_detail": detail,
             "indices": settings.spectral_indices,
             "visual_layers": ["rgb", *settings.spectral_indices],
+            "period_days": period_days,
+            "window_start": start.isoformat() if start else None,
+            "window_end": end.isoformat() if end else None,
+            "latest_date": calendar[0]["date"],
+            "count": len(calendar),
         }
     return {
         "dates": settings.sentinel_dates,
@@ -652,6 +681,11 @@ def get_farm_dates(
         "stac_detail": detail,
         "indices": settings.spectral_indices,
         "visual_layers": ["rgb", *settings.spectral_indices],
+        "period_days": period_days,
+        "window_start": start.isoformat() if start else None,
+        "window_end": end.isoformat() if end else None,
+        "latest_date": None,
+        "count": 0,
     }
 
 

@@ -212,8 +212,9 @@ O terreno 3D usa **relevo real** em vez de um plano com displacement genérico, 
 
 - **CDSE configurado** (`CDSE_CLIENT_ID/SECRET`) → `GET /api/talhao/{farm_id}/heightmap` tenta primeiro o **DEM COPERNICUS_30** (GLO-30, infill GLO-90) via Process API; se indisponível, **COPERNICUS_90** (GLO-90 global). `source` = `copernicus_30`/`copernicus_90`, sem baixar produto inteiro (raster só da área do talhão).
 - **Sem CDSE** → recorte da tile local (`s23_w056`, etc.), normalização 0–255 e resample para `size`×`size`; `source` = `copernicus_gl30`/`local_geotiff`.
-- **Sem tile/sem CDSE** → `available=false` + `reason`; o 3D mantém o fallback explícito (deslocamento via NDVI) — nunca tela branca.
-- O frontend aplica o heightmap como `displacementMap` (canal lido pelo Three.js), mantendo as texturas de cor (NDVI/RGB) e o **mesmo cache LRU de VRAM** (1 heightmap por fazenda).
+- **Sem tile/sem CDSE** → `available=false` + `reason`; o 3D usa "Elevação aproximada" (plano) — nunca tela branca e nunca chama o relevo de "real".
+- **PR #5e — relevo é GEOMETRIA, não truque de câmera**: o heightmap é amostrado uma única vez por fazenda (mesh 96×96, ≈9 m/quad para talhão de ~900 m — coerente com o DEM de 30 m), os **vértices** são deslocados no eixo Y (`applyDemToGeometry` + `computeVertexNormals`) na escala real `alívio (m) / (extensão do talhão em m / 50 u)`, e a iluminação direcional revela o relevo. A troca de data **troca só a textura** — o DEM nunca é reconstruído; Real e What-If compartilham a **mesma malha**.
+- **Exagero vertical 1×/2×/3×** (default 2×) é **apenas visual**: altera a escala do deslocamento da malha, nunca os valores reais de elevação — a UI segue mostrando "Elevação real: X–Y m" (ex.: "592–615 m") vinda do backend.
 
 **Como obter a tile (modo offline):** baixe `Copernicus_Dem_GLO30_<sN>_w<NNN>` (OpenTopography ou portal Copernicus) e coloque em `backend/data/dem/`; a API também tenta baixar automaticamente (best-effort, `DEM_DOWNLOAD_ENABLED`).
 
@@ -281,8 +282,9 @@ arquivos fora do Git**:
 fazenda → /api/talhao/{id}/texture → texture_url (+ data_origin + proveniência)
         → fetch autenticado (Bearer, AbortSignal) → Blob → TextureLoader → material.map
 fazenda → /api/talhao/{id}/heightmap → heightmap_url (ou available=false + reason)
-        → displacementMap (relevo Copernicus GL-30) → linha discreta nos metadados
-        → sem tile → fallback explícito ("relevo aproximado via índice")
+        → DEM amostrado 1× (grid 96×96) → VÉRTICES da malha deslocados em Y
+          + computeVertexNormals → linha discreta "Elevação real: 592–615 m"
+        → sem DEM → fallback explícito ("Elevação aproximada", plano)
 what-if → /api/simulation/what-if → delta_ndvi
         → textura simulada via canvas (pixel a pixel) no lado direito
         → SEMPRE sobre a MESMA data/layer da cena real APLICADA
@@ -310,6 +312,51 @@ slider e pílulas) é a da imagem **efetivamente aplicada**.
   aplicada, atualiza proveniência e retoma o Play se já estava ativo.
 - **What-If**: a base (`baseTextureForSim`) e o `lastSimBaseMeta` só mudam no
   COMMIT da cena — Real e Simulado nunca se misturam por assincronia.
+
+### Fila de cenas + pré-carregamento (PR #5e)
+
+**PREPARAÇÃO é separada de REPRODUÇÃO**: abrir o simulador busca o calendário STAC
+(`GET /api/talhao/{id}/dates`), aplica a cena atual e **pré-carrega em segundo
+plano**; o Play só reproduz cena pronta e nunca avança para uma cena incompleta
+(se chegar nela, aguarda apenas aquela). Não há tela grande de loading — só o
+spinner discreto + "Preparando cenas: 3/7".
+
+- **Fonte da timeline = STAC real** (nunca lista fixa); "Mais recente" = cena
+  válida mais recente do catálogo (índice 0, reflete a política de nuvens);
+  período 30/60/90/180/365 ou personalizado (`period_days` / `start` + `end` no
+  endpoint — só metadados STAC; texturas processadas sob demanda). `maxDate` da
+  UI = "Última aquisição disponível". Sem CDSE → grade oficial marcada como
+  fallback (`source: config`).
+- **Estratégia** (`computePreloadPlan`): calendário ≤ 12 cenas → pré-carrega
+  **TODAS** da layer ativa; maior → janela de 5 (1 anterior + atual + 3
+  próximas) em prioridade e o restante em background (mais próximo primeiro).
+  Trocar de layer: carrega a cena atual da nova layer primeiro e agenda o
+  preload da nova camada em background.
+- **Cache por `farmId|talhao|date|layer`** (`sceneCacheKey`): textura +
+  proveniência + estatísticas + `real_data_status` + data de aquisição +
+  nuvens. LRU de 12 cenas (`SCENE_CACHE_MAX`) + LRU de 16 texturas de VRAM
+  (`MAX_CACHED_TEXTURES`); se a VRAM descartar uma textura, a cena associada é
+  invalidada (nunca fica "pronta" apontando para textura disposta). `blob:`
+  URLs são revogadas somente depois do carregamento e nunca uma URL ainda em
+  cache. Play → Pause → Play, voltar/avançar **não refazem** request de cena
+  pronta.
+- **Fila própria do preload**: prioridade manual > Play > preload, 2 fetches
+  simultâneos (`PRELOAD_CONCURRENCY`), dedupe por chave e `generationId`/
+  `AbortController` do PR #5d preservados. Preload **nunca** altera a cena
+  aplicada; layer swap, Pause e retry continuam os mesmos.
+- **Estados discretos da timeline**: disponível/carregando/pronta/aplicada/erro
+  (dot sob cada data) — nenhum estado é silencioso.
+- **Play fluido**: intervalos entre cenas prontas **sem rede**; pausa entre
+  datas configurável (1/1,6/3/5 s no `#play-interval`); crossfade de ~260 ms
+  **apenas visual** (opacidade — nunca interpola índices/valores entre duas
+  aquisições).
+- **Câmera 3D real** (`CAMERA_PRESET`): perspectiva 45°, visão oblíqua aérea,
+  órbita/zoom/pan com limites (nunca abaixo do horizonte), iluminação que
+  revela o relevo; terreno no plano XZ (Y-up) com grade horizontal.
+- **Exagero 1×/2×/3×**: muda só a escala visual do deslocamento da malha; a
+  elevação real exibida ("Elevação real: 592–615 m" + alívio) vem do backend e
+  nunca é falsificada. If DEM falha → "Elevação aproximada" (plano), nunca
+  "real".
 
 ### Hierarquia visual (do mais importante ao menos)
 
@@ -381,7 +428,7 @@ curl http://localhost:8000/api/weather/farm/1
 ## 🧪 Suíte de testes automatizados (pytest)
 
 A suíte versionada em `tests/` cobre as 4 frentes exigidas + ownership/migrações/paridade de
-schema, assets autenticados e o **pipeline 3D (PR #4 ↔ PR #5d)** — **255 testes** (1 skip por
+schema, assets autenticados e o **pipeline 3D (PR #4 ↔ PR #5e)** — **257 testes** (1 skip por
 dataset Sentinel-2 ausente fora do git):
 
 | Módulo | Testes | Abrangência |
@@ -394,6 +441,8 @@ dataset Sentinel-2 ausente fora do git):
 | `test_3d_pipeline.py` | 15 | **PR #4** — pipeline 3D: demo sem dataset Sentinel (metadados/PNG/analytics com `data_origin`), fazenda dinâmica autenticada, owner/admin/401/404, assets fora do mount público, `PUBLIC_BASE_URL`, heightmap `available=false` + motivo, contrato What-If, frontend servido pelo backend e higiene (`.env` não exposto) |
 | `test_frontend_3d_pipeline.py` | 1 | **PR #4 ↔ #5d** — helpers do `index.html` executados em VM Node: classificação de erro HTTP, normalização de URL relativa/absoluta, token no fetch, atribuição real de textura ao material, pixel What-If, polígono KML → plano 3D e fallback de asset (material nunca sem `map`) |
 | `test_3d_player_state.py` | 1 | **PR #5d** — máquina de estados da timeline executada em VM Node: Play não avança durante loading, data só muda após aplicar, generationId descarta resposta antiga, Pause durante loading não retoma, troca manual invalida carga anterior, layer swap congela e retoma, falha → error+pause+retry, Real/What-If sincronizados, metadados da textura aplicada, status real/fallback e proveniência compacta + Detalhes |
+| `test_3d_load_scene_wiring.py` | 1 | **PR #5d ↔ #5e** — wiring real do `loadScene` em VM Node: commit só após o fetch, race de resposta atrasada, Pause, falha+retry, layer swap e, no PR #5e: cena pronta no cache aplica **sem nenhum fetch**, preload em background **não altera** a cena aplicada, Play avança para cena pré-carregada sem request e textura descartada da VRAM invalida a cena |
+| `test_3d_scene_cache_preload.py` | 1 | **PR #5e** — cache/preload/terreno puros em VM Node: chave `farmId|talhao|data|layer` (sem colisão), LRU com evicção, plano ≤ 12 → todas / > 12 → janela 5 + background, limites documentados, estados discreto da timeline, escala real metros→unidades, amostragem bilinear, DEM desloca vértices + normais, 1×/2×/3× só visual, fallback plano e `CAMERA_PRESET` |
 | `test_ownership.py` | 32 | **Ownership** (usuário cria/ler/edita/exclui a própria farm; `owner_id` correto; payload `owner_id` ignorado), **admin global**, **privacidade** (GETs exigem token → 401; analytics/clima/textura/heightmap/PDF não expõem farm alheia → 404), **migração Alembic** (adiciona `owner_id`/`is_shared` + backfill seguro em SQLite legado) |
 | `test_schema_parity.py` | 3 | Paridade banco novo × legado migrado: colunas, tipos, nullable, defaults, PK, índices, FKs, `alembic_version`, idempotência, preservação de dados e enforcement SQLite |
 | `test_frontend_texture_urls.py` | 1 | Fluxo frontend de texture.png/heightmap.png relativos e absolutos: classificação, Bearer no fetch, respostas 401/403/404 e revogação do Blob URL após o TextureLoader |

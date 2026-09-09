@@ -431,10 +431,16 @@ def fetch_real_calendar(
     kml_coordinates: str | None,
     limit: int = 12,
     lookback_days: int | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
 ) -> tuple[list[dict], str, dict | None]:
     """
     Calendário real de passagens Sentinel-2 (STAC) — até `limit` cenas
     úteis (<= max_cloud_cover da config), da mais recente para a mais antiga.
+
+    Janela: `start_date`/`end_date` explícitos (período personalizado) ou
+    `lookback_days` a partir de hoje (períodos 30/60/90/180/365). A consulta
+    é SOMENTE metadados STAC — nenhum asset é processado aqui.
 
     Devolve (cenas, status, detail) onde status ∈ {"ok", "not_configured",
     "error", "no_scene"} e `detail` é um dict de diagnóstico SEGURO quando
@@ -443,8 +449,13 @@ def fetch_real_calendar(
     """
     if not is_configured():
         return [], "not_configured", None
-    end = date.today()
-    start = end - timedelta(days=lookback_days or settings.cdse_lookback_days)
+    end = end_date or date.today()
+    if start_date:
+        start = start_date
+    else:
+        start = end - timedelta(days=lookback_days or settings.cdse_lookback_days)
+    if start > end:  # tolerância amigável: inverte, nunca falha silenciosamente
+        start, end = end, start
     try:
         bounds = aoi_bounds(lat, lon, area_ha, kml_coordinates)
         geometry = kml_to_geojson_polygon(kml_coordinates)

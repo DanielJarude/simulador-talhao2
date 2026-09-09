@@ -162,6 +162,9 @@ const tex = { name: 'textura' };
 assert.equal(sandbox.applyTextureToMaterial(mat, tex, tex), true);
 assert.equal(mat.map, tex);
 assert.equal(mat.needsUpdate, true);
+// PR #5e — relevo é GEOMETRIA (DEM nos vértices): o material NUNCA usa
+// displacementMap (evita deslocamento duplicado em relação à malha).
+assert.equal(mat.displacementMap, null, 'relevo não usa displacementMap do material');
 
 // ---- 5. Pixel do cenário What-If (diferença visual real × simulado) ----
 const positive = sandbox.computeSimPixel(100, 100, 100, 0.2);

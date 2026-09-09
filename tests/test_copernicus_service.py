@@ -1129,6 +1129,58 @@ class TestEndpointCdsE:
         assert d["dates"] == ["2025-03-24", "2025-03-20"]
         assert d["calendar"][0]["product_id"] == "d2"
         assert d["visual_layers"][0] == "rgb"
+        # PR #5e — contrato ampliado: metadados da janela + mais recente
+        assert d["latest_date"] == "2025-03-24"
+        assert d["count"] == 2
+        assert d["period_days"] is None
+        assert d["window_start"] is None
+        assert d["window_end"] is None
+
+    def test_dates_farm_periodo_e_personalizado(self, client, user_token, monkeypatch):
+        body = {
+            "name": "Fazenda Janelas", "city": "Marília", "total_area": 30.0,
+            "talhao_name": "A", "crop": "Milho Safrinha",
+            "latitude": -22.25, "longitude": -49.10,
+        }
+        fid = client.post("/api/farms", json=body, headers=auth(user_token)).json()["id"]
+        monkeypatch.setattr(cds.settings, "cdse_client_id", "c")
+        monkeypatch.setattr(cds.settings, "cdse_client_secret", "s")
+        captured = []
+
+        def fake_search(geom, bounds, start, end, limit):
+            captured.append({"start": start, "end": end, "limit": limit})
+            return [
+                _scene("d1", "2025-03-20T10:00:00Z", 6.0),
+                _scene("d2", "2025-03-24T10:00:00Z", 15.0),
+            ]
+
+        monkeypatch.setattr(cds, "stac_search", fake_search)
+
+        # Período 180 dias → lookback de 180 dias + limit ampliado
+        r = client.get(
+            f"/api/talhao/{fid}/dates?period_days=180&limit=40",
+            headers=auth(user_token),
+        )
+        assert r.status_code == 200
+        d = r.json()
+        assert d["period_days"] == 180
+        assert (captured[-1]["end"] - captured[-1]["start"]).days <= 181
+        assert captured[-1]["limit"] == 40
+        assert d["latest_date"] == "2025-03-24"
+        assert d["count"] == 2
+
+        # Janela personalizada tem precedência sobre period_days
+        r2 = client.get(
+            f"/api/talhao/{fid}/dates?start=2025-01-01&end=2025-02-28&limit=60",
+            headers=auth(user_token),
+        )
+        assert r2.status_code == 200
+        d2 = r2.json()
+        assert d2["window_start"] == "2025-01-01"
+        assert d2["window_end"] == "2025-02-28"
+        assert captured[-1]["start"].isoformat() == "2025-01-01"
+        assert captured[-1]["end"].isoformat() == "2025-02-28"
+        assert d2["latest_date"] == "2025-03-24"
 
     def test_dates_farm_sem_cdse_cai_na_config(self, client, user_token):
         body = {

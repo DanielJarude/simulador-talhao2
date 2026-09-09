@@ -41,6 +41,8 @@ def sources() -> dict:
         "selection": _slice(source, "function selectDateIndex(idx)", "function downloadPDFReport()"),
         # motor de carregamento (do setPlayButtonUI até onWindowResize)
         "engine": _slice(source, "function setPlayButtonUI()", "function onWindowResize()"),
+        # PR #5e — cache de cenas/plano de preload (o motor usa esses helpers)
+        "scene_cache": _slice(source, "// [3D-SCENE-CACHE-HELPERS-START]", "// [3D-SCENE-CACHE-HELPERS-END]"),
     }
 
 
@@ -150,13 +152,33 @@ sandbox.lastFailedScene = null;
 sandbox.baseTextureForSim = null;
 sandbox.sceneLoadGate = null;
 sandbox.player = null;
+// PR #5e — estado de cache/preload (criado após avaliar os helpers puros)
+sandbox.sceneCache = null;
+sandbox.sceneFetchInFlight = null;
+sandbox.preloadQueue = null;
+sandbox.preloadQueuedKeys = null;
+sandbox.preloadStates = null;
+sandbox.preloadRunning = false;
+sandbox.preloadActiveCount = 0;
+sandbox.calendarMeta = null; // sem calendário real no harness → sem preload
+sandbox.matRealFade = null;  // sem meshes de fade no harness → aplicação direta
+sandbox.meshRealFade = null;
+sandbox.matSimFade = null;
+sandbox.meshSimFade = null;
 
 const uxSource = process.env.UX_HELPERS;
+const cacheSource = process.env.SCENE_CACHE_HELPERS;
 const selectionSource = process.env.SELECTION_HELPERS;
 const engineSource = process.env.ENGINE_HELPERS;
-vm.runInNewContext(`${uxSource}\n${selectionSource}\n${engineSource}`, sandbox);
+vm.runInNewContext(`${uxSource}\n${cacheSource}\n${selectionSource}\n${engineSource}`, sandbox);
 sandbox.sceneLoadGate = sandbox.createSceneLoadGate();
 sandbox.player = sandbox.createTimelineMachine(0, sandbox.dates.length);
+sandbox.sceneCache = sandbox.createSceneCache(12);
+sandbox.sceneFetchInFlight = new Map();
+sandbox.preloadQueue = [];
+sandbox.preloadQueuedKeys = new Set();
+sandbox.preloadStates = new Map();
+sandbox.getCachedTexture = async () => ({ name: 'tex-cached' });
 
 const TX_META = {
   data_origin: 'sentinel', real_data_status: 'ok',
@@ -191,6 +213,10 @@ const TX_META = {
   assert.equal(sandbox.player.appliedMeta.product_id, 'S2B_...');
 
   // ============ 2. resposta ATRASADA não sobrescreve a mais nova ============
+  // (PR #5e: cena já pronta viraria cache-hit; aqui o cache é limpo para
+  //  forçar o cenário de RACE real entre duas requisições em voo.)
+  sandbox.sceneCache = sandbox.createSceneCache(12);
+  sandbox.preloadStates.clear();
   let releaseOld;
   const oldGate = { promise: new Promise((res) => { releaseOld = res; }) };
   fetchQueue = [
@@ -256,6 +282,68 @@ const TX_META = {
   assert.equal(sandbox.player.status, 'ready');
   assert.equal(sandbox.player.mode, 'playing', 'Play preservado através da troca');
   assert.equal(sandbox.playerCanAdvance(sandbox.player), true, 'após aplicar, o Play pode avançar');
+  // Determinismo p/ os cenários de cache/preload: zera timers e estado.
+  sandbox.pauseTimelinePlay();
+  sandbox.sceneCache = sandbox.createSceneCache(12);
+  sandbox.sceneFetchInFlight = new Map();
+  sandbox.preloadStates.clear();
+  sandbox.preloadQueue = [];
+  sandbox.preloadQueuedKeys.clear();
+  sandbox.preloadActiveCount = 0;
+  sandbox.calendarMeta = null;
+
+  // ============ 6. cena PRONTA no cache → aplica SEM nenhum fetch ============
+  const cachedTexture = { name: 'tex-cache-hit', url: '/api/talhao/7/texture.png?layer=ndvi' };
+  const key0 = sandbox.sceneCacheKey(7, 0, '2026-08-15', 'ndvi');
+  sandbox.sceneCache.set(key0, {
+    key: key0, farmId: 7, talhaoId: 0, date: '2026-08-15', layer: 'ndvi',
+    texture: cachedTexture, meta: { ...TX_META, date: '2026-08-15', acquisition_date: '2026-08-15' },
+    dataOrigin: 'sentinel', realDataStatus: 'ok', acquisitionDate: '2026-08-15',
+    cloudCover: 2.04, preparedAt: 1,
+  });
+  fetchCalls.length = 0;
+  const pCached = sandbox.loadScene(0, 'ndvi');
+  const outCached = await pCached;
+  assert.equal(outCached.ok, true);
+  assert.equal(outCached.fromCache, true, 'cena vinda do cache identificada');
+  assert.equal(fetchCalls.length, 0, 'NENHUM request de rede para cena pronta');
+  assert.equal(sandbox.player.appliedIndex, 0);
+  assert.equal(sandbox.player.appliedLayer, 'ndvi');
+  assert.equal(sandbox.player.status, 'ready');
+  assert.equal(sandbox.lastSimBaseMeta.date, '2026-08-15', 'What-If usa a cena em cache');
+
+  // ============ 7. PRELOAD em background NÃO altera a cena aplicada ============
+  sandbox.calendarMeta = { source: 'sentinel-cdse' };  // habilita preload pós-commit
+  fetchQueue = [{ status: 200, json: { ...TX_META, date: '2026-07-31', acquisition_date: '2026-07-31' } }];
+  const preKey = sandbox.sceneCacheKey(7, 0, '2026-07-31', 'ndvi');
+  sandbox.enqueuePreload(1, 'ndvi', 'preload');
+  await new Promise((r) => setTimeout(r, 40));
+  assert.equal(sandbox.player.appliedIndex, 0, 'preload NUNCA aplica cena');
+  assert.equal(sandbox.player.status, 'ready', 'estado da cena principal intacto');
+  assert.equal(sandbox.preloadStates.get(preKey), 'ready', 'preload concluiu e marcou pronta');
+  assert.equal(sandbox.sceneCache.has(preKey), true, 'cena pré-carregada no cache');
+
+  // ============ 8. Play avança para cena PRONTA sem novo request ============
+  fetchCalls.length = 0;
+  sandbox.playerPlay(sandbox.player);
+  await sandbox.advanceToNext();
+  assert.equal(sandbox.player.appliedIndex, 1, 'avançou para a cena pré-carregada');
+  assert.equal(sandbox.player.appliedLayer, 'ndvi');
+  assert.equal(sandbox.player.status, 'ready');
+  assert.equal(fetchCalls.length, 0, 'Play entre cenas prontas NÃO refaz request');
+  sandbox.pauseTimelinePlay();          // limpa timers antes de sair
+
+  // ============ 9. textura descartada (VRAM LRU) invalida a cena ============
+  sandbox.sceneCache = sandbox.createSceneCache(12);
+  const vramKey = '7|ndvi|http://t/tex.png';
+  sandbox.sceneCache.set(key0, {
+    key: key0, farmId: 7, talhaoId: 0, date: '2026-08-15', layer: 'ndvi',
+    texture: cachedTexture, textureKey: vramKey, meta: { ...TX_META },
+  });
+  const removed = sandbox.evictSceneEntriesForTexture(vramKey);
+  assert.equal(removed, 1, 'o cache de cenas detecta a textura disposta');
+  assert.equal(sandbox.sceneCache.has(key0), false,
+    'cena NUNCA fica "pronta" apontando para textura sem VRAM');
 
   process.stdout.write(JSON.stringify({ ok: true }));
 })().catch((error) => { console.error(error); process.exit(1); });
@@ -265,6 +353,7 @@ const TX_META = {
         cwd=REPO_ROOT,
         env={
             "UX_HELPERS": sources["ux"],
+            "SCENE_CACHE_HELPERS": sources["scene_cache"],
             "SELECTION_HELPERS": sources["selection"],
             "ENGINE_HELPERS": sources["engine"],
         },
