@@ -221,6 +221,37 @@ O terreno 3D usa **relevo real** em vez de um plano com displacement genérico, 
 
 **Como obter a tile (modo offline):** baixe `Copernicus_Dem_GLO30_<sN>_w<NNN>` (OpenTopography ou portal Copernicus) e coloque em `backend/data/dem/`; a API também tenta baixar automaticamente (best-effort, `DEM_DOWNLOAD_ENABLED`).
 
+## 🎨 Interface do Simulador 3D — 3 zonas (PR #5h)
+
+Polimento de UX/UI **sem tocar na geometria/pipeline 3D** (volume, DEM, câmera,
+timeline cronológica, cache, What-If e backend ficam exatamente como no #5g):
+
+- **3 zonas**: barra superior (navegação) · **viewport 3D dominante** (Real ×
+  What-If, `flex:1`) · **barra própria de timeline/controles abaixo do 3D**
+  (`clamp(120px,21vh,152px)`) — a timeline **nunca flutua/sobrepõe o terreno**.
+- **Linha 1**: Período `[30d][60d][90d][6m][1a]` + Personalizado + "⇥ Mais
+  recente" + setas ‹ › + **um botão por cena STAC** (scroll horizontal; visual
+  antiga → recente). **Linha 2**: `▶ Play` · `1,6s` · camada RGB/NDVI/EVI/NDRE/NDMI ·
+  Relevo `1×/2×/3×/5×` · `⟲ Resetar`.
+- **Data atual**: um único chip azul (ex.: `30 AGO / 2026`) por cena aplicada +
+  ponto discreto de estado — sem data duplicada nem badges simultâneos.
+- **What-If recolhível**: painel compacto (Adubação N · Irrigação · Pragas +
+  Resultado NDVI/Produtividade/Impacto) que vira a aba `[⚡ What-If]` ao
+  recolher; os valores dos sliders são **preservados** e restaurados ao reabrir.
+- **Proveniência/DEM compacta**: card translúcido no canto inferior esquerdo
+  (`max-width: 320px`) com `Sentinel-2 L2A • 30/08/2026 • Nuvens 9,8% • DEM
+  592–615 m`; `[Detalhes]` abre drawer técnico (product ID, provider, pixels
+  válidos, DEM source, elevação real, relevo, escala u/m e exagero).
+- **Cores neutras** (o NDVI já traz cor; azul/verde reservados a estado),
+  hierarquia tipográfica título → secundário → técnico, labels discretos
+  "OBSERVAÇÃO REAL" / "PROJEÇÃO WHAT-IF" e dica mínima "Arraste para orbitar ·
+  Scroll para zoom".
+- **Loading local** no chip/canto ("Carregando 27/08…") preservando a cena
+  anterior até o commit; **erro local** "Falha ao carregar <data> · Tentar
+  novamente" — nunca tela inteira.
+- **Responsivo**: 1920×1080, 1600×900 e 1366×768 (timeline 112–152px; painel
+  What-If encolhe; meta secundário oculto em telas < 1500px; cenas com scroll).
+
 ## 🛰️ Dados REAIS Sentinel-2 — Copernicus Data Space Ecosystem (CDSE)
 
 O backend busca observação real sempre que possível, com fallback procedural explícito quando não há dado (sem credenciais, sem cena, erro/rate-limit). Nada é marcado como Sentinel sem ser.
@@ -301,8 +332,8 @@ what-if → /api/simulation/what-if → delta_ndvi
 ### Sincronização assíncrona (PR #5d)
 
 **Sequência obrigatória: CARREGAR → APLICAR → ESPERAR → PRÓXIMA.** A timeline
-NUNCA avança enquanto a próxima cena carrega; a data principal (`date-label`,
-slider e pílulas) é a da imagem **efetivamente aplicada**.
+NUNCA avança enquanto a próxima cena carrega; a data principal (chip azul da cena
+aplicadaaplicada, slider e pílulas) é a da imagem **efetivamente aplicada**.
 
 - **Máquina de estados** (`createTimelineMachine`): `mode` = paused/playing,
   `status` = idle/loading/ready/error, com `appliedIndex`/`appliedLayer`/
@@ -436,7 +467,7 @@ curl http://localhost:8000/api/weather/farm/1
 ## 🧪 Suíte de testes automatizados (pytest)
 
 A suíte versionada em `tests/` cobre as 4 frentes exigidas + ownership/migrações/paridade de
-schema, assets autenticados e o **pipeline 3D (PR #4 ↔ PR #5g)** — **270 testes** (1 skip por
+schema, assets autenticados e o **pipeline 3D (PR #4 ↔ PR #5h)** — **285 testes** (1 skip por
 dataset Sentinel-2 ausente fora do git):
 
 | Módulo | Testes | Abrangência |
@@ -461,6 +492,7 @@ dataset Sentinel-2 ausente fora do git):
   compartilham os MESMOS helpers e o contrato de código (textura no mesh, exagero sem fetch,
   `?debug3d=1` nunca por padrão, grade abaixo da base) |
 | `test_3d_camera_chips.py` | 3 | **PR #5f** — VM Node: (1) **câmera** `computeCameraFit` pura (vista oblíqua 35–55° nunca rasante nem abaixo do plano, target = centro, distância proporcional à bbox pequena/grande, aspect, clamp, determinística → reset restaura) e (2) **chips da timeline** (exatamente 1 botão por data STAC, ordem desc, sem datas fixas/intermediárias, tooltip data completa + nuvens, 24 cenas) e (3) **DOM real** `renderDatePills` + estados discretos (aplicada só na cena comitada — preload vira `ready`, nunca seleção; clique → `selectDateIndex`; troca de período reconstrói sem sobras; loading/error) |
+| `test_3d_ui_polish.py` | 15 | **PR #5h — INTERFACE/UX** (VM Node + contrato de fonte): timeline é faixa PRÓPRIA fora do viewport 3D (irmã do `#viewport-3d`, nunca flutua sobre o terreno), viewport dominante (flex 1) × timeline `clamp(120px,21vh,152px)`, linhas da barra (status fina + Período/cenas + controles), alturas simuladas 1920×1080/1600×900/1366×768 (3D 60–90% do espaço), What-If recolhível que **preserva valores** (`setWhatIfCollapsed` só troca display, VM Node), proveniência compacta `Sentinel-2 L2A • data • nuvens • DEM m` + drawer com 13 linhas (product ID/provider/pixels/relevo/escala/exagero), **um único chip azul** da data aplicada (sem data duplicada/badge extra), controles presentes e ligados (▶ Play · 1,6s · camada · Relevo 1×/2×/3×/5× · Resetar · períodos · setas) e contratos 3D intactos (OrbitControls, volume, hillshade, sombras, cache por identidade, marcadores `[3D-*]`) |
 | `test_ownership.py` | 32 | **Ownership** (usuário cria/ler/edita/exclui a própria farm; `owner_id` correto; payload `owner_id` ignorado), **admin global**, **privacidade** (GETs exigem token → 401; analytics/clima/textura/heightmap/PDF não expõem farm alheia → 404), **migração Alembic** (adiciona `owner_id`/`is_shared` + backfill seguro em SQLite legado) |
 | `test_schema_parity.py` | 3 | Paridade banco novo × legado migrado: colunas, tipos, nullable, defaults, PK, índices, FKs, `alembic_version`, idempotência, preservação de dados e enforcement SQLite |
 | `test_frontend_texture_urls.py` | 1 | Fluxo frontend de texture.png/heightmap.png relativos e absolutos: classificação, Bearer no fetch, respostas 401/403/404 e revogação do Blob URL após o TextureLoader |

@@ -1356,3 +1356,51 @@ antigas entram pela esquerda; a mais recente fica na extrema direita).
   inline COMPLETO em VM Node com stubs de DOM/THREE/Leaflet/Chart (ordem real),
   exigindo `__BOOTSTRAP_OK` ao final e zero errors fatais; fica VERMELHO no
   commit `cb913a4` com exatamente a mensagem do bug e VERDE após a correção.
+
+### PR #5h — Polimento de INTERFACE/UX (3 zonas; sem tocar no pipeline 3D)
+
+- **Escopo**: SOMENTE layout/hierarquia/controles do `index.html` (tela 3D).
+  Geometria/pipeline 3D, DEM, câmera/OrbitControls, timeline cronológica,
+  STAC/CDSE, cache/preload, What-If, auth, backend, NASA POWER, PDF e infra
+  **não foram alterados** (contratos `[3D-*]` e `id="timeline-meta"` intactos).
+- **Novo layout (3 zonas)**: `#screen-3d` vira coluna flex (ativa) →
+  `#viewport-3d` (`flex:1; min-height:0`) com o canvas e **todos os overlays**
+  (labels, What-If, proveniência, erro, loading) + `#timeline-panel` como
+  **faixa irmã abaixo** (nunca posicionado absoluto; `flex: 0 0 clamp(120px,
+  21vh, 152px)`). A timeline deixou de cobrir o terreno (antes: sobreposta
+  `bottom:14px`).
+- **Timeline em 2 linhas de conteúdo + status fina**: Linha 1 = Período
+  [30d/60d/90d/6m/1a]+Personalizado + "⇥ Mais recente" + setas + cenas (scroll
+  horizontal, visual antiga → recente); Linha 2 = Play · 1,6s · camada ·
+  Relevo 1×/2×/3×/5× · ⟲ Resetar. Semântica cronológica e identidade por data
+  preservadas (`renderDatePills`, `buildSceneChips`, `timelineOrderDates`).
+- **Data atual**: um único chip azul (dia + ano + ponto de estado); removido o
+  `#date-label` duplicado e o badge "ATUAL" extra (JS continua null-safe).
+- **What-If recolhível**: `setWhatIfCollapsed` (dentro do motor) troca SOMENTE
+  `display` do painel ↔ aba `[⚡ What-If]` → sliders/resultados preservados
+  por construção; painel compacto (1 caixa única, sem caixas aninhadas).
+- **Proveniência compacta**: card translúcido inferior ESQUERDO
+  (`max-width:320px`) com `Sentinel-2 L2A • data • Nuvens X% • DEM min–max m`;
+  `[Detalhes]` abre drawer (9 linhas da cena + 4 do DEM: fonte, elevação real,
+  escala u/m, exagero). `provenanceSummary/DetailLines` ganharam parâmetro
+  `dem` OPCIONAL (testes antigos com 1 argumento continuam válidos — 9 linhas).
+- **Cores/hierarquia**: paleta neutra; cor só para estado (azul aplicada,
+  verde pronto, vermelho erro); labels discretos "OBSERVAÇÃO REAL" /
+  "PROJEÇÃO WHAT-IF" (borda 3px, fundo translúcido); dica "Arraste para orbitar
+  · Scroll para zoom"; loading local no chip/canto; erro local com [Tentar
+  novamente]. Título (0.64rem/800) > secundário (0.62rem/600) > técnico.
+- **Responsivo**: `@media (max-height:800px)` → timeline 112px e painel 208px;
+  `@media (max-width:1500px)` → meta secundário oculto + painel 206px;
+  `@media (max-width:1100px)` → ajustes de labels. Simulação das 3 resoluções
+  nos testes: 3D ocupa 60–90% do espaço e a timeline nunca cobre o terreno.
+- **Cuidados de contrato**: `#screen-3d` usa `display:flex` apenas com
+  `.active` (a base `.screen-view{display:none}` continua valendo p/ a troca
+  de abas); helpers puros seguem dentro dos marcadores `[3D-*]`; novos símbolos
+  do motor (`buildDemSummaryForUI`, `setWhatIfCollapsed`) foram adicionados
+  DENTRO do slice avaliado pelos harnesses de VM (sem quebrar slices antigos);
+  `updateElevationUI` agora escreve em `#dem-line` (o `#dem-exag-row` saiu).
+- **Testes**: novo `tests/test_3d_ui_polish.py` (15) cobrindo timeline fora do
+  viewport, alturas responsivas, What-If recolhe/preserva, proveniência
+  compacta+detalhes, chip único, controles ligados, contratos 3D intactos e
+  erros/loading locais. `pytest tests/ -q` → **285 passed, 1 skipped**;
+  `node --check` do script inline → OK.

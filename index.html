@@ -152,245 +152,290 @@
       box-shadow: 0 8px 24px rgba(0,0,0,0.6); max-width: 300px;
     }
 
-    /* 3D SPLIT VIEW */
-    #screen-3d { background: #0d1117; position: relative; width: 100%; height: 100%; }
-    #canvas-container { width: 100%; height: 100%; position: absolute; top: 0; left: 0; }
-    
-    .view-label {
-      position: absolute; top: 14px; z-index: 25;
-      padding: 6px 12px; border-radius: 6px; font-weight: 700; font-size: 0.75rem;
-      backdrop-filter: blur(8px);
-    }
-    #label-left { left: 16px; background: rgba(33, 38, 45, 0.9); border-left: 4px solid #58a6ff; color: #58a6ff; }
-    #label-right { left: calc(50% + 12px); background: rgba(33, 38, 45, 0.9); border-left: 4px solid #d29922; color: #e3b341; }
-    .divider-line { position: absolute; top: 0; left: 50%; width: 2px; height: 100%; background: #30363d; z-index: 20; }
-
-    #whatif-panel-3d {
-      position: absolute; top: 14px; right: 16px; z-index: 30;
-      background: rgba(22, 27, 34, 0.94); backdrop-filter: blur(12px);
-      padding: 14px; border-radius: 10px; width: 270px;
-      border: 1px solid #30363d; box-shadow: 0 8px 24px rgba(0,0,0,0.6);
-    }
-    #whatif-panel-3d h4 { margin: 0 0 8px 0; color: #e3b341; font-size: 0.9rem; }
-    .param-group { margin-bottom: 10px; }
-    .param-group label { font-size: 0.75rem; color: #8b949e; display: flex; justify-content: space-between; }
-    .param-group input[type=range] { width: 100%; margin-top: 3px; accent-color: #d29922; }
-
-    .sim-result-box {
-      background: rgba(13, 17, 23, 0.8); padding: 8px 10px; border-radius: 6px;
-      border: 1px solid #21262d; font-size: 0.78rem; line-height: 1.35;
-    }
-
-    #ui-panel-3d {
-      display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
-      justify-content: center;
-    }
-    #ui-panel-3d button, #ui-panel-3d select {
-      background: #238636; color: white; border: none; padding: 7px 14px;
-      border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.82rem;
-    }
-    #ui-panel-3d select { background: #21262d; border: 1px solid #30363d; }
-    #ui-panel-3d #btn-reset-camera {
-      background: #21262d; border: 1px solid #30363d; color: #8b949e;
-      font-size: 0.74rem; padding: 6px 10px;
-    }
-    #ui-panel-3d #btn-reset-camera:hover { color: #58a6ff; border-color: #58a6ff; }
-
     /* =====================================================================
-       PR #5f — PAINEL DA TIMELINE SENTINEL-2 (datas clicáveis abaixo do 3D)
+       PR #5h — SIMULADOR 3D EM 3 ZONAS (terreno em primeiro plano):
+         A) HEADER/navegação (top-nav, fora daqui);
+         B) viewport 3D (Real × What-If) — flex:1, ocupa ~70-78% da altura;
+         C) timeline/controles — faixa PRÓPRIA abaixo do 3D (nunca flutua
+            sobre o terreno), 2 linhas, ~20% da altura.
+       Regras: uma fonte visual por função; cores neutras (o NDVI já tem cor);
+       informativos no canto inferior esquerdo, pequenos, translúcidos.
        ===================================================================== */
+    #screen-3d {
+      background: #0d1117; position: relative; width: 100%; height: 100%;
+      overflow: hidden;
+    }
+    /* Flex só com a tela ATIVA — `display:none` da base .screen-view continua
+       valendo quando a aba 3D não está aberta (troca de abas intacta). */
+    #screen-3d.active { display: flex; flex-direction: column; }
+    #viewport-3d {
+      position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden;
+      background: #0d1117;
+    }
+    #canvas-container {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    }
+
+    .view-label {
+      position: absolute; top: 10px; z-index: 25;
+      padding: 4px 10px; border-radius: 6px; font-weight: 700;
+      backdrop-filter: blur(8px); display: flex; flex-direction: column; gap: 1px;
+      min-width: 150px; max-width: 250px;
+    }
+    #label-left { left: 12px; background: rgba(22, 27, 34, 0.78); border-left: 3px solid #3d6fa8; color: #9fc2e8; }
+    #label-right { left: calc(50% + 10px); background: rgba(22, 27, 34, 0.78); border-left: 3px solid #8a6d1f; color: #cdb56a; }
+    .scenario-title { font-size: 0.64rem; font-weight: 800; letter-spacing: 0.05em; opacity: 0.9; }
+    .scenario-sub { font-size: 0.62rem; font-weight: 600; opacity: 0.85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #label-left .scenario-sub.real { color: #6fbf85; }
+    #label-left .scenario-sub.approx { color: #b8934a; }
+    #label-left .scenario-sub.no-config { color: #c07a3a; }
+    #label-right .scenario-sub { color: #cdb56a; }
+    .divider-line {
+      position: absolute; top: 0; left: 50%; width: 1px; height: 100%;
+      background: rgba(48, 54, 61, 0.6); z-index: 20;
+    }
+
+    /* ---- Painel WHAT-IF compacto e RECOLHÍVEL (PR #5h) ---- */
+    #whatif-panel-3d {
+      position: absolute; top: 10px; right: 12px; z-index: 30; width: 232px;
+      background: rgba(22, 27, 34, 0.88); backdrop-filter: blur(10px);
+      border: 1px solid #30363d; border-radius: 10px; overflow: hidden;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.5);
+    }
+    #whatif-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 7px 10px; background: rgba(13, 17, 23, 0.6);
+      border-bottom: 1px solid #21262d;
+    }
+    .whatif-title { font-size: 0.72rem; font-weight: 800; color: #cdb56a; letter-spacing: 0.04em; }
+    #whatif-toggle {
+      background: #21262d; color: #8b949e; border: 1px solid #30363d;
+      border-radius: 5px; width: 22px; height: 22px; font-size: 0.9rem;
+      line-height: 1; cursor: pointer; font-weight: 800;
+    }
+    #whatif-toggle:hover { color: #cdb56a; border-color: #8a6d1f; }
+    #whatif-body { padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 7px; }
+    .param-group label {
+      font-size: 0.66rem; color: #8b949e; display: flex; justify-content: space-between;
+      align-items: baseline; margin-bottom: 1px;
+    }
+    .param-group label strong { color: #c9d1d9; font-size: 0.66rem; }
+    .param-group input[type=range] { width: 100%; height: 12px; accent-color: #b8934a; margin: 0; }
+    .sim-result-box {
+      background: rgba(13, 17, 23, 0.55); padding: 6px 8px; border-radius: 6px;
+      border: 1px solid #21262d; font-size: 0.66rem; line-height: 1.45; color: #8b949e;
+      display: flex; flex-direction: column; gap: 1px;
+    }
+    .sim-result-box strong { color: #c9d1d9; }
+    /* Aba lateral quando recolhido: [⚡ What-If] */
+    #whatif-tab {
+      position: absolute; top: 10px; right: 12px; z-index: 30;
+      background: rgba(22, 27, 34, 0.92); border: 1px solid #8a6d1f; color: #cdb56a;
+      border-radius: 8px; padding: 6px 12px; font-size: 0.72rem; font-weight: 800;
+      cursor: pointer; backdrop-filter: blur(8px);
+    }
+    #whatif-tab:hover { background: #21262d; }
+
+    /* ---- Proveniência/DEM: card compacto (canto inferior ESQUERDO) ---- */
+    #metadata-panel {
+      position: absolute; bottom: 10px; left: 12px; z-index: 34;
+      max-width: 320px; /* ≲ 25% da largura */
+      background: rgba(13, 17, 23, 0.72); border: 1px solid rgba(48, 54, 61, 0.8);
+      border-radius: 8px; padding: 5px 8px; backdrop-filter: blur(8px);
+    }
+    #metadata-summary {
+      display: flex; align-items: center; gap: 6px; font-size: 0.66rem;
+      font-weight: 700; color: #c9d1d9; white-space: nowrap; overflow: hidden;
+    }
+    #metadata-summary.real { color: #a9c9b2; }
+    #metadata-summary.approx { color: #b8934a; }
+    #metadata-summary.no-config { color: #c07a3a; }
+    #prov-toggle {
+      background: #21262d; color: #9fc2e8; border: 1px solid #30363d;
+      border-radius: 5px; padding: 1px 7px; font-size: 0.62rem; font-weight: 700;
+      cursor: pointer; flex-shrink: 0;
+    }
+    #prov-toggle:hover { border-color: #3d6fa8; }
+    #prov-details {
+      display: none; margin-top: 4px; padding-top: 4px;
+      border-top: 1px dashed rgba(48, 54, 61, 0.8);
+      max-height: 150px; overflow-y: auto;
+    }
+    #prov-details.open { display: block; }
+    #prov-details pre {
+      margin: 0; font-family: inherit; font-size: 0.62rem; line-height: 1.5;
+      color: #8b949e; white-space: pre-wrap;
+    }
+    #dem-line {
+      margin-top: 4px; padding-top: 4px; border-top: 1px dashed rgba(48, 54, 61, 0.8);
+      font-size: 0.62rem; font-weight: 600; color: #8b949e;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    #dem-line.ok { color: #6fbf85; }
+    #dem-line.warn { color: #b8934a; }
+
+    /* Dica discreta de navegação (nunca tutorial permanente) */
+    #camera-hint {
+      position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%);
+      z-index: 24; font-size: 0.6rem; color: #6e7681; opacity: 0.65;
+      white-space: nowrap; pointer-events: none;
+    }
+
+    /* ---- Barra inferior: TIMELINE + CONTROLES (faixa própria, 2 linhas) ---- */
     #timeline-panel {
-      position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
-      background: rgba(22, 27, 34, 0.96); backdrop-filter: blur(14px);
-      padding: 10px 14px; border-radius: 12px; width: 94%; max-width: 940px;
-      z-index: 35; border: 1px solid #38404a; box-shadow: 0 8px 28px rgba(0,0,0,0.85);
-      display: flex; flex-direction: column; gap: 7px;
+      flex: 0 0 clamp(120px, 21vh, 152px); min-height: 0;
+      background: #161b22; border-top: 1px solid #30363d;
+      padding: 6px 14px 8px; display: flex; flex-direction: column; gap: 5px;
+      overflow: hidden;
     }
-    #timeline-title-row {
-      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    .timeline-row {
+      display: flex; align-items: center; gap: 8px; min-height: 0;
+      white-space: nowrap; overflow: hidden;
     }
+    .tl-label { font-size: 0.62rem; color: #8b949e; font-weight: 700; white-space: nowrap; }
     #timeline-title {
-      font-size: 0.72rem; font-weight: 800; letter-spacing: 0.08em;
-      color: #58a6ff; white-space: nowrap;
+      font-size: 0.64rem; font-weight: 800; letter-spacing: 0.07em;
+      color: #9fc2e8; white-space: nowrap;
     }
-    #timeline-period-row, #timeline-scenes-row {
-      display: flex; align-items: center; gap: 8px; flex-wrap: nowrap;
-    }
-    .tl-label { font-size: 0.68rem; color: #8b949e; font-weight: 700; white-space: nowrap; }
-    #timeline-scenes-row { gap: 6px; }
     #scene-timeline {
-      flex: 1; display: flex; gap: 6px; overflow-x: auto; padding: 2px;
+      flex: 1 1 auto; display: flex; gap: 5px; overflow-x: auto; padding: 2px;
       scrollbar-width: thin; scroll-behavior: smooth; min-width: 0;
     }
-    #scene-timeline::-webkit-scrollbar { height: 6px; }
+    #scene-timeline::-webkit-scrollbar { height: 5px; }
     #scene-timeline::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
-    .tl-arrow {
-      background: #21262d; border: 1px solid #30363d; color: #8b949e;
-      border-radius: 6px; width: 26px; height: 34px; cursor: pointer;
-      font-size: 1rem; font-weight: 800; flex-shrink: 0; line-height: 1;
-    }
-    .tl-arrow:hover { color: #58a6ff; border-color: #58a6ff; }
-    /* Botão de CENA (uma aquisição Sentinel-2 real por botão) */
     .scene-chip {
       background: #0d1117; border: 1px solid #30363d; color: #8b949e;
-      border-radius: 7px; padding: 4px 9px; cursor: pointer; white-space: nowrap;
-      display: flex; flex-direction: column; align-items: center; gap: 1px;
+      border-radius: 6px; padding: 3px 8px; cursor: pointer; white-space: nowrap;
+      display: flex; flex-direction: column; align-items: center; gap: 0;
       font-family: inherit; flex-shrink: 0; transition: 0.15s;
     }
-    .scene-chip .chip-day { font-size: 0.72rem; font-weight: 800; color: #c9d1d9; line-height: 1.1; }
-    .scene-chip .chip-year { font-size: 0.6rem; font-weight: 600; color: #6e7681; line-height: 1.1; }
-    .scene-chip:hover { border-color: #58a6ff; }
-    .scene-chip:hover .chip-day { color: #58a6ff; }
+    .scene-chip .chip-day { font-size: 0.68rem; font-weight: 800; color: #c9d1d9; line-height: 1.1; }
+    .scene-chip .chip-year { font-size: 0.55rem; font-weight: 600; color: #6e7681; line-height: 1.15; }
+    .scene-chip:hover { border-color: #3d6fa8; }
+    .scene-chip:hover .chip-day { color: #9fc2e8; }
     .scene-chip.active {
-      background: #1f6feb; border-color: #388bfd; box-shadow: 0 0 10px rgba(31,111,235,0.45);
+      background: #1f6feb; border-color: #388bfd; box-shadow: 0 0 8px rgba(31,111,235,0.4);
     }
     .scene-chip.active .chip-day { color: #fff; }
     .scene-chip.active .chip-year { color: #cae1ff; }
     .scene-chip .state-dot {
-      width: 5px; height: 5px; border-radius: 50%; background: #30363d; margin-top: 2px;
+      width: 4px; height: 4px; border-radius: 50%; background: #30363d; margin-top: 1px;
     }
     .scene-chip.loading .state-dot { background: #58a6ff; box-shadow: 0 0 5px rgba(88,166,255,0.9); }
-    .scene-chip.ready .state-dot { background: #7ee787; }
+    .scene-chip.ready .state-dot { background: #6fbf85; }
     .scene-chip.applied .state-dot { background: #f0f6fc; }
     .scene-chip.error .state-dot { background: #ff7b72; }
     .chip-badge {
-      display: none; font-size: 0.52rem; font-weight: 800; letter-spacing: 0.06em;
-      color: #fff; background: rgba(255,255,255,0.18); border-radius: 3px;
+      display: none; font-size: 0.5rem; font-weight: 800; letter-spacing: 0.06em;
+      color: #fff; background: rgba(255,255,255,0.16); border-radius: 3px;
       padding: 0 4px; margin-top: 1px;
     }
     .scene-chip.applied .chip-badge { display: inline-block; }
-
-    /* =====================================================================
-       UX SIMULADOR 3D (PR #5d): hierarquia = terreno > Real×What-If >
-       timeline > layer > What-If > metadados. Sem painéis centrais grandes;
-       um único status discreto por cenário + metadados retráteis.
-       ===================================================================== */
-    #label-left, #label-right {
-      display: flex; flex-direction: column; gap: 2px;
-      padding: 6px 12px; border-radius: 6px; min-width: 168px; max-width: 260px;
+    .tl-arrow {
+      background: #21262d; border: 1px solid #30363d; color: #8b949e;
+      border-radius: 5px; width: 24px; height: 30px; cursor: pointer;
+      font-size: 0.95rem; font-weight: 800; flex-shrink: 0; line-height: 1;
     }
-    .scenario-title { font-size: 0.72rem; font-weight: 800; letter-spacing: 0.06em; }
-    .scenario-sub { font-size: 0.68rem; font-weight: 600; opacity: 0.92; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    #label-left .scenario-sub.real { color: #7ee787; }
-    #label-left .scenario-sub.approx { color: #e3b341; }
-    #label-left .scenario-sub.no-config { color: #ffa657; }
-    #label-right .scenario-sub { color: #e3b341; }
-
-    /* Spinner e indicador de carregamento (junto à timeline — não central) */
-    .spinner {
-      display: inline-block; width: 13px; height: 13px; border-radius: 50%;
-      border: 2px solid rgba(88, 166, 255, 0.35); border-top-color: #58a6ff;
-      animation: spin 0.8s linear infinite; vertical-align: -2px; margin-right: 6px;
+    .tl-arrow:hover { color: #9fc2e8; border-color: #3d6fa8; }
+    #btn-latest {
+      background: #21262d; border: 1px solid #30363d; color: #a9c9b2;
+      padding: 3px 8px; border-radius: 6px; font-size: 0.62rem; font-weight: 700;
+      cursor: pointer; flex-shrink: 0;
     }
-    @keyframes spin { to { transform: rotate(360deg); } }
+    #btn-latest:hover { border-color: #6fbf85; }
+    .period-pill {
+      background: #0d1117; border: 1px solid #30363d; color: #8b949e;
+      padding: 2px 8px; border-radius: 5px; font-size: 0.62rem; font-weight: 700;
+      cursor: pointer; white-space: nowrap; transition: 0.15s;
+    }
+    .period-pill:hover { border-color: #3d6fa8; color: #9fc2e8; }
+    .period-pill.active { background: #1f6feb; border-color: #388bfd; color: #fff; }
+    #period-pills { display: inline-flex; gap: 3px; overflow-x: auto; min-width: 0; scrollbar-width: none; }
+    #period-pills::-webkit-scrollbar { display: none; }
+    #custom-period-row { display: inline-flex; gap: 4px; align-items: center; flex-shrink: 0; }
+    #custom-period-row input[type="date"] {
+      background: #0d1117; border: 1px solid #30363d; color: #c9d1d9;
+      border-radius: 4px; padding: 1px 5px; font-size: 0.62rem; color-scheme: dark;
+    }
+    #custom-apply {
+      background: #21262d; border: 1px solid #30363d; color: #9fc2e8;
+      border-radius: 4px; padding: 1px 7px; font-size: 0.62rem; font-weight: 700; cursor: pointer;
+    }
     #load-indicator {
-      display: none; align-items: center; font-size: 0.72rem; font-weight: 600;
-      color: #58a6ff; white-space: nowrap;
+      display: none; align-items: center; font-size: 0.62rem; font-weight: 600;
+      color: #9fc2e8; white-space: nowrap; flex-shrink: 0;
     }
     #load-indicator.visible { display: inline-flex; }
+    #preload-status { font-size: 0.62rem; font-weight: 700; color: #9fc2e8; white-space: nowrap; flex-shrink: 0; }
+    #preload-status.done { color: #6fbf85; }
+    #timeline-meta { font-size: 0.6rem; color: #6e7681; white-space: nowrap; flex-shrink: 1; overflow: hidden; text-overflow: ellipsis; }
 
-    /* Overlay discreto sobre o cenário REAL durante carregamento */
+    /* Linha 2 — controles: Play · data · intervalo · camada · Relevo · Reset */
+    .controls-row button, .controls-row select {
+      background: #21262d; color: #c9d1d9; border: 1px solid #30363d;
+      border-radius: 6px; padding: 4px 10px; font-size: 0.66rem; font-weight: 700;
+      cursor: pointer; flex-shrink: 0;
+    }
+    .controls-row button:hover { border-color: #3d6fa8; color: #9fc2e8; }
+    #play-btn { background: #238636; border-color: #2ea043; color: #fff; min-width: 84px; }
+    #play-btn:hover { background: #2ea043; color: #fff; }
+    .exag-row { display: inline-flex; gap: 4px; align-items: center; }
+    .exag-btn {
+      background: #21262d; border: 1px solid #30363d; color: #c9d1d9;
+      border-radius: 4px; padding: 3px 8px; font-size: 0.64rem; font-weight: 800;
+      cursor: pointer; transition: 0.15s;
+    }
+    .exag-btn:hover { border-color: #3d6fa8; color: #9fc2e8; }
+    .exag-btn.active { background: #1f6feb; border-color: #388bfd; color: #fff; }
+
+    /* Spinner (herdado do load) */
+    .spinner {
+      display: inline-block; width: 12px; height: 12px; border-radius: 50%;
+      border: 2px solid rgba(88, 166, 255, 0.35); border-top-color: #58a6ff;
+      animation: spin 0.8s linear infinite; vertical-align: -2px; margin-right: 5px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Overlay discreto de carregamento da cena REAL (nunca cobre o centro) */
     #overlay-loading-real {
-      position: absolute; top: 58px; left: 16px; z-index: 36; display: none;
-      align-items: center; gap: 7px; padding: 5px 10px; border-radius: 6px;
-      font-size: 0.68rem; font-weight: 700; color: #58a6ff;
-      background: rgba(22, 27, 34, 0.88); border: 1px solid #1f6feb;
+      position: absolute; top: 44px; left: 12px; z-index: 36; display: none;
+      align-items: center; gap: 6px; padding: 4px 9px; border-radius: 6px;
+      font-size: 0.62rem; font-weight: 700; color: #9fc2e8;
+      background: rgba(22, 27, 34, 0.85); border: 1px solid #1f6feb;
       backdrop-filter: blur(8px); pointer-events: none;
     }
     #overlay-loading-real.visible { display: inline-flex; }
 
-    /* Metadados COMPACTOS (bottom-left): 1 linha resumo + botão Detalhes.
-       O painel expandido é um drawer que sobe — nunca fica fixo sobre o terreno. */
-    #metadata-panel {
-      /* PR #5f: acima da timeline inferior (nunca sobrepõe os chips). */
-      position: absolute; bottom: 168px; left: 16px; z-index: 34; max-width: 400px;
-      background: rgba(22, 27, 34, 0.93); border: 1px solid #30363d;
-      border-radius: 8px; padding: 6px 10px; backdrop-filter: blur(10px);
-    }
-    #metadata-summary {
-      display: flex; align-items: center; gap: 8px; font-size: 0.72rem;
-      font-weight: 700; color: #c9d1d9; white-space: nowrap; overflow: hidden;
-    }
-    #metadata-summary .dot { color: #58a6ff; }
-    #metadata-summary.real { color: #7ee787; }
-    #metadata-summary.approx { color: #e3b341; }
-    #metadata-summary.no-config { color: #ffa657; }
-    #prov-toggle {
-      background: #21262d; color: #58a6ff; border: 1px solid #30363d;
-      border-radius: 5px; padding: 2px 8px; font-size: 0.66rem; font-weight: 700;
-      cursor: pointer; flex-shrink: 0;
-    }
-    #prov-toggle:hover { border-color: #58a6ff; }
-    #prov-details {
-      display: none; margin-top: 6px; padding-top: 6px;
-      border-top: 1px dashed #30363d; max-height: 190px; overflow-y: auto;
-    }
-    #prov-details.open { display: block; }
-    #prov-details pre {
-      margin: 0; font-family: inherit; font-size: 0.7rem; line-height: 1.55;
-      color: #8b949e; white-space: pre-wrap;
-    }
-    /* DEM = rodapé discreto do painel de metadados (fora do drawer) */
-    #dem-line {
-      margin-top: 5px; padding-top: 5px; border-top: 1px dashed #30363d;
-      font-size: 0.68rem; font-weight: 600; color: #8b949e;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    }
-    #dem-line.ok { color: #7ee787; }
-    #dem-line.warn { color: #e3b341; }
-    /* PR #5e — elevação REAL (nunca inventada) + exagero visual 1×/2×/3× */
-    #dem-exag-row { display: flex; align-items: center; gap: 6px; margin-top: 5px; font-size: 0.66rem; color: #8b949e; }
-    #elevation-line { color: #7ee787; font-weight: 700; }
-    .exag-btn {
-      background: #21262d; border: 1px solid #30363d; color: #c9d1d9;
-      border-radius: 4px; padding: 1px 7px; font-size: 0.64rem; font-weight: 700;
-      cursor: pointer; transition: 0.15s;
-    }
-    .exag-btn:hover { border-color: #58a6ff; color: #58a6ff; }
-    .exag-btn.active { background: #1f6feb; border-color: #388bfd; color: #fff; }
-
-    /* PR #5e — controles do calendário real (períodos + Mais recente) */
-    #timeline-controls {
-      display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px;
-    }
-    .period-pill {
-      background: #0d1117; border: 1px solid #30363d; color: #8b949e;
-      padding: 3px 9px; border-radius: 6px; font-size: 0.68rem; font-weight: 700;
-      cursor: pointer; white-space: nowrap; transition: 0.15s;
-    }
-    .period-pill:hover { border-color: #58a6ff; color: #58a6ff; }
-    .period-pill.active { background: #1f6feb; border-color: #388bfd; color: #fff; }
-    #btn-latest {
-      background: #21262d; border: 1px solid #30363d; color: #7ee787;
-      padding: 3px 9px; border-radius: 6px; font-size: 0.68rem; font-weight: 700; cursor: pointer;
-    }
-    #btn-latest:hover { border-color: #7ee787; }
-    #custom-period-row { display: inline-flex; gap: 5px; align-items: center; }
-    #custom-period-row input[type="date"] {
-      background: #0d1117; border: 1px solid #30363d; color: #c9d1d9;
-      border-radius: 5px; padding: 2px 6px; font-size: 0.68rem; color-scheme: dark;
-    }
-    #custom-apply {
-      background: #21262d; border: 1px solid #30363d; color: #58a6ff;
-      border-radius: 5px; padding: 2px 8px; font-size: 0.68rem; font-weight: 700; cursor: pointer;
-    }
-    #preload-status { font-size: 0.68rem; font-weight: 700; color: #58a6ff; white-space: nowrap; }
-    #preload-status.done { color: #7ee787; }
-    #timeline-meta { font-size: 0.66rem; color: #8b949e; white-space: nowrap; }
-
-    /* Erro compacto (não bloqueia a cena) */
+    /* Erro compacto e LOCAL (nunca transforma a tela em erro) */
     #error-toast {
-      /* PR #5f: acima da timeline; nunca cobre os chips/data aplicada. */
-      position: absolute; bottom: 168px; left: 50%; transform: translateX(-50%);
-      z-index: 45; display: none; align-items: center; gap: 10px;
-      padding: 8px 14px; border-radius: 8px; max-width: 92%;
-      background: rgba(43, 24, 27, 0.95); border: 1px solid #da3633;
-      color: #ff7b72; font-size: 0.74rem; font-weight: 700;
+      position: absolute; bottom: 34px; left: 50%; transform: translateX(-50%);
+      z-index: 45; display: none; align-items: center; gap: 8px;
+      padding: 6px 12px; border-radius: 8px; max-width: 82%;
+      background: rgba(43, 24, 27, 0.9); border: 1px solid #da3633;
+      color: #ff9a92; font-size: 0.66rem; font-weight: 700; white-space: nowrap;
     }
     #error-toast.visible { display: inline-flex; }
     #error-toast button {
       background: #da3633; color: #fff; border: none; border-radius: 5px;
-      padding: 4px 10px; font-size: 0.68rem; font-weight: 700; cursor: pointer;
+      padding: 3px 9px; font-size: 0.62rem; font-weight: 700; cursor: pointer;
+    }
+
+    /* ---- RESPONSIVIDADE (PR #5h): 1920×1080 · 1600×900 · 1366×768 ---- */
+    @media (max-height: 800px) {
+      #timeline-panel { flex-basis: 112px; padding: 4px 10px 6px; gap: 3px; }
+      .scene-chip { padding: 2px 6px; }
+      .scene-chip .chip-day { font-size: 0.62rem; }
+      .controls-row button, .controls-row select { padding: 3px 8px; font-size: 0.62rem; }
+      #whatif-panel-3d { width: 208px; }
+      #camera-hint { display: none; } /* dica só quando há espaço */
+    }
+    @media (max-width: 1500px) {
+      #whatif-panel-3d { width: 206px; }
+      #timeline-meta { display: none; } /* secundário: só em telas largas */
+    }
+    @media (max-width: 1100px) {
+      #label-right { left: calc(50% + 8px); }
+      #whatif-body { padding: 6px 8px 8px; }
     }
   </style>
 </head>
@@ -597,53 +642,91 @@
       <div id="map"></div>
     </div>
 
-    <!-- TELA 3: SIMULADOR 3D -->
+    <!-- TELA 3: SIMULADOR 3D — 3 ZONAS (PR #5h):
+         viewport dominante (Real × What-If) + faixa própria de timeline
+         ABAIXO do 3D (nunca flutua sobre o terreno). -->
     <div id="screen-3d" class="screen-view">
-      <div id="label-left" class="view-label">
-        <span class="scenario-title">🛰️ CENÁRIO REAL — OBSERVAÇÃO SATELITAL</span>
-        <span class="scenario-sub" id="status-real">carregando…</span>
+      <div id="viewport-3d">
+        <div id="label-left" class="view-label">
+          <span class="scenario-title">OBSERVAÇÃO REAL</span>
+          <span class="scenario-sub" id="status-real">carregando…</span>
+        </div>
+        <div id="label-right" class="view-label">
+          <span class="scenario-title">PROJEÇÃO WHAT-IF</span>
+          <span class="scenario-sub" id="status-sim">Projeção What-If</span>
+        </div>
+        <div class="divider-line"></div>
+
+        <!-- Overlay discreto do carregamento da cena real (fora do centro) -->
+        <div id="overlay-loading-real"><span class="spinner"></span><span id="overlay-loading-text">Carregando…</span></div>
+
+        <!-- WHAT-IF compacto: recolhível; recolhido preserva os valores -->
+        <div id="whatif-panel-3d">
+          <div id="whatif-header">
+            <span class="whatif-title">⚡ What-If</span>
+            <button id="whatif-toggle" type="button" title="Recolher/Expandir" aria-expanded="true">−</button>
+          </div>
+          <div id="whatif-body">
+            <div class="param-group">
+              <label><span>Adubação (N)</span><strong id="val-3d-n">+0 kg/ha</strong></label>
+              <input type="range" id="slider-3d-n" min="-50" max="150" step="10" value="0">
+            </div>
+            <div class="param-group">
+              <label><span>Irrigação</span><strong id="val-3d-w">+0 mm</strong></label>
+              <input type="range" id="slider-3d-w" min="-30" max="60" step="5" value="0">
+            </div>
+            <div class="param-group">
+              <label><span>Pragas</span><strong id="val-3d-p">0%</strong></label>
+              <input type="range" id="slider-3d-p" min="0" max="60" step="5" value="0">
+            </div>
+            <div class="sim-result-box">
+              <span>Vigor: <strong id="sim-3d-ndvi">NDVI +0.00</strong></span>
+              <span>Produtividade: <strong id="sim-3d-yield">+0.0 sc/ha</strong></span>
+              <span>Impacto: <strong id="sim-3d-finance">R$ 0,00</strong></span>
+            </div>
+          </div>
+        </div>
+        <!-- Aba lateral única quando o painel está recolhido -->
+        <button id="whatif-tab" type="button" style="display:none;">⚡ What-If</button>
+
+        <!-- METADADOS COMPACTOS (canto inferior esquerdo, ≤ ~25% da largura):
+             1 linha + [Detalhes] (modal em drawer); resumo padrão. -->
+        <div id="metadata-panel">
+          <div id="metadata-summary">
+            <span id="prov-summary">aguardando dados…</span>
+            <button id="prov-toggle" type="button">Detalhes</button>
+          </div>
+          <div id="prov-details">
+            <pre id="prov-lines">—</pre>
+          </div>
+          <div id="dem-line" class="dem-line">DEM: consultando…</div>
+        </div>
+
+        <!-- Dica mínima de navegação (não tutorial) -->
+        <div id="camera-hint">Arraste para orbitar · Scroll para zoom</div>
+
+        <!-- Erro compacto de cena (local, com retry manual) -->
+        <div id="error-toast">
+          <span id="error-text">Não foi possível carregar a cena.</span>
+          <button id="error-retry" type="button">Tentar novamente</button>
+        </div>
+
+        <div id="canvas-container"></div>
       </div>
-      <div id="label-right" class="view-label">
-        <span class="scenario-title">🧪 CENÁRIO SIMULADO — PROJEÇÃO WHAT-IF</span>
-        <span class="scenario-sub" id="status-sim">Projeção What-If</span>
-      </div>
-      <div class="divider-line"></div>
 
-      <!-- Overlay discreto do carregamento da cena real (fora do centro) -->
-      <div id="overlay-loading-real"><span class="spinner"></span><span id="overlay-loading-text">Carregando…</span></div>
-
-      <div id="whatif-panel-3d">
-        <h4>⚡ Parâmetros What-If</h4>
-        <div class="param-group">
-          <label><span>Adubação Nitrogenada (N)</span><strong id="val-3d-n">+0 kg/ha</strong></label>
-          <input type="range" id="slider-3d-n" min="-50" max="150" step="10" value="0">
-        </div>
-        <div class="param-group">
-          <label><span>Lâmina de Irrigação</span><strong id="val-3d-w">+0 mm</strong></label>
-          <input type="range" id="slider-3d-w" min="-30" max="60" step="5" value="0">
-        </div>
-        <div class="param-group">
-          <label><span>Pressão de Pragas</span><strong id="val-3d-p">0%</strong></label>
-          <input type="range" id="slider-3d-p" min="0" max="60" step="5" value="0">
-        </div>
-
-        <div class="sim-result-box">
-          • Vigor: <strong id="sim-3d-ndvi" style="color:#7ee787;">NDVI +0.00</strong><br>
-          • Ganho: <strong id="sim-3d-yield" style="color:#58a6ff;">+0.0 sc/ha</strong><br>
-          • Financeiro: <strong id="sim-3d-finance" style="color:#f0f6fc;">R$ 0,00</strong>
-        </div>
-      </div>
-
-      <!-- PR #5f — TIMELINE SENTINEL-2 abaixo do 3D: períodos, "Mais recente"
-           e UM BOTÃO POR CENA STAC REAL (scroll horizontal + setas). -->
+      <!-- TIMELINE SENTINEL-2 — faixa PRÓPRIA abaixo do viewport (PR #5h):
+           1ª linha: título/estado · Período [30d][60d][90d][6m][1a] · cenas;
+           2ª linha: ▶ Play · 1,6s · NDVI · Relevo 1×2×3×5× · Resetar.
+           Semântica cronológica e identidade por data PRESERVADAS. -->
       <div id="timeline-panel">
-        <div id="timeline-title-row">
-          <span id="timeline-title">🛰️ TIMELINE SENTINEL-2</span>
+        <div class="timeline-row">
+          <span id="timeline-title">TIMELINE SENTINEL-2</span>
+          <span id="timeline-meta"></span>
           <span id="load-indicator"><span class="spinner"></span><span id="load-indicator-text">Carregando…</span></span>
           <span id="preload-status" hidden></span>
-          <span id="timeline-meta"></span>
         </div>
-        <div id="timeline-period-row">
+        <!-- Linha 1 (conteúdo): Período + cenas (mais antiga → mais recente) -->
+        <div class="timeline-row">
           <span class="tl-label">Período:</span>
           <span id="period-pills"></span>
           <span id="custom-period-row" hidden>
@@ -651,63 +734,37 @@
             <input type="date" id="custom-end">
             <button id="custom-apply" type="button">Aplicar</button>
           </span>
-        </div>
-        <div id="timeline-scenes-row">
           <button id="btn-latest" type="button" title="Selecionar a aquisição válida mais recente do catálogo">⇥ Mais recente</button>
           <button id="tl-prev" class="tl-arrow" type="button" title="Cenas anteriores" aria-label="Cenas anteriores">‹</button>
           <div id="scene-timeline" aria-label="Cenas Sentinel-2 reais disponíveis"></div>
           <button id="tl-next" class="tl-arrow" type="button" title="Cenas seguintes" aria-label="Cenas seguintes">›</button>
         </div>
-        <div id="ui-panel-3d">
-          <button id="play-btn">▶ Play</button>
-          <span id="date-label" style="font-size:0.78rem; font-weight:bold; min-width:76px; text-align:center;">—</span>
+        <div class="timeline-row controls-row">
+          <button id="play-btn" type="button">▶ Play</button>
           <select id="play-interval" title="Pausa entre cenas do Play">
             <option value="1000">1 s</option>
             <option value="1600" selected>1,6 s</option>
             <option value="3000">3 s</option>
             <option value="5000">5 s</option>
           </select>
-          <select id="layer-select">
+          <select id="layer-select" title="Camada espectral">
             <option value="rgb">RGB</option>
             <option value="ndvi">NDVI</option>
             <option value="evi">EVI</option>
             <option value="ndre">NDRE</option>
             <option value="ndmi">NDMI</option>
           </select>
-          <button id="btn-reset-camera" type="button" title="Reenquadrar o talhão na vista oblíqua padrão">⟲ Resetar visão</button>
+          <span class="tl-label">Relevo</span>
+          <span class="exag-row">
+            <button class="exag-btn" type="button" data-exag="1">1×</button>
+            <button class="exag-btn active" type="button" data-exag="2">2×</button>
+            <button class="exag-btn" type="button" data-exag="3">3×</button>
+            <button class="exag-btn" type="button" data-exag="5">5×</button>
+          </span>
+          <button id="btn-reset-camera" type="button" title="Reenquadrar o talhão na vista oblíqua padrão">⟲ Resetar</button>
           <input type="range" id="timeline-slider" min="0" max="12" value="0" step="1" style="display:none;">
         </div>
       </div>
-
-      <!-- METADADOS COMPACTOS (PR #5d): 1 linha + Detalhes retrátil.
-           Nunca fica sobre o terreno em tamanho grande. -->
-      <div id="metadata-panel">
-        <div id="metadata-summary">
-          <span id="prov-summary">aguardando dados…</span>
-          <button id="prov-toggle" type="button">Detalhes</button>
-        </div>
-        <div id="prov-details">
-          <pre id="prov-lines">—</pre>
-        </div>
-        <!-- Rodapé discreto: elevação NUNCA compete com os status principais -->
-        <div id="dem-line" class="dem-line">DEM: consultando…</div>
-        <div id="dem-exag-row" hidden>
-          <span id="elevation-line">Elevação real: —</span>
-          <span>Exagero visual:</span>
-          <button class="exag-btn" type="button" data-exag="1">1×</button>
-          <button class="exag-btn active" type="button" data-exag="2">2×</button>
-          <button class="exag-btn" type="button" data-exag="3">3×</button>
-          <button class="exag-btn" type="button" data-exag="5">5×</button>
-        </div>
-      </div>
-
-      <!-- Erro compacto de cena (com retry manual — não bloqueia o 3D) -->
-      <div id="error-toast">
-        <span id="error-text">Não foi possível carregar a cena.</span>
-        <button id="error-retry" type="button">Tentar novamente</button>
-      </div>
-
-      <div id="canvas-container"></div>
     </div>
 
   </main>
@@ -936,14 +993,12 @@
         const yearLine = document.createElement('span');
         yearLine.className = 'chip-year';
         yearLine.innerText = chip.subLabel;
-        const badge = document.createElement('span');
-        badge.className = 'chip-badge';
-        badge.innerText = 'ATUAL';
+        // PR #5h: chip azul ÚNICO = data aplicada (sem badge extra simultâneo);
+        // o ano fica na 2ª linha do próprio chip e o ponto indica o estado.
         const dot = document.createElement('span');
         dot.className = 'state-dot';
         btn.appendChild(dayLine);
         btn.appendChild(yearLine);
-        btn.appendChild(badge);
         btn.appendChild(dot);
         btn.onclick = () => selectDateIndex(chip.idx);
         scroller.appendChild(btn);
@@ -2332,7 +2387,7 @@
      * Proveniência COMPACTA (1 linha) — o painel grande virou "Detalhes".
      * Nunca afirma ser Sentinel sem `data_origin === 'sentinel'`.
      */
-    function provenanceSummary(meta) {
+    function provenanceSummary(meta, dem) {
       if (!meta) return 'aguardando dados…';
       const isReal = meta.data_origin === 'sentinel' &&
         (meta.real_data_status === undefined || meta.real_data_status === null || meta.real_data_status === 'ok');
@@ -2340,7 +2395,9 @@
         const date = formatSceneDate(meta.acquisition_date || meta.date);
         const cc = (typeof meta.cloud_cover === 'number')
           ? `${meta.cloud_cover.toFixed(1).replace('.', ',')}%` : '—';
-        return `Sentinel-2 L2A • ${date} • Nuvens ${cc}`;
+        const demTxt = (dem && typeof dem.min === 'number' && typeof dem.max === 'number')
+          ? ` • DEM ${dem.min}–${dem.max} m` : '';
+        return `Sentinel-2 L2A • ${date} • Nuvens ${cc}${demTxt}`;
       }
       if (meta.real_data_status === 'not_configured') return 'DADOS SATELITAIS REAIS NÃO CONFIGURADOS';
       if (meta.real_data_status === 'no_scene') return 'Sem cena Sentinel-2 na janela • aproximado';
@@ -2349,7 +2406,7 @@
     }
 
     /** Detalhes da proveniência (usados no drawer "Detalhes"). */
-    function provenanceDetailLines(meta) {
+    function provenanceDetailLines(meta, dem) {
       if (!meta) return ['aguardando dados…'];
       const isReal = meta.data_origin === 'sentinel' &&
         (meta.real_data_status === undefined || meta.real_data_status === null || meta.real_data_status === 'ok');
@@ -2360,6 +2417,14 @@
       const cc = (typeof meta.cloud_cover === 'number') ? `${meta.cloud_cover.toFixed(1)}%` : '—';
       const vpp = (typeof meta.valid_pixel_percentage === 'number')
         ? `${meta.valid_pixel_percentage.toFixed(1)}%` : '—';
+      // DEM entra apenas quando carregado (resumo c/ min–max; detalhes técnicos
+      // no drawer): `dem` é o payload PURA de buildDemSummaryForUI.
+      const demLines = dem && typeof dem.min === 'number' ? [
+        `DEM fonte: ${dem.source || 'desconhecida'}`,
+        `Elevação real: ${dem.min}–${dem.max} m • alívio ~${dem.relief.toFixed(0)} m`,
+        `Escala: 1:1 horizontal (${(typeof dem.unitsPerMeter === 'number' ? dem.unitsPerMeter : 0).toFixed(4)} u/m)`,
+        `Exagero visual: ${dem.exaggeration || 1}×`,
+      ] : [];
       return [
         `Aquisição: ${acq}`,
         `Nuvens: ${cc}`,
@@ -2370,6 +2435,7 @@
         `Pixels válidos: ${vpp}`,
         `Seleção: ${String(meta.selection_reason || '—').toUpperCase()}`,
         `Fornecedor: ${meta.provider || 'Copernicus Data Space Ecosystem'}`,
+        ...demLines,
       ];
     }
 
@@ -2429,11 +2495,11 @@
       el.innerText = date ? `Projeção What-If • base ${date}` : 'Projeção What-If';
     }
 
-    function renderProvenanceSummary(meta) {
+    function renderProvenanceSummary(meta, dem) {
       const el = document.getElementById('metadata-summary');
       const txt = document.getElementById('prov-summary');
       if (!el || !txt) return;
-      txt.innerText = provenanceSummary(meta);
+      txt.innerText = provenanceSummary(meta, dem);
       const origin = meta && (meta.data_origin || (meta.type === 'native' ? 'sentinel' : 'procedural'));
       const status = meta && meta.real_data_status;
       el.className = origin === 'sentinel' ? 'metadata-summary real' : (
@@ -2441,10 +2507,10 @@
       );
     }
 
-    function renderProvenanceDetails(meta) {
+    function renderProvenanceDetails(meta, dem) {
       const el = document.getElementById('prov-lines');
       if (!el) return;
-      el.innerText = provenanceDetailLines(meta).join('\n');
+      el.innerText = provenanceDetailLines(meta, dem).join('\n');
     }
 
     function setDemLine(kind, text) {
@@ -3014,17 +3080,17 @@
       return ok;
     }
 
-    /** Atualiza o rótulo discreto de elevação real + exagero visual. */
+    /** Atualiza o rótulo discreto de elevação real + exagero visual (PR #5h). */
     function updateElevationUI() {
-      const line = document.getElementById('elevation-line');
-      if (line) {
-        // PR #5g: valores REAIS preservados; o relevo RELATIVO começa em 0.
-        line.innerText = demInfo
-          ? `Elevação real: ${demInfo.min}–${demInfo.max} m • relevo relativo: 0–${demInfo.relief.toFixed(0)} m • exagero ${demExaggeration}×`
-          : 'Elevação aproximada (DEM indisponível)';
+      const line = document.getElementById('dem-line');
+      if (line && demInfo) {
+        line.className = 'dem-line ok';
+        line.innerText = `DEM ${(demInfo.source || 'unknown').replace(/_/g, ' ').toUpperCase()} • ` +
+          `${demInfo.min}–${demInfo.max} m • alívio ~${demInfo.relief.toFixed(0)} m • exagero ${demExaggeration}×`;
+      } else if (line) {
+        line.className = 'dem-line warn';
+        line.innerText = 'DEM: indisponível • Elevação aproximada';
       }
-      const row = document.getElementById('dem-exag-row');
-      if (row) row.hidden = false;
       document.querySelectorAll('.exag-btn').forEach(btn => {
         btn.classList.toggle('active', Number(btn.getAttribute('data-exag')) === demExaggeration);
       });
@@ -3083,6 +3149,7 @@
         bakeDemGeometry();
         updateElevationUI();
         setDemLine('warn', 'DEM: indisponível • Elevação aproximada');
+        refreshProvenanceAfterDem();
         fitCameraToTerrain();
         return;
       }
@@ -3139,6 +3206,7 @@
           'ok',
           `DEM: ${sourceLabel} • ${info.min_elevation_m}–${info.max_elevation_m} m • alívio ~${relief.toFixed(0)} m • escala 1:1 (${worldUnitsPerMeterHorizontal.toFixed(4)} u/m)`
         );
+        refreshProvenanceAfterDem();
         console.info(`DEM ${sourceLabel}: relevo real ativo (alívio ~${relief.toFixed(0)} m, ${info.min_elevation_m}–${info.max_elevation_m} m)`);
         // PR #5f/#5g — o relevo muda o bounding box; reenquadra (mantém ângulo)
         // com a câmera no meio do volume (topo + lateral visíveis).
@@ -3158,6 +3226,7 @@
         bakeDemGeometry();
         updateElevationUI();
         setDemLine('warn', 'DEM: falha ao aplicar • Elevação aproximada');
+        refreshProvenanceAfterDem();
       }
     }
 
@@ -3287,6 +3356,42 @@
       const playing = player.mode === 'playing';
       btn.innerText = playing ? '⏸ Pause' : '▶ Play';
       btn.classList.toggle('playing', playing);
+    }
+
+    /** Re-renderiza resumo+detralhes da proveniência quando o DEM chega. */
+    function refreshProvenanceAfterDem() {
+      if (!player || !player.appliedMeta) return;
+      const dem = buildDemSummaryForUI();
+      renderProvenanceSummary(player.appliedMeta, dem);
+      renderProvenanceDetails(player.appliedMeta, dem);
+    }
+
+    /**
+     * WHAT-IF RECOLHÍVEL (PR #5h): ao recolher vira a aba [⚡ What-If]; como a
+     * função troca APENAS `display`, os valores dos sliders/resultados ficam
+     * INTACTOS e reabrem exatamente onde estavam.
+     */
+    function setWhatIfCollapsed(collapsed) {
+      const panel = document.getElementById('whatif-panel-3d');
+      const tab = document.getElementById('whatif-tab');
+      const toggle = document.getElementById('whatif-toggle');
+      const c = !!collapsed;
+      if (panel) panel.style.display = c ? 'none' : '';
+      if (tab) tab.style.display = c ? '' : 'none';
+      if (toggle) toggle.setAttribute('aria-expanded', String(!c));
+    }
+
+    /** Payload PURA do DEM p/ proveniência (nunca sugere dados fora do meta). */
+    function buildDemSummaryForUI() {
+      if (typeof demInfo === 'undefined' || !demInfo) return null;
+      return {
+        source: demInfo.source,
+        min: demInfo.min,
+        max: demInfo.max,
+        relief: demInfo.relief,
+        unitsPerMeter: (typeof worldUnitsPerMeterHorizontal !== 'undefined') ? worldUnitsPerMeterHorizontal : null,
+        exaggeration: (typeof demExaggeration !== 'undefined') ? demExaggeration : null,
+      };
     }
 
     function updateTimelineUI(index) {
@@ -3471,8 +3576,8 @@
       updateTimelineUI(index);
       setLoadingIndicator(false);
       setSceneOverlay(false);
-      renderProvenanceSummary(meta);
-      renderProvenanceDetails(meta);
+      renderProvenanceSummary(meta, buildDemSummaryForUI());
+      renderProvenanceDetails(meta, buildDemSummaryForUI());
       setScenarioStatus(meta);
       setSimScenarioStatus(lastSimBaseMeta);
       renderSimulatedTexture();
@@ -3991,6 +4096,21 @@
       console.warn('[3D-DEBUG] modo debug3d ATIVO (wireframe/bbox/eixos/estatísticas)');
     }
     initDebug3D();
+
+    // =====================================================================
+    // PR #5h — WHAT-IF RECOLHÍVEL: ao recolher vira a aba [⚡ What-If]; os
+    // VALORES dos sliders/resultados são preservados (o DOM dos inputs nunca
+    // é alterado) e reabre exatamente onde estava.
+    // =====================================================================
+    const whatifToggleBtn = document.getElementById('whatif-toggle');
+    if (whatifToggleBtn) {
+      whatifToggleBtn.addEventListener('click', () => {
+        const panel = document.getElementById('whatif-panel-3d');
+        setWhatIfCollapsed(!(panel && panel.style.display === 'none'));
+      });
+    }
+    const whatifTabBtn = document.getElementById('whatif-tab');
+    if (whatifTabBtn) whatifTabBtn.addEventListener('click', () => setWhatIfCollapsed(false));
 
     loadActiveFarm();
   </script>
