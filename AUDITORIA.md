@@ -858,3 +858,75 @@ Executada em **08/09/2026** antes da implementação do serviço CDSE:
 - Endpoints: `real_data_error` exposto no JSON da textura e `stac_detail` em `/api/talhao/{id}/dates`.
 - Script `test_cdse_connection.py` distingue STAC OK COM CENAS / OK SEM CENAS / ERRO HTTP / ERRO PAYLOAD e PROCESS OK / HTTP 4xx-5xx, mostrando o motivo seguro do provedor.
 - Testes novos (Fase 7, sem rede): payload STAC real (bbox em ordem, `collections`, `datetime` RFC3339, GeoJSON `[lon,lat]`), payload Process S2/DEM, datetime inválido → janela até hoje, STAC vazio ≠ STAC erro, parsing de 400 (corpo+Content-Type), 401 sem corpo, sanitização de credenciais, `real_data_error` no pipeline. **253 passed, 1 skipped, 0 failed.**
+
+## Anexo E — UI limpa + sincronização assíncrona do Simulador 3D (PR #5d, 09/09/2026)
+
+**Objetivo:** corrigir a UX do Split-View (painéis competindo com o terreno, proveníência
+enorme, DEM em faixa central, avanço da timeline durante loading sem nenhuma garantia de
+aplicação) e tornar o carregamento assíncrono determinístico e race-safe.
+
+### E1 — UI reorganizada (hierarquia: terreno > cenários > timeline > layer > What-If > metadados)
+
+| Antes | Depois |
+|-------|--------|
+| 3 faixas de status sobre o terreno (textura, DEM, proveniência grande fixa) | **1 status discreto por cenário** (REAL ▸ `Sentinel-2 L2A • dados reais`; SIMULADO ▸ `Projeção What-If • base <data>`) em coluna título+subtítulo |
+| Proveniência em painel fixo grande | **1 linha** `Sentinel-2 L2A • 15/08/2026 • Nuvens 2,0%` + botão **"Detalhes"** (drawer retrátil: Aquisição, Nuvens, Satélite, Produto, ID do item, Bandas, Pixels válidos, Seleção, Fornecedor) |
+| DEM em faixa central de status | linha discreta no rodapé do painel de metadados (`DEM: COPERNICUS_30 • 592–615 m • alívio ~23 m`) |
+| — | spinner pequeno **junto à timeline** (`Carregando 31/07/2026…`) + overlay discreto no cenário real |
+| — | toast compacto de erro com **"Tentar novamente"** (não bloqueia o 3D) |
+
+### E2 — Máquina de estados e concorrência (helpers PUROS, extraídos e testados em VM Node)
+
+- `createTimelineMachine(initialIndex, count)` → `{mode, status, count, appliedIndex,
+  appliedLayer, appliedMeta, pendingIndex, pendingLayer, error, resumeAfterLayer}`.
+- `createSceneLoadGate()` → `{beginLoad, isCurrent, currentGeneration, invalidate}` (generationId).
+- `playerPlay/Pause/StartLoad/FinishLoad/CancelLoad/CanAdvance/NextIndex/BeginLayerSwap`.
+- **Regra de ouro:** `playerFinishLoad(ok)` é o ÚNICO ponto que muda `appliedIndex/appliedLayer/appliedMeta`
+  → data principal = imagem efetivamente aplicada; resposta atrasada (gen antigo) é descartada.
+- **Fluxo:** CARREGAR (status=loading, AbortController + gate) → APLICAR (commit + proveniência +
+  What-If a partir do MESMO meta) → ESPERAR (intervalo 1,6 s) → PRÓXIMA (só se `playing && ready`).
+- **Erro:** `status=error` + `mode=paused` (pausa automática) → toast com retry; **Play também é
+  retry**. Timeout de 75 s NÃO é tratado como cancelamento: vira erro recuperável.
+- **Pause durante loading:** aborta/invalida; reverte o select de layer se a troca estava no ar;
+  continua com a cena aplicada e NÃO retoma sozinho.
+- **Layer swap:** congela avanço (`status=loading`), preserva intenção de Play
+  (`resumeAfterLayer`), retoma após aplicar.
+- **Abort não aplica fallback:** `loadTextureOrFallback` relança `AbortError` — cancelamento
+  jamais troca o material da cena aplicada.
+- **What-If sincronizado:** `baseTextureForSim`/`lastSimBaseMeta` só mudam no COMMIT; Real e
+  Simulado nunca se misturam por resposta atrasada.
+
+### E3 — Testes
+
+- `tests/test_3d_player_state.py` (novo, VM Node, 1 teste com 10 blocos de asserção):
+  Play não avança durante loading; data só muda após aplicar; generationId descarta antiga;
+  Pause durante loading; troca manual invalida; layer swap congelando/retomando; falha →
+  error+pause+retry; Real/What-If sincronizados; metadados = textura aplicada; status
+  real/fallback + proveniência compacta e Detalhes (9 linhas).
+- `tests/test_3d_load_scene_wiring.py` (novo, VM Node — wiring REAL do `index.html`,
+  `loadScene`/`selectDateIndex`/`setSpectralLayer`/`pauseTimelinePlay` com fetch controlado
+  e DOM mínimo): commit só após conclusão do fetch; resposta atrasada descartada sem
+  sobrescrever; Pause cancela e não aplica tardia; falha HTTP → toast+retry recuperável;
+  layer swap retoma Play; What-If a partir do meta do COMMIT.
+- `tests/test_frontend_3d_pipeline.py`: bloco UX incluído na VM (pipeline usa `isAbortError`).
+- Suíte completa: **255 passed, 1 skipped, 0 failed** (1 skip = dataset Sentinel-2 fora do git).
+- Playtest manual (navegador + backend real, com/ sem CDSE): ver item E4.
+
+### E4 — Playtest manual (pós-merge)
+
+1. Abrir **Simulador 3D Split-View** → label REAL mostra status/fallback em 1 linha; DEM só no
+   rodapé dos metadados; nada de painel grande sobre o terreno.
+2. **Play**: com botão em "⏸ Pause", a timeline NÃO muda até a cena aplicar; aparece
+   `Carregando <data>…` no spinner; `date-label` só muda após aplicar.
+3. **Pause durante loading** → para imediatamente; data permanece a última aplicada; Play não
+   retoma sozinho; Play reinicia da data aplicada.
+4. **Troca manual** de data/pílula durante loading → cancela a anterior; a resposta atrasada não
+   substitui a escolha.
+5. **RGB/NDVI/EVI/NDRE/NDMI** → timeline congelada durante a troca; proveniência atualiza; Play
+   retoma se estava ativo.
+6. **Falha** (desligar backend / data sem cena) → toast + pausa; "Tentar novamente" recupera;
+   nunca muda de data sozinho.
+7. **What-If** → lado direito com base na MESMA data/layer aplicada à esquerda.
+8. **Metadados** → "Detalhes" abre 9 linhas; DEM no rodapé; botão "Fechar".
+
+**Status: PRONTO PARA PLAYTEST HUMANO.** Sem merge; branch `arena/01a083cd-simulador-talhao2`.

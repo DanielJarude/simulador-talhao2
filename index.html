@@ -184,38 +184,97 @@
     }
     #ui-panel-3d select { background: #21262d; border: 1px solid #30363d; }
 
-    /* ESTADOS DO SIMULADOR 3D (PR #4 — sem terreno branco silencioso) */
-    .status-3d {
-      position: absolute; bottom: 92px; left: 50%; transform: translateX(-50%);
-      z-index: 40; padding: 7px 16px; border-radius: 8px; font-size: 0.78rem;
-      font-weight: 700; letter-spacing: 0.03em; max-width: 92%;
-      background: rgba(13, 17, 23, 0.92); border: 1px solid #30363d; color: #8b949e;
-      text-align: center; display: none; backdrop-filter: blur(8px);
+    /* =====================================================================
+       UX SIMULADOR 3D (PR #5d): hierarquia = terreno > Real×What-If >
+       timeline > layer > What-If > metadados. Sem painéis centrais grandes;
+       um único status discreto por cenário + metadados retráteis.
+       ===================================================================== */
+    #label-left, #label-right {
+      display: flex; flex-direction: column; gap: 2px;
+      padding: 6px 12px; border-radius: 6px; min-width: 168px; max-width: 260px;
     }
-    .status-3d.visible { display: block; }
-    .status-3d.loading { color: #58a6ff; border-color: #1f6feb; }
-    .status-3d.ok { color: #7ee787; border-color: #2ea043; }
-    .status-3d.warn { color: #e3b341; border-color: #d29922; background: rgba(38, 33, 23, 0.94); }
-    .status-3d.error { color: #ff7b72; border-color: #da3633; background: rgba(43, 24, 27, 0.94); }
-    #status-dem-3d { bottom: 122px; }
-    #data-source-badge {
-      position: absolute; top: 40px; left: 16px; z-index: 26;
-      padding: 4px 10px; border-radius: 6px; font-size: 0.72rem; font-weight: 700;
-      background: rgba(22, 27, 34, 0.92); border: 1px solid #30363d; color: #8b949e;
+    .scenario-title { font-size: 0.72rem; font-weight: 800; letter-spacing: 0.06em; }
+    .scenario-sub { font-size: 0.68rem; font-weight: 600; opacity: 0.92; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #label-left .scenario-sub.real { color: #7ee787; }
+    #label-left .scenario-sub.approx { color: #e3b341; }
+    #label-left .scenario-sub.no-config { color: #ffa657; }
+    #label-right .scenario-sub { color: #e3b341; }
+
+    /* Spinner e indicador de carregamento (junto à timeline — não central) */
+    .spinner {
+      display: inline-block; width: 13px; height: 13px; border-radius: 50%;
+      border: 2px solid rgba(88, 166, 255, 0.35); border-top-color: #58a6ff;
+      animation: spin 0.8s linear infinite; vertical-align: -2px; margin-right: 6px;
     }
-    #data-source-badge.real { color: #7ee787; border-color: #2ea043; }
-    #data-source-badge.approx { color: #e3b341; border-color: #d29922; }
-    #data-source-badge.unavailable { color: #ff7b72; border-color: #da3633; }
-    #provenance-3d {
-      position: absolute; top: 76px; left: 16px; z-index: 26; max-width: 320px;
-      padding: 6px 10px; border-radius: 6px; font-size: 0.7rem; font-weight: 600;
-      background: rgba(22, 27, 34, 0.92); border: 1px solid #30363d; color: #8b949e;
-      line-height: 1.5;
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #load-indicator {
+      display: none; align-items: center; font-size: 0.72rem; font-weight: 600;
+      color: #58a6ff; white-space: nowrap;
     }
-    #provenance-3d .prov-title { color: #58a6ff; font-weight: 800; letter-spacing: 0.05em; }
-    #provenance-3d .prov-real { color: #7ee787; }
-    #provenance-3d .prov-fallback { color: #e3b341; }
-    #provenance-3d pre { margin: 4px 0 0 0; font-family: inherit; white-space: pre-wrap; }
+    #load-indicator.visible { display: inline-flex; }
+
+    /* Overlay discreto sobre o cenário REAL durante carregamento */
+    #overlay-loading-real {
+      position: absolute; top: 58px; left: 16px; z-index: 36; display: none;
+      align-items: center; gap: 7px; padding: 5px 10px; border-radius: 6px;
+      font-size: 0.68rem; font-weight: 700; color: #58a6ff;
+      background: rgba(22, 27, 34, 0.88); border: 1px solid #1f6feb;
+      backdrop-filter: blur(8px); pointer-events: none;
+    }
+    #overlay-loading-real.visible { display: inline-flex; }
+
+    /* Metadados COMPACTOS (bottom-left): 1 linha resumo + botão Detalhes.
+       O painel expandido é um drawer que sobe — nunca fica fixo sobre o terreno. */
+    #metadata-panel {
+      position: absolute; bottom: 84px; left: 16px; z-index: 34; max-width: 400px;
+      background: rgba(22, 27, 34, 0.93); border: 1px solid #30363d;
+      border-radius: 8px; padding: 6px 10px; backdrop-filter: blur(10px);
+    }
+    #metadata-summary {
+      display: flex; align-items: center; gap: 8px; font-size: 0.72rem;
+      font-weight: 700; color: #c9d1d9; white-space: nowrap; overflow: hidden;
+    }
+    #metadata-summary .dot { color: #58a6ff; }
+    #metadata-summary.real { color: #7ee787; }
+    #metadata-summary.approx { color: #e3b341; }
+    #metadata-summary.no-config { color: #ffa657; }
+    #prov-toggle {
+      background: #21262d; color: #58a6ff; border: 1px solid #30363d;
+      border-radius: 5px; padding: 2px 8px; font-size: 0.66rem; font-weight: 700;
+      cursor: pointer; flex-shrink: 0;
+    }
+    #prov-toggle:hover { border-color: #58a6ff; }
+    #prov-details {
+      display: none; margin-top: 6px; padding-top: 6px;
+      border-top: 1px dashed #30363d; max-height: 190px; overflow-y: auto;
+    }
+    #prov-details.open { display: block; }
+    #prov-details pre {
+      margin: 0; font-family: inherit; font-size: 0.7rem; line-height: 1.55;
+      color: #8b949e; white-space: pre-wrap;
+    }
+    /* DEM = rodapé discreto do painel de metadados (fora do drawer) */
+    #dem-line {
+      margin-top: 5px; padding-top: 5px; border-top: 1px dashed #30363d;
+      font-size: 0.68rem; font-weight: 600; color: #8b949e;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    #dem-line.ok { color: #7ee787; }
+    #dem-line.warn { color: #e3b341; }
+
+    /* Erro compacto (não bloqueia a cena) */
+    #error-toast {
+      position: absolute; bottom: 84px; left: 50%; transform: translateX(-50%);
+      z-index: 45; display: none; align-items: center; gap: 10px;
+      padding: 8px 14px; border-radius: 8px; max-width: 92%;
+      background: rgba(43, 24, 27, 0.95); border: 1px solid #da3633;
+      color: #ff7b72; font-size: 0.74rem; font-weight: 700;
+    }
+    #error-toast.visible { display: inline-flex; }
+    #error-toast button {
+      background: #da3633; color: #fff; border: none; border-radius: 5px;
+      padding: 4px 10px; font-size: 0.68rem; font-weight: 700; cursor: pointer;
+    }
   </style>
 </head>
 <body>
@@ -423,9 +482,18 @@
 
     <!-- TELA 3: SIMULADOR 3D -->
     <div id="screen-3d" class="screen-view">
-      <div id="label-left" class="view-label">🛰️ CENÁRIO REAL — OBSERVAÇÃO SATELITAL</div>
-      <div id="label-right" class="view-label">🧪 CENÁRIO SIMULADO — PROJEÇÃO WHAT-IF</div>
+      <div id="label-left" class="view-label">
+        <span class="scenario-title">🛰️ CENÁRIO REAL — OBSERVAÇÃO SATELITAL</span>
+        <span class="scenario-sub" id="status-real">carregando…</span>
+      </div>
+      <div id="label-right" class="view-label">
+        <span class="scenario-title">🧪 CENÁRIO SIMULADO — PROJEÇÃO WHAT-IF</span>
+        <span class="scenario-sub" id="status-sim">Projeção What-If</span>
+      </div>
       <div class="divider-line"></div>
+
+      <!-- Overlay discreto do carregamento da cena real (fora do centro) -->
+      <div id="overlay-loading-real"><span class="spinner"></span><span id="overlay-loading-text">Carregando…</span></div>
 
       <div id="whatif-panel-3d">
         <h4>⚡ Parâmetros What-If</h4>
@@ -451,8 +519,9 @@
 
       <div id="ui-panel-3d">
         <button id="play-btn">▶ Play</button>
+        <span id="load-indicator"><span class="spinner"></span><span id="load-indicator-text">Carregando…</span></span>
         <input type="range" id="timeline-slider" min="0" max="12" value="0" step="1" style="flex:1;">
-        <span id="date-label" style="font-size:0.8rem; font-weight:bold; width:80px;">07/04/2025</span>
+        <span id="date-label" style="font-size:0.8rem; font-weight:bold; width:80px; text-align:right;">07/04/2025</span>
         <select id="layer-select">
           <option value="rgb">RGB</option>
           <option value="ndvi">NDVI</option>
@@ -462,15 +531,24 @@
         </select>
       </div>
 
-      <!-- Estados visuais do pipeline 3D (PR #4): carregando / real / aproximado / erro -->
-      <div id="status-texture-3d" class="status-3d">CARREGANDO DADOS DO TERRENO...</div>
-      <div id="status-dem-3d" class="status-3d">CARREGANDO ELEVAÇÃO...</div>
-      <div id="data-source-badge" class="unavailable">DADOS: —</div>
+      <!-- METADADOS COMPACTOS (PR #5d): 1 linha + Detalhes retrátil.
+           Nunca fica sobre o terreno em tamanho grande. -->
+      <div id="metadata-panel">
+        <div id="metadata-summary">
+          <span id="prov-summary">aguardando dados…</span>
+          <button id="prov-toggle" type="button">Detalhes</button>
+        </div>
+        <div id="prov-details">
+          <pre id="prov-lines">—</pre>
+        </div>
+        <!-- Rodapé discreto: elevação NUNCA compete com os status principais -->
+        <div id="dem-line" class="dem-line">DEM: consultando…</div>
+      </div>
 
-      <!-- PROVENIÊNCIA (PR #4b): satélite/produto/data/nuvens/real vs aproximado -->
-      <div id="provenance-3d">
-        <span class="prov-title">🛰️ PROVENIÊNCIA</span>
-        <pre id="prov-lines">aguardando dados…</pre>
+      <!-- Erro compacto de cena (com retry manual — não bloqueia o 3D) -->
+      <div id="error-toast">
+        <span id="error-text">Não foi possível carregar a cena.</span>
+        <button id="error-retry" type="button">Tentar novamente</button>
       </div>
 
       <div id="canvas-container"></div>
@@ -525,19 +603,27 @@
       });
     }
 
+    /**
+     * Seleção MANUAL de data (pílula do dashboard / slider):
+     * - cancela/invalida qualquer carregamento anterior;
+     * - carrega APENAS a data escolhida;
+     * - a timeline (currentIndex) só muda quando a cena está APLICADA.
+     */
     function selectDateIndex(idx) {
-      currentIndex = idx;
-      document.getElementById('timeline-slider').value = idx;
-      
-      document.querySelectorAll('.date-pill').forEach(el => el.classList.remove('active'));
-      const activePill = document.getElementById(`date-pill-${idx}`);
-      if (activePill) activePill.classList.add('active');
-
-      updateZoneCards(currentIndex);
-      updateTextures();
+      const safe = Math.max(0, Math.min(Number(idx) || 0, dates.length - 1));
+      hideErrorToast();
+      loadScene(safe, currentLayer, { fromUser: true });
     }
 
+    /**
+     * Troca de layer (RGB/NDVI/EVI/NDRE/NDMI):
+     * - congela a timeline (não avança enquanto carrega);
+     * - carrega na data JÁ APLICADA;
+     * - retoma o Play somente após aplicar (se já estava ativo).
+     */
     function setSpectralLayer(layer) {
+      if (!layer || layer === currentLayer) return;
+      if (typeof player === 'undefined' || !player) player = createTimelineMachine(currentIndex, dates.length);
       currentLayer = layer;
       document.getElementById('layer-select').value = layer;
 
@@ -548,7 +634,7 @@
       if (layer === 'rgb') {
         // RGB (true color) é VISUALIZAÇÃO: não há zonamento estatístico.
         analyticsTimelineCache = [];
-        const d = (dates[currentIndex] || '').split('-').reverse().join('/');
+        const d = (dates[player.appliedIndex] || '').split('-').reverse().join('/');
         document.getElementById('kpi-mean-index').innerText = 'RGB — true color';
         document.getElementById('kpi-mean-date').innerText = `Passagem ${d}`;
         document.getElementById('zone-selected-date-badge').innerText = `Data: ${d}`;
@@ -559,7 +645,10 @@
       } else {
         loadAnalyticsData();
       }
-      updateTextures();
+      hideErrorToast();
+      // Congela avanço automático durante a troca (preserva intenção de Play).
+      playerBeginLayerSwap(player, layer);
+      loadScene(player.appliedIndex, layer, { layerSwap: true });
     }
 
     function downloadPDFReport() {
@@ -677,13 +766,13 @@
         if (!res.ok) return;
         const data = await res.json();
         if (data.source === 'sentinel-cdse' && Array.isArray(data.dates) && data.dates.length > 0) {
-          const prevIdx = Math.min(currentIndex, dates.length - 1);
+          // Preserva a cena APLICADA (player) ao trocar para o calendário real.
+          const prevApplied = player.appliedIndex;
           dates = data.dates;
-          currentIndex = Math.min(prevIdx, dates.length - 1);
+          player = createTimelineMachine(Math.min(prevApplied, dates.length - 1), dates.length);
           document.getElementById('timeline-slider').max = dates.length - 1;
-          document.getElementById('timeline-slider').value = currentIndex;
           renderDatePills();
-          selectDateIndex(currentIndex);
+          selectDateIndex(player.appliedIndex);
           console.info(`timeline: ${dates.length} passagens reais Sentinel-2 carregadas`);
         }
       } catch (err) {
@@ -954,7 +1043,7 @@
       }
     }
 
-    function getCachedTexture(key, url) {
+    function getCachedTexture(key, url, signal = undefined) {
       const hit = textureCache.get(key);
       if (hit) {
         textureCache.delete(key);   // MRU: atualiza a ordem de acesso
@@ -1019,7 +1108,7 @@
         }
 
         const token = localStorage.getItem('orion_auth_token');
-        fetch(url, { headers: token ? { 'Authorization': `Bearer ${token}` } : {} })
+        fetch(url, { headers: token ? { 'Authorization': `Bearer ${token}` } : {}, signal })
           .then((res) => {
             if (res.status === 401) {
               AuthService.logout();
@@ -1062,63 +1151,259 @@
     // MeshStandardMaterial é branco → terreno branco silencioso).
     // =====================================================================
 
-    // ---------- Estados visuais ----------
-    function set3DStatus(kind, message, domId = 'status-texture-3d') {
-      const el = document.getElementById(domId);
-      if (!el) return;
-      if (!message) { el.className = 'status-3d'; el.classList.remove('visible'); return; }
-      el.className = `status-3d visible ${kind}`;
-      el.innerText = message;
-    }
+    // =====================================================================
+    // [3D-UX-HELPERS-START] — máquina de estados + formatação (PUROS, testáveis)
+    // Regras (PR #5d):
+    //  - timeline só avança DEPOIS de carregar/aplicar (LOADING → READY → intervalo);
+    //  - respostas atrasadas/antigas são descartadas via generationId (race-safe);
+    //  - erro → PAUSA automática + retry manual (nunca pula cena silenciosamente);
+    //  - troca de layer congela a timeline e retoma o Play se já estava ativo.
+    // =====================================================================
 
-    function setDataSourceBadge(kind, message) {
-      const el = document.getElementById('data-source-badge');
-      if (!el) return;
-      el.className = kind;
-      if (kind === 'real') el.innerText = '🛰️ DADOS: SENTINEL-2 L2A REAL';
-      else if (kind === 'approx') el.innerText = 'DADOS: VISUALIZAÇÃO APROXIMADA';
-      else if (kind === 'not_configured') {
-        el.innerText = message || 'DADOS SATELITAIS REAIS NÃO CONFIGURADOS';
-      }
-      else el.innerText = 'DADOS: INDISPONÍVEL';
+    /** Gate de concorrência: cada `beginLoad()` invalida os carregamentos anteriores. */
+    function createSceneLoadGate() {
+      let generation = 0;
+      return {
+        beginLoad() { generation += 1; return generation; },
+        isCurrent(gen) { return gen === generation; },
+        currentGeneration() { return generation; },
+        invalidate() { generation += 1; },
+      };
     }
 
     /**
-     * Painel de PROVENIÊNCIA (PR #4b): satélite/sensor, produto, data de
-     * aquisição, nuvens, bandas, % pixels válidos e REAL vs APROXIMADO.
-     * Nunca afirma ser Sentinel sem o backend dizer `data_origin=sentinel`.
+     * Máquina pura do player da timeline:
+     *   mode   = 'playing' | 'paused'
+     *   status = 'idle' | 'loading' | 'ready' | 'error'
+     * `appliedIndex`/`appliedLayer`/`appliedMeta` representam a cena
+     * EFETIVAMENTE aplicada (fonte da verdade para UI e What-If).
      */
-    function renderProvenance(data) {
+    function createTimelineMachine(initialIndex, count) {
+      return {
+        mode: 'paused',
+        status: 'idle',
+        count: Math.max(count, 1),
+        appliedIndex: initialIndex,
+        appliedLayer: null,
+        appliedMeta: null,
+        pendingIndex: null,
+        pendingLayer: null,
+        error: null,
+        resumeAfterLayer: false,
+      };
+    }
+
+    function playerPlay(state) { state.mode = 'playing'; return state; }
+    function playerPause(state) { state.mode = 'paused'; return state; }
+    function playerStartLoad(state, index, layer) {
+      state.status = 'loading';
+      state.pendingIndex = index;
+      state.pendingLayer = layer;
+      state.error = null;
+      return state;
+    }
+    function playerFinishLoad(state, index, layer, ok, errorMsg, meta) {
+      state.pendingIndex = null;
+      state.pendingLayer = null;
+      state.resumeAfterLayer = false;
+      if (ok) {
+        state.appliedIndex = index;
+        state.appliedLayer = layer;
+        state.appliedMeta = meta || null;
+        state.status = 'ready';
+        state.error = null;
+      } else {
+        state.status = 'error';
+        state.mode = 'paused';            // PAUSA — o usuário decide (retry/manual)
+        state.error = errorMsg || 'Falha ao carregar cena.';
+      }
+      return state;
+    }
+    function playerCancelLoad(state) {
+      state.status = state.appliedMeta ? 'ready' : 'idle';
+      state.pendingIndex = null;
+      state.pendingLayer = null;
+      state.error = null;
+      state.resumeAfterLayer = false;
+      return state;
+    }
+    function playerCanAdvance(state) {
+      return state.mode === 'playing' && state.status === 'ready';
+    }
+    function playerNextIndex(state) {
+      return (state.appliedIndex + 1) % state.count;
+    }
+    /** Troca de layer: congela avanço, mas preserva intenção de Play. */
+    function playerBeginLayerSwap(state, layer) {
+      state.resumeAfterLayer = (state.mode === 'playing');
+      state.pendingLayer = layer;
+      return state;
+    }
+
+    function isAbortError(err) {
+      return !!err && (
+        (err && err.name === 'AbortError') ||
+        (typeof err === 'object' && err !== null && (/abort/i.test(String(err.message || ''))))
+      );
+    }
+
+    function formatSceneDate(dateStr) {
+      if (!dateStr) return '—';
+      const parts = String(dateStr).split('-');
+      return parts.length === 3 ? parts.reverse().join('/') : String(dateStr);
+    }
+
+    function sceneErrorLabel(dateStr) {
+      return `Não foi possível carregar a cena de ${formatSceneDate(dateStr)}.`;
+    }
+
+    /**
+     * Proveniência COMPACTA (1 linha) — o painel grande virou "Detalhes".
+     * Nunca afirma ser Sentinel sem `data_origin === 'sentinel'`.
+     */
+    function provenanceSummary(meta) {
+      if (!meta) return 'aguardando dados…';
+      const isReal = meta.data_origin === 'sentinel' &&
+        (meta.real_data_status === undefined || meta.real_data_status === null || meta.real_data_status === 'ok');
+      if (isReal) {
+        const date = formatSceneDate(meta.acquisition_date || meta.date);
+        const cc = (typeof meta.cloud_cover === 'number')
+          ? `${meta.cloud_cover.toFixed(1).replace('.', ',')}%` : '—';
+        return `Sentinel-2 L2A • ${date} • Nuvens ${cc}`;
+      }
+      if (meta.real_data_status === 'not_configured') return 'DADOS SATELITAIS REAIS NÃO CONFIGURADOS';
+      if (meta.real_data_status === 'no_scene') return 'Sem cena Sentinel-2 na janela • aproximado';
+      if (meta.real_data_status === 'error') return 'Dados reais indisponíveis • aproximado';
+      return (meta.real_data_message || 'Visualização aproximada');
+    }
+
+    /** Detalhes da proveniência (usados no drawer "Detalhes"). */
+    function provenanceDetailLines(meta) {
+      if (!meta) return ['aguardando dados…'];
+      const isReal = meta.data_origin === 'sentinel' &&
+        (meta.real_data_status === undefined || meta.real_data_status === null || meta.real_data_status === 'ok');
+      if (!isReal) {
+        return [meta.real_data_message || 'FONTE: VISUALIZAÇÃO APROXIMADA (SEM SENTINEL-2 REAL)'];
+      }
+      const acq = meta.acquisition_date || meta.date || '—';
+      const cc = (typeof meta.cloud_cover === 'number') ? `${meta.cloud_cover.toFixed(1)}%` : '—';
+      const vpp = (typeof meta.valid_pixel_percentage === 'number')
+        ? `${meta.valid_pixel_percentage.toFixed(1)}%` : '—';
+      return [
+        `Aquisição: ${acq}`,
+        `Nuvens: ${cc}`,
+        `Satélite: ${meta.platform || 'Sentinel-2'} (${meta.constellation || 'S2'})`,
+        `Produto: ${meta.collection || 'sentinel-2-l2a'} · ${meta.processing_level || 'L2A'}`,
+        `ID do item: ${meta.product_id || '—'}`,
+        `Bandas: ${Array.isArray(meta.bands) ? meta.bands.join(', ') : '—'}`,
+        `Pixels válidos: ${vpp}`,
+        `Seleção: ${String(meta.selection_reason || '—').toUpperCase()}`,
+        `Fornecedor: ${meta.provider || 'Copernicus Data Space Ecosystem'}`,
+      ];
+    }
+
+    /** Status PRINCIPAL por cenário (1 linha no label de cada metade). */
+    function scenarioSubStatus(dataOrigin, realDataStatus) {
+      if (dataOrigin === 'sentinel') return { kind: 'real', text: 'Sentinel-2 L2A • dados reais' };
+      if (realDataStatus === 'not_configured') return { kind: 'no-config', text: 'Dados reais não configurados • aproximado' };
+      if (realDataStatus === 'no_scene') return { kind: 'approx', text: 'Sem cena Sentinel-2 • aproximado' };
+      if (realDataStatus === 'error') return { kind: 'approx', text: 'Erro nos dados reais • aproximado' };
+      return { kind: 'approx', text: 'Visualização aproximada' };
+    }
+
+    /** Base do cenário SIMULADO: mesma data/layer/origem da cena real aplicada. */
+    function buildSimBaseMeta(meta) {
+      if (!meta) return null;
+      return {
+        date: meta.acquisition_date || meta.date || null,
+        layer: meta.layer || null,
+        data_origin: meta.data_origin || 'procedural',
+        real_data_status: meta.real_data_status || null,
+      };
+    }
+    // [3D-UX-HELPERS-END]
+
+    // ---------- Estados visuais (UI fina sobre os helpers puros) ----------
+    function setLoadingIndicator(visible, text) {
+      const el = document.getElementById('load-indicator');
+      const txt = document.getElementById('load-indicator-text');
+      if (!el) return;
+      if (txt && text) txt.innerText = text;
+      el.classList.toggle('visible', !!visible);
+    }
+
+    function setSceneOverlay(visible, text) {
+      const el = document.getElementById('overlay-loading-real');
+      const txt = document.getElementById('overlay-loading-text');
+      if (!el) return;
+      if (txt && text) txt.innerText = text;
+      el.classList.toggle('visible', !!visible);
+    }
+
+    function setScenarioStatus(meta) {
+      const el = document.getElementById('status-real');
+      if (!el) return;
+      const origin = meta && (meta.data_origin || (meta.type === 'native' ? 'sentinel' : 'procedural'));
+      const status = meta && meta.real_data_status;
+      const sub = scenarioSubStatus(origin, status);
+      el.className = `scenario-sub ${sub.kind}`;
+      el.innerText = sub.text;
+    }
+
+    /** Label do cenário SIMULADO: sempre a MESMA data da cena real aplicada. */
+    function setSimScenarioStatus(simBase) {
+      const el = document.getElementById('status-sim');
+      if (!el) return;
+      const date = simBase && simBase.date ? formatSceneDate(simBase.date) : null;
+      el.innerText = date ? `Projeção What-If • base ${date}` : 'Projeção What-If';
+    }
+
+    function renderProvenanceSummary(meta) {
+      const el = document.getElementById('metadata-summary');
+      const txt = document.getElementById('prov-summary');
+      if (!el || !txt) return;
+      txt.innerText = provenanceSummary(meta);
+      const origin = meta && (meta.data_origin || (meta.type === 'native' ? 'sentinel' : 'procedural'));
+      const status = meta && meta.real_data_status;
+      el.className = origin === 'sentinel' ? 'metadata-summary real' : (
+        status === 'not_configured' ? 'metadata-summary no-config' : 'metadata-summary approx'
+      );
+    }
+
+    function renderProvenanceDetails(meta) {
       const el = document.getElementById('prov-lines');
       if (!el) return;
-      if (!data) { el.innerText = 'aguardando dados…'; return; }
-      // Nativo (`type:"native"`) também é Sentinel-2 real, mas não vem do CDSE.
-      const isReal = data.data_origin === 'sentinel' &&
-        (data.real_data_status === undefined || data.real_data_status === null || data.real_data_status === 'ok');
-      if (isReal) {
-        const acq = (data.acquisition_date || data.date || '').split('-').reverse().join('/');
-        const cc = (typeof data.cloud_cover === 'number') ? `${data.cloud_cover.toFixed(1)}%` : '—';
-        const vpp = (typeof data.valid_pixel_percentage === 'number')
-          ? `${data.valid_pixel_percentage.toFixed(1)}%` : '—';
-        const lines = [
-          `AQUISIÇÃO: ${acq} · NUVENS: ${cc}`,
-          `SATÉLITE: ${data.platform || 'Sentinel-2'} (${data.constellation || 'S2'})`,
-          `PRODUTO: ${data.collection || 'sentinel-2-l2a'} · ${data.processing_level || 'L2A'}`,
-          `ID ITEM: ${data.product_id || '—'}`,
-          `BANDAS: ${Array.isArray(data.bands) ? data.bands.join(', ') : '—'}`,
-          `PIXELS VÁLIDOS: ${vpp}`,
-          `SELEÇÃO: ${String(data.selection_reason || '—').toUpperCase()}`,
-          `FORNECEDOR: ${data.provider || 'Copernicus Data Space Ecosystem'}`,
-        ];
-        el.className = 'prov-real';
-        el.innerText = lines.join('\n');
-      } else {
-        el.className = 'prov-fallback';
-        el.innerText = (
-          data.real_data_message
-          || 'FONTE: VISUALIZAÇÃO APROXIMADA (SEM SENTINEL-2 REAL)'
-        );
+      el.innerText = provenanceDetailLines(meta).join('\n');
+    }
+
+    function setDemLine(kind, text) {
+      const el = document.getElementById('dem-line');
+      if (!el) return;
+      el.className = `dem-line ${kind || ''}`;
+      el.innerText = text;
+    }
+
+    function showErrorToast(message, retryFn) {
+      const el = document.getElementById('error-toast');
+      const txt = document.getElementById('error-text');
+      if (!el) return;
+      if (txt) txt.innerText = message;
+      el.classList.add('visible');
+      const btn = document.getElementById('error-retry');
+      if (btn) {
+        // substitui listener sem acumular
+        const clone = btn.cloneNode(true);
+        btn.parentNode.replaceChild(clone, btn);
+        clone.addEventListener('click', () => {
+          hideErrorToast();
+          if (typeof retryFn === 'function') retryFn();
+        });
       }
+    }
+
+    function hideErrorToast() {
+      const el = document.getElementById('error-toast');
+      if (el) el.classList.remove('visible');
     }
 
     // [3D-PIPELINE-HELPERS-START]
@@ -1315,13 +1600,16 @@
      * Carrega a textura (autenticada, via getCachedTexture) e aplica nos dois
      * materiais. Em QUALQUER falha: aplica o fallback visual (nunca branco).
      */
-    async function loadTextureOrFallback(key, url, matA, matB) {
+    async function loadTextureOrFallback(key, url, matA, matB, signal = undefined) {
       try {
-        const tex = await getCachedTexture(key, url);
+        const tex = await getCachedTexture(key, url, signal);
         applyTextureToMaterial(matA, tex, heightTexture || tex);
         applyTextureToMaterial(matB, tex, heightTexture || tex);
         return { ok: true, texture: tex };
       } catch (err) {
+        // Abort (pause/troca manual) NÃO pode trocar a cena aplicada por
+        // fallback: relança para o loadScene tratar como cancelamento.
+        if (isAbortError(err)) throw err;
         console.error(`texture: falha ao carregar '${url}' — aplicando visualização aproximada`, err);
         try {
           const fb = createFallbackTexture();
@@ -1360,13 +1648,22 @@
       sceneSim.add(talhaoOutlineSim);
     }
 
-    let isPlaying = false, playInterval = null;
+    // ---------- PLAYER DA TIMELINE (PR #5d — PRIMEIRO funcionalidades) ----------
+    // `player` = fonte da verdade do que está APLICADO; `currentIndex` espelha
+    // a data aplicada na UI. Avanço automático SÓ após aplicar (LOADING→READY).
     let factorNitro = 0, factorWater = 0, factorPest = 0;
     let baseTextureForSim = null;
     let simTexture = null;
     let simTextureActive = false;
     let lastWhatIfDelta = null;
     let whatIfTimer = null;
+    let playTimer = null;
+    let activeTextureAbort = null;
+    let lastSimBaseMeta = null;
+    let lastFailedScene = null;
+    const PLAY_INTERVAL_MS = 1600;
+    const sceneLoadGate = createSceneLoadGate();
+    let player = createTimelineMachine(0, dates.length);
 
     // ---------- TOPOGRAFIA REAL (Copernicus DEM GL-30) ----------
     // heightTexture = heightmap do DEM (ou null → fallback p/ NDVI)
@@ -1375,7 +1672,7 @@
     let terrainScale = 4.0;
 
     async function loadHeightmap() {
-      set3DStatus('loading', 'CARREGANDO DEM (COPERNICUS 30/90)...', 'status-dem-3d');
+      setDemLine('', 'DEM: consultando (COPERNICUS 30/90)…');
       let info = null;
       try {
         // Timeout de 90s: sem resposta, diagnóstico + fallback (nunca branco).
@@ -1389,8 +1686,8 @@
       if (!info || !info.available || !info.heightmap_url) {
         // Fallback EXPLÍCITO: relevo continua via índice (ou plano), mas o
         // usuário é informado — nada de falha silenciosa.
-        console.info('DEM GL-30: heightmap indisponível — usando NDVI como deslocamento.', info && info.reason);
-        set3DStatus('warn', 'ELEVAÇÃO APROXIMADA: TILE DEM GL-30 INDISPONÍVEL (RELEVO VIA ÍNDICE)', 'status-dem-3d');
+        console.info('DEM: heightmap indisponível — usando NDVI como deslocamento.', info && info.reason);
+        setDemLine('warn', 'DEM: indisponível • relevo aproximado (via índice)');
         return;
       }
       try {
@@ -1413,15 +1710,14 @@
         calculateImpact(); // re-aplica a escala what-if no lado simulado
 
         const sourceLabel = (info.source || 'unknown').replace(/_/g, ' ').toUpperCase();
-        set3DStatus(
+        setDemLine(
           'ok',
-          `ELEVAÇÃO REAL ATIVA — ${sourceLabel} (${info.min_elevation_m}–${info.max_elevation_m} m, alívio ~${relief.toFixed(0)} m)`,
-          'status-dem-3d'
+          `DEM: ${sourceLabel} • ${info.min_elevation_m}–${info.max_elevation_m} m • alívio ~${relief.toFixed(0)} m`
         );
         console.info(`DEM ${sourceLabel}: relevo real ativo (alívio ~${relief.toFixed(0)} m, ${info.min_elevation_m}–${info.max_elevation_m} m)`);
       } catch (e) {
         console.error('heightmap: falha ao aplicar heightmap DEM', e);
-        set3DStatus('warn', 'ELEVAÇÃO APROXIMADA: FALHA AO APLICAR DEM', 'status-dem-3d');
+        setDemLine('warn', 'DEM: falha ao aplicar • relevo aproximado (via índice)');
       }
     }
 
@@ -1460,11 +1756,11 @@
       simTextureActive = true;
     }
 
-    /** Consulta o What-If no backend (debounce) e refina a textura simulada. */
+    /** Consulta o What-If no backend (debounce) e refina a textura simulada.
+     *  O status interno muda nos números/visual — sem faixa central na tela. */
     function scheduleWhatIfRefresh() {
       if (whatIfTimer) clearTimeout(whatIfTimer);
       whatIfTimer = setTimeout(async () => {
-        set3DStatus('loading', 'GERANDO CENÁRIO SIMULADO (WHAT-IF)...');
         try {
           const res = await SimulationService.calculateWhatIf(
             factorNitro, factorWater, factorPest,
@@ -1473,7 +1769,6 @@
           if (res && typeof res.delta_ndvi === 'number') {
             lastWhatIfDelta = res.delta_ndvi;
             renderSimulatedTexture();
-            set3DStatus('ok', 'CENÁRIO SIMULADO ATUALIZADO (WHAT-IF)');
             return;
           }
         } catch (e) {
@@ -1481,7 +1776,6 @@
         }
         lastWhatIfDelta = null;
         renderSimulatedTexture();
-        set3DStatus('ok', 'CENÁRIO SIMULADO ATUALIZADO (MODELO LOCAL)');
       }, 300);
     }
 
@@ -1542,143 +1836,242 @@
     document.getElementById('slider-dash-w').addEventListener('input', e => syncWhatIfInputs(factorNitro, parseFloat(e.target.value), factorPest));
     document.getElementById('slider-dash-p').addEventListener('input', e => syncWhatIfInputs(factorNitro, factorWater, parseFloat(e.target.value)));
 
+    // ---------------------------------------------------------------------
+    // MOTOR DE CARREGAMENTO (PR #5d): CARREGAR → APLICAR → ESPERAR → PRÓXIMA.
+    // `generationId` descarta respostas atrasadas; AbortController cancela
+    // requisições antigas. A timeline só muda após a cena estar aplicada.
+    // ---------------------------------------------------------------------
+    function setPlayButtonUI() {
+      const btn = document.getElementById('play-btn');
+      if (!btn) return;
+      const playing = player.mode === 'playing';
+      btn.innerText = playing ? '⏸ Pause' : '▶ Play';
+      btn.classList.toggle('playing', playing);
+    }
+
+    function updateTimelineUI(index) {
+      const dateStr = dates[index] || '';
+      document.getElementById('timeline-slider').value = index;
+      document.getElementById('date-label').innerText = formatSceneDate(dateStr);
+      document.querySelectorAll('.date-pill').forEach(el => {
+        const idx = parseInt((el.id || '').replace('date-pill-', ''), 10);
+        el.classList.toggle('active', idx === index);
+      });
+    }
+
+    function schedulePlayNext() {
+      if (!playerCanAdvance(player)) return;
+      if (playTimer) clearTimeout(playTimer);
+      playTimer = setTimeout(() => { playTimer = null; advanceToNext(); }, PLAY_INTERVAL_MS);
+    }
+
+    async function advanceToNext() {
+      // Guarda: só avança se estiver PLAYING e a cena atual estiver READY
+      // (durante LOADING/ERROR o intervalo é simplesmente descartado).
+      if (!playerCanAdvance(player)) return;
+      const next = playerNextIndex(player);
+      await loadScene(next, player.appliedLayer || currentLayer, { fromPlay: true });
+      // loadScene reagenda o intervalo ao aplicar com sucesso (mode=playing).
+    }
+
+    /** PAUSA explícita: cancela/invalida o carregamento em andamento e NÃO
+     *  avança automaticamente depois. A cena aplicada permanece intacta. */
+    function pauseTimelinePlay() {
+      playerPause(player);
+      if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+      sceneLoadGate.invalidate();
+      if (activeTextureAbort) { activeTextureAbort.abort(); activeTextureAbort = null; }
+      // Se uma TROCA DE LAYER estava em voo, os materiais continuam com a
+      // camada APLICADA — reverte a UI (select + pills) para bater com ela.
+      if (player.pendingLayer && player.appliedLayer && player.pendingLayer !== player.appliedLayer) {
+        currentLayer = player.appliedLayer;
+        const sel = document.getElementById('layer-select');
+        if (sel) sel.value = currentLayer;
+        document.querySelectorAll('.layer-pill').forEach(btn => {
+          btn.classList.toggle('active', btn.getAttribute('onclick').includes(currentLayer));
+        });
+      }
+      playerCancelLoad(player);            // volta a ready/idle sem erro
+      setLoadingIndicator(false);
+      setSceneOverlay(false);
+      setPlayButtonUI();
+    }
+
+    /** Backwards-compat: carrega a data APLICADA atual com a layer atual. */
     async function updateTextures() {
-      const dateStr = dates[currentIndex];
-      document.getElementById('date-label').innerText = dateStr.split('-').reverse().join('/');
+      return loadScene(currentIndex, currentLayer);
+    }
 
-      // PR #4 — estados visíveis: carregando → real/aproximado → erro.
-      set3DStatus('loading', 'CARREGANDO SENTINEL-2...');
+    /**
+     * Carrega (metadata → textura → aplica) uma cena.
+     * Retorna {ok:true, meta} quando aplicada; {ok:false,error} em falha;
+     * {cancelled:true} quando uma requisição mais nova/substituição/pause.
+     */
+    async function loadScene(index, layer, opts = {}) {
+      const dateStr = dates[index];
+      if (!dateStr) {
+        playerFinishLoad(player, index, layer, false, sceneErrorLabel(''), null);
+        showErrorToast('Datas da timeline indisponíveis.', () => { lastFailedScene = null; loadScene(0, currentLayer); });
+        return { ok: false, error: 'calendário vazio' };
+      }
+      const gen = sceneLoadGate.beginLoad();          // invalida carregamentos anteriores
+      if (activeTextureAbort) { activeTextureAbort.abort(); activeTextureAbort = null; }
+      // Intervalo pendente do Play é cancelado: será reagendado após APLICAR.
+      if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+      const controller = new AbortController();
+      activeTextureAbort = controller;
+      playerStartLoad(player, index, layer);
+      hideErrorToast();
 
+      const loadLabel = `Carregando ${formatSceneDate(dateStr)}…`;
+      setLoadingIndicator(true, loadLabel);
+      setSceneOverlay(true, loadLabel);
+
+      let metadata = null;
       let textureUrl = null;
       let dataOrigin = null;
       let realDataStatus = null;
-      let realDataMessage = null;
-      let metadata = null;
+      let timedOut = false;
 
-      // PR #4b — estados de progresso explícitos (Buscando → Processando).
-      set3DStatus('loading', `BUSCANDO IMAGEM SENTINEL-2 (${currentLayer.toUpperCase()})...`);
-
+      let loadTimer = null;
       try {
-        // Timeout de 75s: além disso, erro diagnosticável → fallback (nunca bloqueia o 3D).
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 75000);
+        // 1) Metadados + textura sob UM timeout de 75s (nenhuma etapa pode
+        // travar). Timeout NÃO é cancelamento: vira erro → pausa + retry.
+        loadTimer = setTimeout(() => { timedOut = true; controller.abort(); }, 75000);
         const res = await fetch(
-          `${API_URL}/talhao/${activeFarm.id}/texture?layer=${currentLayer}&date=${dateStr}`,
+          `${API_URL}/talhao/${activeFarm.id}/texture?layer=${layer}&date=${dateStr}`,
           { headers: { ...authHeaders() }, signal: controller.signal }
         );
-        clearTimeout(timer);
-        if (res.status === 401) { AuthService.logout(); return; }
+        if (!sceneLoadGate.isCurrent(gen)) return { cancelled: true };
+        if (res.status === 401) {
+          playerCancelLoad(player);
+          setLoadingIndicator(false);
+          setSceneOverlay(false);
+          setPlayButtonUI();
+          AuthService.logout();
+          return { cancelled: true };
+        }
         if (res.ok) {
-          const data = await res.json();
-          metadata = data;
-          dataOrigin = data && (data.data_origin || (data.type === 'native' ? 'sentinel' : 'procedural'));
-          realDataStatus = data && (data.real_data_status || null);
-          realDataMessage = data && (data.real_data_message || null);
-          textureUrl = resolveTextureUrl(data, currentLayer, dateStr);
+          metadata = await res.json();
+          dataOrigin = metadata && (metadata.data_origin || (metadata.type === 'native' ? 'sentinel' : 'procedural'));
+          realDataStatus = metadata && metadata.real_data_status;
+          textureUrl = resolveTextureUrl(metadata, layer, dateStr);
         } else {
-          console.error(`texture: metadados HTTP ${res.status} para farm ${activeFarm.id}`);
+          // Falha REAL (não é "sem cena"): vira erro → pausa + retry manual.
+          // Nunca troca silenciosamente por dado incorreto.
+          throw new Error(`metadados HTTP ${res.status} (${dateStr})`);
         }
-      } catch (e) {
-        // Diagnóstico contextualizado — nunca catch silencioso.
-        console.error(`texture: falha ao consultar metadados (farm ${activeFarm.id})`, e);
-      }
+        if (!sceneLoadGate.isCurrent(gen)) return { cancelled: true };
 
-      if (textureUrl) {
-        set3DStatus('loading', `PROCESSANDO ${currentLayer.toUpperCase()} (RASTER REAL)...`);
-      } else {
-        // Sem URL utilizável → proveniência informa o motivo (fallback explícito).
-        renderProvenance(metadata || { real_data_message: 'FONTE: VISUALIZAÇÃO APROXIMADA (SEM SENTINEL-2 REAL)' });
-      }
-
-      if (!textureUrl) {
-        // O backend não devolveu URL utilizável (dataset nativo ausente na
-        // máquina atual, erro de rede, etc.): fallback explícito + aviso.
-        try {
-          const fb = createFallbackTexture();
-          if (fb) {
-            applyTextureToMaterial(matReal, fb, heightTexture || fb);
-            applyTextureToMaterial(matSim, fb, heightTexture || fb);
-            baseTextureForSim = fb;
-            if (realDataStatus === 'not_configured') {
-              set3DStatus('warn', 'DADOS SATELITAIS REAIS NÃO CONFIGURADOS · VISUALIZAÇÃO APROXIMADA');
-              setDataSourceBadge('not_configured', realDataMessage);
-            } else {
-              set3DStatus('warn', 'DADO SENTINEL INDISPONÍVEL · MODO DE VISUALIZAÇÃO APROXIMADA');
-              setDataSourceBadge('approx');
-            }
-          } else {
-            set3DStatus('error', 'DADO SENTINEL INDISPONÍVEL');
-            setDataSourceBadge('unavailable');
+        // 2) Textura: real (cache LRU + abort) ou fallback explícito.
+        if (textureUrl) {
+          setLoadingIndicator(true, `Processando ${layer.toUpperCase()}…`);
+          setSceneOverlay(true, `Processando ${layer.toUpperCase()}…`);
+          const key = `${activeFarm.id}|${layer}|${textureUrl}`;
+          const result = await loadTextureOrFallback(key, textureUrl, matReal, matSim, controller.signal);
+          if (!sceneLoadGate.isCurrent(gen)) return { cancelled: true };
+          if (!result.ok || !result.texture) {
+            // Fallback já aplicado aos materiais: mantém o What-If coerente com
+            // o que está visível; o erro abaixo pausa + retry (nunca silencioso).
+            if (result.texture) baseTextureForSim = result.texture;
+            throw new Error('falha ao carregar a textura da cena');
           }
-        } catch (e) {
-          console.error('texture: falha ao criar fallback visual', e);
-          set3DStatus('error', 'DADO SENTINEL INDISPONÍVEL');
-          setDataSourceBadge('unavailable');
+          baseTextureForSim = result.texture;
+        } else {
+          setLoadingIndicator(true, 'Aplicando visualização aproximada…');
+          const fb = createFallbackTexture();
+          if (!fb) throw new Error('fallback visual indisponível');
+          applyTextureToMaterial(matReal, fb, heightTexture || fb);
+          applyTextureToMaterial(matSim, fb, heightTexture || fb);
+          baseTextureForSim = fb;
         }
+        if (!sceneLoadGate.isCurrent(gen)) return { cancelled: true };
+
+        // 3) COMMIT: somente a requisição MAIS RECENTE aplica data/textura/meta.
+        const meta = metadata || {
+          date: dateStr,
+          data_origin: dataOrigin || 'procedural',
+          real_data_status: realDataStatus || 'error',
+          real_data_message: 'Falha ao obter metadados da cena.',
+        };
+        currentIndex = index;
+        playerFinishLoad(player, index, layer, true, null, meta);
+        lastSimBaseMeta = buildSimBaseMeta(meta);   // What-If usa a MESMA cena
+        if (lastSimBaseMeta) lastSimBaseMeta.layer = layer; // contrato: layer aplicada
+        updateTimelineUI(index);
+        setLoadingIndicator(false);
+        setSceneOverlay(false);
+        renderProvenanceSummary(meta);
+        renderProvenanceDetails(meta);
+        setScenarioStatus(meta);
+        setSimScenarioStatus(lastSimBaseMeta);
         renderSimulatedTexture();
         calculateImpact();
-        updateZoneCards(currentIndex);
-        return;
-      }
-
-      // Cache LRU: evita realocar a mesma textura e o .dispose() na evicção
-      // corrige o vazamento de VRAM entre datas/camadas. Falha de carregamento
-      // NUNCA deixa o material sem map (fallback + status).
-      const key = `${activeFarm.id}|${currentLayer}|${textureUrl}`;
-      const result = await loadTextureOrFallback(key, textureUrl, matReal, matSim);
-
-      renderProvenance(metadata);
-
-      if (!result.ok || !result.texture) {
-        if (realDataStatus === 'not_configured') {
-          set3DStatus('warn', 'DADOS SATELITAIS REAIS NÃO CONFIGURADOS · VISUALIZAÇÃO APROXIMADA');
-          setDataSourceBadge('not_configured', realDataMessage);
-        } else {
-          set3DStatus('warn', 'DADO SENTINEL INDISPONÍVEL · MODO DE VISUALIZAÇÃO APROXIMADA');
-          setDataSourceBadge('approx');
+        updateZoneCards(index);
+        if (player.mode === 'playing') schedulePlayNext();  // LOADING→READY→intervalo
+        console.info(`cena aplicada: ${dateStr} (${layer})`);
+        return { ok: true, meta };
+      } catch (err) {
+        if (!sceneLoadGate.isCurrent(gen) || (isAbortError(err) && !timedOut)) {
+          // Substituída/pause: NUNCA sobrescreve a cena atual nem vira erro.
+          return { cancelled: true };
         }
-      } else {
-        baseTextureForSim = result.texture;
-        if (dataOrigin === 'sentinel') {
-          set3DStatus('ok', 'CENÁRIO REAL — OBSERVAÇÃO SATELITAL: TEXTURA SENTINEL-2 APLICADA');
-          setDataSourceBadge('real');
-        } else if (realDataStatus === 'not_configured') {
-          set3DStatus('warn', 'DADOS SATELITAIS REAIS NÃO CONFIGURADOS · VISUALIZAÇÃO APROXIMADA');
-          setDataSourceBadge('not_configured', realDataMessage);
-        } else {
-          set3DStatus('warn', 'MODO DE VISUALIZAÇÃO APROXIMADA (SEM SENTINEL-2 REAL)');
-          setDataSourceBadge('approx');
-        }
+        const msg = sceneErrorLabel(dateStr);
+        playerFinishLoad(player, index, layer, false, msg, null);
+        lastFailedScene = { index, layer };
+        setLoadingIndicator(false);
+        setSceneOverlay(false);
+        setPlayButtonUI();          // erro → mode paused (botão volta a ▶ Play)
+        showErrorToast(msg, () => { lastFailedScene = null; loadScene(index, layer); });
+        console.error(`texture: erro ao carregar cena ${dateStr}`, err);
+        return { ok: false, error: msg };
+      } finally {
+        if (loadTimer) clearTimeout(loadTimer);
+        if (gen === sceneLoadGate.currentGeneration()) activeTextureAbort = null;
       }
-
-      // NDVI = cor (map); DEM GL-30 = relevo (displacementMap). Sem heightmap
-      // disponível, o NDVI segue fazendo o deslocamento (fallback explícito).
-      renderSimulatedTexture();
-      calculateImpact();
-      updateZoneCards(currentIndex);
     }
 
     const slider = document.getElementById('timeline-slider');
-    slider.addEventListener('input', e => { 
+    slider.addEventListener('input', e => {
       selectDateIndex(parseInt(e.target.value));
     });
-    
-    document.getElementById('layer-select').addEventListener('change', e => { 
+
+    document.getElementById('layer-select').addEventListener('change', e => {
       setSpectralLayer(e.target.value);
     });
 
     document.getElementById('play-btn').addEventListener('click', () => {
-      isPlaying = !isPlaying;
-      document.getElementById('play-btn').innerText = isPlaying ? "⏸ Pause" : "▶ Play";
-      if (isPlaying) {
-        playInterval = setInterval(() => {
-          const nextIdx = (currentIndex + 1) % dates.length;
-          selectDateIndex(nextIdx);
-        }, 1400);
-      } else {
-        clearInterval(playInterval);
+      hideErrorToast();
+      if (player.mode === 'playing') {
+        pauseTimelinePlay();
+        return;
       }
+      // PLAY: continua visualmente ativo mesmo durante loading; o avanço
+      // automático só é disparado quando a cena atual está READY.
+      playerPlay(player);
+      setPlayButtonUI();
+      if (player.status === 'ready') schedulePlayNext();
+      else if (player.status === 'error' && lastFailedScene) {
+        // Play também serve de RETRY: nunca fica preso após erro.
+        const retry = lastFailedScene;
+        lastFailedScene = null;
+        loadScene(retry.index, retry.layer);
+      } else if (player.status === 'idle') {
+        loadScene(player.appliedIndex, currentLayer);
+      }
+      // Se estiver LOADING, loadScene reagendará ao aplicar (se ainda playing).
     });
+
+    // Drawer retrátil de proveniência (nunca fixo sobre o terreno)
+    const provToggle = document.getElementById('prov-toggle');
+    if (provToggle) {
+      provToggle.addEventListener('click', () => {
+        const details = document.getElementById('prov-details');
+        if (!details) return;
+        const open = details.classList.toggle('open');
+        provToggle.innerText = open ? 'Fechar' : 'Detalhes';
+      });
+    }
 
     function onWindowResize() {
       const container = document.getElementById('canvas-container');

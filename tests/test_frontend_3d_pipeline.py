@@ -34,6 +34,9 @@ def helper_sources() -> dict:
         "loader": _slice(source, "function isAuthenticatedAssetUrl(url)", "\n\n    const matReal"),
         # Bloco PR #4 (helpers puros do pipeline 3D)
         "pipeline": _slice(source, "// [3D-PIPELINE-HELPERS-START]", "// [3D-PIPELINE-HELPERS-END]"),
+        # Bloco PR #5d (máquina de estados; o pipeline usa isAbortError dele —
+        # ambos vivem no MESMO <script> da página, então a VM precisa dos dois)
+        "ux": _slice(source, "// [3D-UX-HELPERS-START]", "// [3D-UX-HELPERS-END]"),
     }
 
 
@@ -48,6 +51,7 @@ const assert = require('node:assert/strict');
 
 const pipelineSource = process.env.PIPELINE_HELPERS;
 const loaderSource = process.env.LOADER_HELPERS;
+const uxSource = process.env.UX_HELPERS;
 
 const fetchCalls = [];
 const loadedUrls = [];
@@ -118,7 +122,7 @@ const sandbox = {
     };
   },
 };
-vm.runInNewContext(`${loaderSource}\n${pipelineSource}`, sandbox);
+vm.runInNewContext(`${loaderSource}\n${pipelineSource}\n${uxSource}`, sandbox);
 
 // ---- 1. Classificação de erro HTTP (estado de erro/fallback) ----
 assert.equal(sandbox.classifyAssetHttpError(401), 'auth');
@@ -231,6 +235,7 @@ fetchQueue = [{ status: 404 }];
         env={
             "PIPELINE_HELPERS": helper_sources["pipeline"],
             "LOADER_HELPERS": helper_sources["loader"],
+            "UX_HELPERS": helper_sources["ux"],
         },
         capture_output=True,
         text=True,

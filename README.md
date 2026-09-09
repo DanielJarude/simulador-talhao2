@@ -272,29 +272,67 @@ Sem rede/credenciais este script apenas informa o status — nunca imprime segre
 **Sem credenciais** o app segue 100% funcional (texturas procedurais com badge
 `VISUALIZAÇÃO APROXIMADA` e mensagem **DADOS SATELITAIS REAIS NÃO CONFIGURADOS**).
 
-## 🧊 Simulador 3D — pipeline (PR #4)
+## 🧊 Simulador 3D — pipeline (PR #4 ↔ PR #5d)
 
 O Split-View (CENÁRIO REAL × CENÁRIO SIMULADO) segue este fluxo, **sem depender de
 arquivos fora do Git**:
 
 ```
-fazenda → /api/talhao/{id}/texture → texture_url (+ data_origin)
-        → fetch autenticado (Bearer) → Blob → TextureLoader → material.map
+fazenda → /api/talhao/{id}/texture → texture_url (+ data_origin + proveniência)
+        → fetch autenticado (Bearer, AbortSignal) → Blob → TextureLoader → material.map
 fazenda → /api/talhao/{id}/heightmap → heightmap_url (ou available=false + reason)
-        → displacementMap (relevo Copernicus GL-30)
-        → sem tile → fallback explícito ("ELEVAÇÃO APROXIMADA", relevo via índice)
+        → displacementMap (relevo Copernicus GL-30) → linha discreta nos metadados
+        → sem tile → fallback explícito ("relevo aproximado via índice")
 what-if → /api/simulation/what-if → delta_ndvi
         → textura simulada via canvas (pixel a pixel) no lado direito
+        → SEMPRE sobre a MESMA data/layer da cena real APLICADA
 ```
+
+### Sincronização assíncrona (PR #5d)
+
+**Sequência obrigatória: CARREGAR → APLICAR → ESPERAR → PRÓXIMA.** A timeline
+NUNCA avança enquanto a próxima cena carrega; a data principal (`date-label`,
+slider e pílulas) é a da imagem **efetivamente aplicada**.
+
+- **Máquina de estados** (`createTimelineMachine`): `mode` = paused/playing,
+  `status` = idle/loading/ready/error, com `appliedIndex`/`appliedLayer`/
+  `appliedMeta` (fonte da verdade da cena aplicada) e `pending*` (carga em voo).
+- **Race-safe**: `createSceneLoadGate` (generationId) + `AbortController` por
+  carga; respostas atrasadas são descartadas e NUNCA substituem a cena atual;
+  troca manual de data e Pause cancelam/invalidam a carga anterior.
+- **Play**: intervalo que só dispara `playerCanAdvance()` (playing + ready);
+  durante loading o botão permanece "⏸ Pause" visualmente ativo, mas nada avança.
+- **Pausa**: cancela/invalida a carga, continua com a cena aplicada e NÃO retoma
+  sozinho (revertendo a UI se uma troca de layer estava em voo).
+- **Erro**: pausa automática + toast compacto com "Tentar novamente"; Play também
+  funciona como retry. Nunca troca silenciosamente de data nem fica preso.
+- **Layer swap** (RGB/NDVI/EVI/NDRE/NDMI): congela o avanço, carrega na data
+  aplicada, atualiza proveniência e retoma o Play se já estava ativo.
+- **What-If**: a base (`baseTextureForSim`) e o `lastSimBaseMeta` só mudam no
+  COMMIT da cena — Real e Simulado nunca se misturam por assincronia.
+
+### Hierarquia visual (do mais importante ao menos)
+
+1. Terreno 3D (Split-View) — ocupa o máximo da tela;
+2. label de cada cenário (REAL ▸ `Sentinel-2 L2A • dados reais` | SIMULADO ▸
+   `Projeção What-If • base <data>`);
+3. timeline (Play, spinner de carregamento, slider, data aplicada, layer);
+4. painel What-If (parâmetros);
+5. metadados compactos (1 linha de proveniência + "Detalhes" retrátil);
+6. DEM → apenas uma linha discreta no rodapé dos metadados;
+7. mensagens técnicas → `console`/toast compacto de erro.
 
 - **Dado real vs aproximado**: a API devolve `data_origin` (`sentinel` = CDSE ou
   dataset nativo presente na máquina; `procedural` = textura espectral gerada) +
-  `real_data_status`/`real_data_message` quando não há real. O badge do simulador
-  mostra `SENTINEL-2 REAL`, `VISUALIZAÇÃO APROXIMADA` ou
-  `DADOS SATELITAIS REAIS NÃO CONFIGURADOS` — nunca um terreno branco silencioso.
-- **Fallback visual**: se o load do asset falhar (rede/CORS/404), o 3D aplica uma
-  textura de fallback claramente marcada (`VISUALIZAÇÃO APROXIMADA`) + status de
-  erro; a malha, o relevo e os controles continuam funcionando.
+  `real_data_status`/`real_data_message` quando não há real. A proveniência mostra
+  `Sentinel-2 L2A • 15/08/2026 • Nuvens 2,0%` (real) ou o motivo explícito do
+  aproximado — nunca um terreno branco silencioso.
+- **Proveniência**: 1 linha + botão "Detalhes" (drawer retrátil com Aquisição,
+  Nuvens, Satélite, Produto, ID do item, Bandas, Pixels válidos, Seleção,
+  Fornecedor).
+- **Fallback visual**: se o load do asset falhar (rede/CORS/404) sem ser aborto,
+  o 3D aplica uma textura de fallback claramente marcada; a malha, o relevo e os
+  controles continuam funcionando e o erro pausa com retry.
 - **Geometria real do talhão**: o terreno usa o contorno KML (projeção alinhada à
   rasterização) com contorno visível; sem KML, usa a elipse proporcional à área —
   nunca um retângulo genérico.
@@ -343,8 +381,8 @@ curl http://localhost:8000/api/weather/farm/1
 ## 🧪 Suíte de testes automatizados (pytest)
 
 A suíte versionada em `tests/` cobre as 4 frentes exigidas + ownership/migrações/paridade de
-schema, assets autenticados e o **pipeline 3D (PR #4)** — **184 testes** (1 skip por dataset
-Sentinel-2 ausente fora do git):
+schema, assets autenticados e o **pipeline 3D (PR #4 ↔ PR #5d)** — **255 testes** (1 skip por
+dataset Sentinel-2 ausente fora do git):
 
 | Módulo | Testes | Abrangência |
 |---|---|---|
@@ -354,7 +392,8 @@ Sentinel-2 ausente fora do git):
 | `test_dem.py` | 17 | Nomenclatura SRTM/Copernicus, bounds (KML e por área), seleção de tile, endpoint de heightmap: recorte → normalização → PNG 256×256 servido por rota autenticada, `size`, 422, 404, indisponível com orientação |
 | `test_services.py` | 36 | Cache de clima (hit, por coordenadas, TTL, fallback em erro, fallback cacheado), regras de negócio do what-if, estimativa de safra, zoneamento espectral, paletas espectrais |
 | `test_3d_pipeline.py` | 15 | **PR #4** — pipeline 3D: demo sem dataset Sentinel (metadados/PNG/analytics com `data_origin`), fazenda dinâmica autenticada, owner/admin/401/404, assets fora do mount público, `PUBLIC_BASE_URL`, heightmap `available=false` + motivo, contrato What-If, frontend servido pelo backend e higiene (`.env` não exposto) |
-| `test_frontend_3d_pipeline.py` | 1 | **PR #4** — helpers do `index.html` executados em VM Node: classificação de erro HTTP, normalização de URL relativa/absoluta, token no fetch, atribuição real de textura ao material, pixel What-If, polígono KML → plano 3D e fallback de asset (material nunca sem `map`) |
+| `test_frontend_3d_pipeline.py` | 1 | **PR #4 ↔ #5d** — helpers do `index.html` executados em VM Node: classificação de erro HTTP, normalização de URL relativa/absoluta, token no fetch, atribuição real de textura ao material, pixel What-If, polígono KML → plano 3D e fallback de asset (material nunca sem `map`) |
+| `test_3d_player_state.py` | 1 | **PR #5d** — máquina de estados da timeline executada em VM Node: Play não avança durante loading, data só muda após aplicar, generationId descarta resposta antiga, Pause durante loading não retoma, troca manual invalida carga anterior, layer swap congela e retoma, falha → error+pause+retry, Real/What-If sincronizados, metadados da textura aplicada, status real/fallback e proveniência compacta + Detalhes |
 | `test_ownership.py` | 32 | **Ownership** (usuário cria/ler/edita/exclui a própria farm; `owner_id` correto; payload `owner_id` ignorado), **admin global**, **privacidade** (GETs exigem token → 401; analytics/clima/textura/heightmap/PDF não expõem farm alheia → 404), **migração Alembic** (adiciona `owner_id`/`is_shared` + backfill seguro em SQLite legado) |
 | `test_schema_parity.py` | 3 | Paridade banco novo × legado migrado: colunas, tipos, nullable, defaults, PK, índices, FKs, `alembic_version`, idempotência, preservação de dados e enforcement SQLite |
 | `test_frontend_texture_urls.py` | 1 | Fluxo frontend de texture.png/heightmap.png relativos e absolutos: classificação, Bearer no fetch, respostas 401/403/404 e revogação do Blob URL após o TextureLoader |
