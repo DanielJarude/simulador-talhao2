@@ -1334,3 +1334,25 @@ antigas entram pela esquerda; a mais recente fica na extrema direita).
   sintéticas rotuladas, MESMO pipeline — para o playtest visual).
 - `pytest tests/ -q` → **268 passed, 1 skipped**; `node --check` → OK.
 - Backend, timeline (#5f), caches, auth, dashboards, PDF, infra: **NÃO alterados**.
+
+### P0 — Correção de ordem de inicialização (regressão `cb913a4`)
+
+- **Causa exata**: `updateGroundGrid(70)` é chamada no **top-level** do script
+  inline (durante a avaliação, antes de `let terrainGeometry` ser executado).
+  A PR #5g fez `updateGroundGrid` ler `terrainGeometry` → acesso a binding `let`
+  em **Temporal Dead Zone** → `ReferenceError: Cannot access 'terrainGeometry'
+  before initialization` → a avaliação do script era ABORTADA por completo
+  (Dashboard, clima e gráficos ficavam em "Carregando…").
+- **Correção**: `let terrainGeometry = null` movida para **antes** da definição/
+  chamada de `updateGroundGrid` (bloco da grade, não mais no bloco de estado do
+  DEM — que agora apenas REUTILIZA a variável, sem redeclaração). Nenhuma
+  dependência circular criada: `updateGroundGrid` continua segura com
+  `terrainGeometry = null` (grade em `baseY − gap` com fallback `-0.06`).
+- **Auditoria de TDZ**: varredura de todas as chamadas top-level do script —
+  as únicas são `updateGroundGrid(70)` (corrigida), `initDebug3D()` e
+  `loadActiveFarm()` (ambas após todas as declarações); `fitCameraToTerrain`,
+  `rebuildVolumeSides`, `bakeDemGeometry` só rodam em runtime (pós-bootstrap).
+- **Teste de regressão**: `tests/test_3d_bootstrap_order.py` — executa o script
+  inline COMPLETO em VM Node com stubs de DOM/THREE/Leaflet/Chart (ordem real),
+  exigindo `__BOOTSTRAP_OK` ao final e zero errors fatais; fica VERMELHO no
+  commit `cb913a4` com exatamente a mensagem do bug e VERDE após a correção.

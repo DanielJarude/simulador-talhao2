@@ -1954,6 +1954,17 @@
     });
     // Grade discreta: acompanha o tamanho do terreno e fica ABAIXO da BASE
     // do bloco topográfico (PR #5g) — nunca atravessa a superfície.
+    // =====================================================================
+    // CORREÇÃO P0 (PR #5g): `terrainGeometry` precisa estar DECLARADA antes de
+    // QUALQUER chamada de bootstrap. `updateGroundGrid(70)` roda durante a
+    // avaliação do script inline (top-level) e lê `terrainGeometry` — se a
+    // binding ainda estiver em Temporal Dead Zone, o acesso lança
+    // `ReferenceError: Cannot access 'terrainGeometry' before initialization`
+    // e aborta TODO o JavaScript da página (Dashboard/clima/gráficos ficam em
+    // "Carregando…"). A declaração fica AQUI; o bloco de estado do DEM (PR #5e)
+    // apenas REUTILIZA esta variável (nenhuma dependência circular).
+    // =====================================================================
+    let terrainGeometry = null;               // geometria COMPARTILHADA real×sim
     let groundGridReal = null, groundGridSim = null;
     function updateGroundGrid(size) {
       const s = Math.max(Number(size) || 60, 20);
@@ -2929,7 +2940,9 @@
     let demReliefWorld = 0;                   // alívio real em unidades do mundo (1×)
     let demExaggeration = DEM_EXAGGERATION_DEFAULT; // 1|2|3|5 — só visual
     let demInfo = null;                       // {min, max, relief, source, provider}
-    let terrainGeometry = null;               // geometria COMPARTILHADA real×sim
+    // `terrainGeometry` é declarada ANTES do bootstrap (ver updateGroundGrid);
+    // aqui é apenas REUTILIZADA (nunca redeclarada — evita TDZ na página).
+    // let terrainGeometry = null;  <- removido na correção P0 (PR #5g)
     let terrainMetersPerUnit = 50.0;          // metros por unidade do plano 3D
     // PR #5g — origem/escala explícitas (sem magic numbers):
     let demMinElevation = null;               // elevação REAL mínima do DEM (m)

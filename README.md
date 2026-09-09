@@ -436,7 +436,7 @@ curl http://localhost:8000/api/weather/farm/1
 ## 🧪 Suíte de testes automatizados (pytest)
 
 A suíte versionada em `tests/` cobre as 4 frentes exigidas + ownership/migrações/paridade de
-schema, assets autenticados e o **pipeline 3D (PR #4 ↔ PR #5g)** — **268 testes** (1 skip por
+schema, assets autenticados e o **pipeline 3D (PR #4 ↔ PR #5g)** — **270 testes** (1 skip por
 dataset Sentinel-2 ausente fora do git):
 
 | Módulo | Testes | Abrangência |
@@ -452,6 +452,7 @@ dataset Sentinel-2 ausente fora do git):
 | `test_3d_load_scene_wiring.py` | 1 | **PR #5d ↔ #5e** — wiring real do `loadScene` em VM Node: commit só após o fetch, race de resposta atrasada, Pause, falha+retry, layer swap e, no PR #5e: cena pronta no cache aplica **sem nenhum fetch**, preload em background **não altera** a cena aplicada, Play avança para cena pré-carregada sem request e textura descartada da VRAM invalida a cena |
 | `test_3d_scene_cache_preload.py` | 1 | **PR #5e/#5g** — cache/preload/terreno puros em VM Node: chave `farmId|talhao|data|layer` (sem colisão), LRU com evicção, plano ≤ 12 → todas / > 12 → janela 5 + background, limites documentados, estados discreto da timeline, escala real metros→unidades, amostragem bilinear, DEM desloca vértices + normais, 1×/2×/3×/5× só visual, altitude relativa (mín = 0), fallback plano e `CAMERA_PRESET` |
 | `test_3d_calendar_timeline.py` | 2 | **PR #5e (correção)** — calendário STAC real × demonstração em VM Node: decisão pura (real só com `source=sentinel-cdse` + cenas; datas STAC diferentes da config; `latest_date`; `no_scene`/`not_configured`/HTTP 500/rede/401 → demo rotulada com motivo) e wiring do `refreshRealTimeline` (resposta real substitui completamente a timeline; fallback identificado "Calendário demonstrativo"; erro de endpoint nunca apresenta demo como real; 'Buscando datas Sentinel-2…' + seleção da mais recente) |
+| `test_3d_bootstrap_order.py` | 2 | **PR #5g (P0)** — ordem REAL de inicialização do bootstrap em VM Node: executa o script inline INTEIRO na ordem do navegador (stubs DOM/THREE/Leaflet/Chart) e exige que a avaliação chegue ao último statement, sem ReferenceError/TypeError/SyntaxError (pega o TDZ `Cannot access 'terrainGeometry' before initialization' que abortava Dashboard/clima/gráficos) e valida `updateGroundGrid` no estado inicial (fallback seguro) e com o bloco pronto (grade abaixo da base) |
 | `test_3d_terrain_volume.py` | 3 | **PR #5g — VOLUME 3D** em VM Node: escala explícita m↔unidades (1× = proporção física real;
   `relativeHeight` mín = 0; 1×<2×<3×<5×; finito com relief=0/DEM faltante), geometria NÃO coplanar
   (maxY>minY, estatísticas/bbox com relevo), lateral+base (baseY<minY, contagens exatas, contorno
