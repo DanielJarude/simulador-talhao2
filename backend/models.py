@@ -28,7 +28,6 @@ class Farm(Base):
     total_area = Column(Float, nullable=False)
     latitude = Column(Float, default=-22.7182)
     longitude = Column(Float, default=-55.5421)
-
     # --- Ownership (PR #3) ---
     # FK para users.id. Nulo somente em bancos legados pré-migration;
     # o backfill de seed associa todo registro órfão ao admin demo.
@@ -37,6 +36,13 @@ class Farm(Base):
     # (ex.: farm demo id=1), mesmo não sendo o dono. Apenas o backend define
     # este flag (seed) — o payload de criação o ignora.
     is_shared = Column(Boolean, default=False, nullable=False)
+
+    state = Column(String, nullable=True)
+    state_code = Column(String, nullable=True)
+    location_source = Column(String, default="legacy", nullable=False)
+    location_status = Column(String, default="unverified", nullable=False)
+    location_divergence_km = Column(Float, nullable=True)
+
 
     owner = relationship("User", back_populates="farms", foreign_keys=[owner_id])
     talhoes = relationship("Talhao", back_populates="farm", cascade="all, delete-orphan")

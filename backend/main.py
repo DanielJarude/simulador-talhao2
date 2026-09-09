@@ -27,6 +27,7 @@ from services.pdf_service import generate_farm_pdf_report
 from services.satellite_service import generate_all_spectral_layers
 from services.simulation_service import calculate_what_if_impact
 from services.weather_service import fetch_live_nasa_weather
+from services.geolocation_service import (GeometryError, distance_km, location_matches, parse_geometry, representative_point, reverse_geocode)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -316,6 +317,50 @@ def login(login_in: schemas.UserLogin, db: Session = Depends(get_db)):
     )
 
 
+def _canonical_location(farm_in: schemas.FarmCreate, existing=None) -> dict:
+    """Resolve localização uma única vez na gravação; geometria sempre vence legado."""
+    geometry = farm_in.kml_coordinates
+    old_lat = existing.latitude if existing else None
+    old_lon = existing.longitude if existing else None
+    if geometry:
+        lat, lon = representative_point(geometry)
+        source = "geometry"
+    else:
+        if farm_in.latitude is None or farm_in.longitude is None:
+            raise HTTPException(422, "Selecione no mapa, use sua localização ou importe um talhão.")
+        lat, lon, source = farm_in.latitude, farm_in.longitude, farm_in.location_source
+    # Payloads da API antiga continuam aceitos e são explicitamente marcados;
+    # não fingimos que o texto legado passou por reverse geocoding.
+    geo = (reverse_geocode(lat, lon) if source != "legacy" else
+           {"city": None, "state": None, "state_code": None, "status": "unverified"})
+    detected_city, detected_state = geo.get("city"), geo.get("state_code") or geo.get("state")
+    supplied_city = farm_in.city or (existing.city if existing else None)
+    supplied_state = farm_in.state_code or farm_in.state or (existing.state_code if existing else None)
+    mismatch = bool(detected_city and supplied_city and not location_matches(detected_city, detected_state, supplied_city.split(" - ")[0], supplied_state or (supplied_city.split(" - ")[-1] if " - " in supplied_city else None)))
+    divergence = distance_km((old_lat, old_lon), (lat, lon)) if geometry and old_lat is not None and old_lon is not None else None
+    status = geo["status"]
+    if mismatch or (divergence is not None and divergence > 5): status = "legacy_divergence_corrected"
+    city = detected_city or supplied_city or "Município não identificado"
+    state = geo.get("state") or farm_in.state
+    code = geo.get("state_code") or farm_in.state_code
+    display = f"{city} - {code}" if code and code.lower() not in city.lower() else city
+    return dict(latitude=lat, longitude=lon, city=display, state=state, state_code=code, location_source=source, location_status=status, location_divergence_km=divergence)
+
+
+@app.post("/api/location/reverse", response_model=schemas.LocationResponse)
+def reverse_location(req: schemas.ReverseGeocodeRequest, user: models.User = Depends(get_current_user)):
+    return reverse_geocode(req.latitude, req.longitude)
+
+@app.post("/api/location/from-geometry", response_model=schemas.LocationResponse)
+def location_from_geometry(req: schemas.GeometryLocationRequest, user: models.User = Depends(get_current_user)):
+    try:
+        lat, lon = representative_point(req.geometry)
+    except GeometryError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    result = reverse_geocode(lat, lon); result["source"] = "geometry"
+    return result
+
+
 # ---------------------------------------------------------------------------
 # FAZENDAS & TALHÕES (CRUD COMPLETO)
 #
@@ -357,14 +402,13 @@ def create_farm(
 ):
     # O dono é SEMPRE o usuário autenticado. O payload não tem (nem poderia
     # ter) owner_id — falha-fechada contra escalada de ownership.
+    try:
+        location = _canonical_location(farm_in)
+    except GeometryError as exc:
+        raise HTTPException(422, str(exc)) from exc
     new_farm = models.Farm(
-        name=farm_in.name,
-        city=farm_in.city,
-        total_area=farm_in.total_area,
-        latitude=farm_in.latitude,
-        longitude=farm_in.longitude,
-        owner_id=user.id,
-        is_shared=False,
+        name=farm_in.name, total_area=farm_in.total_area, owner_id=user.id,
+        is_shared=False, **location
     )
     db.add(new_farm)
     db.commit()
@@ -375,8 +419,8 @@ def create_farm(
         name=farm_in.talhao_name,
         area=farm_in.total_area,
         crop=farm_in.crop,
-        latitude=farm_in.latitude,
-        longitude=farm_in.longitude,
+        latitude=new_farm.latitude,
+        longitude=new_farm.longitude,
         kml_coordinates=farm_in.kml_coordinates,
     )
     db.add(new_talhao)
@@ -403,19 +447,23 @@ def update_farm(
 ):
     farm = _require_farm_write(db, farm_id, user)  # apenas dono | admin
 
+    effective_geometry = farm_in.kml_coordinates or (farm.talhoes[0].kml_coordinates if farm.talhoes else None)
+    effective_input = farm_in.model_copy(update={"kml_coordinates": effective_geometry})
+    try:
+        location = _canonical_location(effective_input, farm)
+    except GeometryError as exc:
+        raise HTTPException(422, str(exc)) from exc
     farm.name = farm_in.name
-    farm.city = farm_in.city
     farm.total_area = farm_in.total_area
-    farm.latitude = farm_in.latitude
-    farm.longitude = farm_in.longitude
+    for key, value in location.items(): setattr(farm, key, value)
 
     if farm.talhoes:
         talhao = farm.talhoes[0]
         talhao.name = farm_in.talhao_name
         talhao.area = farm_in.total_area
         talhao.crop = farm_in.crop
-        talhao.latitude = farm_in.latitude
-        talhao.longitude = farm_in.longitude
+        talhao.latitude = farm.latitude
+        talhao.longitude = farm.longitude
         if farm_in.kml_coordinates:
             talhao.kml_coordinates = farm_in.kml_coordinates
 

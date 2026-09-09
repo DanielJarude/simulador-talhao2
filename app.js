@@ -149,7 +149,7 @@ const FarmService = {
   },
 
   // Cadastrar nova fazenda com coordenadas geográficas e contorno KML/GeoJSON
-  createFarm: async (name, city, totalArea, talhaoName, crop, lat, lon, kmlCoordinates = null) => {
+  createFarm: async (name, city, totalArea, talhaoName, crop, lat, lon, kmlCoordinates = null, locationSource = "legacy") => {
     try {
       const res = await fetch(`${API_URL}/farms`, {
         method: "POST",
@@ -160,9 +160,10 @@ const FarmService = {
           total_area: parseFloat(totalArea),
           talhao_name: talhaoName.trim(),
           crop: crop,
-          latitude: parseFloat(lat) || -22.7182,
-          longitude: parseFloat(lon) || -55.5421,
-          kml_coordinates: kmlCoordinates || null
+          latitude: lat === "" || lat == null ? null : Number(lat),
+          longitude: lon === "" || lon == null ? null : Number(lon),
+          kml_coordinates: kmlCoordinates || null,
+          location_source: locationSource
         })
       });
 
@@ -182,7 +183,7 @@ const FarmService = {
   },
 
   // Atualizar dados de uma fazenda existente
-  updateFarm: async (id, name, city, totalArea, talhaoName, crop, lat, lon, kmlCoordinates = null) => {
+  updateFarm: async (id, name, city, totalArea, talhaoName, crop, lat, lon, kmlCoordinates = null, locationSource = "legacy") => {
     try {
       const res = await fetch(`${API_URL}/farms/${id}`, {
         method: "PUT",
@@ -193,9 +194,10 @@ const FarmService = {
           total_area: parseFloat(totalArea),
           talhao_name: talhaoName.trim(),
           crop: crop,
-          latitude: parseFloat(lat) || -22.7182,
-          longitude: parseFloat(lon) || -55.5421,
-          kml_coordinates: kmlCoordinates || null
+          latitude: lat === "" || lat == null ? null : Number(lat),
+          longitude: lon === "" || lon == null ? null : Number(lon),
+          kml_coordinates: kmlCoordinates || null,
+          location_source: locationSource
         })
       });
 

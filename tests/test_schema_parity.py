@@ -181,7 +181,7 @@ def test_schema_parity_new_vs_legacy_and_idempotency(tmp_path):
     connection = sqlite3.connect(legacy_path)
     assert connection.execute(
         "SELECT version_num FROM alembic_version"
-    ).fetchall() == [("0001_farm_ownership",)]
+    ).fetchall() == [("0002_canonical_location",)]
     connection.close()
 
     # A second upgrade must see the recorded revision and do nothing.
@@ -190,7 +190,7 @@ def test_schema_parity_new_vs_legacy_and_idempotency(tmp_path):
     connection = sqlite3.connect(legacy_path)
     assert connection.execute(
         "SELECT version_num FROM alembic_version"
-    ).fetchall() == [("0001_farm_ownership",)]
+    ).fetchall() == [("0002_canonical_location",)]
     connection.close()
 
     # Existing records and the talhoes relationship survived the table rebuild.

@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <title>Fazendas & Talhões - Orion Agro</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <style>
     * { box-sizing: border-box; }
     body {
@@ -58,6 +59,10 @@
       border-radius: 6px; color: #f0f6fc; font-size: 0.85rem;
     }
     .coord-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .location-box { border:1px solid #238636; border-radius:8px; padding:12px; margin:12px 0; }
+    .location-box strong { color:#7ee787; } .map-picker { height:230px; border-radius:8px; margin:10px 0; }
+    .location-actions { display:flex; gap:8px; flex-wrap:wrap; } .location-actions button { padding:7px 10px; cursor:pointer; }
+    details { margin:10px 0; color:#8b949e; } .geo-status { font-size:.78rem; margin-top:6px; }
 
     .file-dropzone {
       border: 2px dashed #30363d; border-radius: 8px; padding: 14px;
@@ -128,7 +133,7 @@
         </div>
         <div class="form-group">
           <label>Município / UF</label>
-          <input type="text" id="farm-city" required placeholder="Ex: Londrina - PR">
+          <input type="text" id="farm-city" readonly placeholder="Detectado automaticamente">
         </div>
         <div class="form-group">
           <label>Nome do Talhão</label>
@@ -149,13 +154,16 @@
           </select>
         </div>
 
-        <div class="form-group">
-          <label>Centroide Geográfico (Latitude / Longitude):</label>
-          <div class="coord-grid">
-            <input type="number" step="0.000001" id="farm-lat" required placeholder="Latitude">
-            <input type="number" step="0.000001" id="farm-lon" required placeholder="Longitude">
-          </div>
-        </div>
+        <div class="location-box"><strong>LOCALIZAÇÃO DETECTADA</strong><div id="create-location-label">Importe o talhão, selecione no mapa ou use sua localização.</div>
+          <div id="create-map" class="map-picker"></div><div class="location-actions">
+            <button type="button" onclick="startMapCorrection('create')">Corrigir no mapa</button>
+            <button type="button" onclick="useDeviceLocation('create')">Usar minha localização</button>
+            <button type="button" id="create-confirm" onclick="confirmMapLocation('create')" disabled>Confirmar localização</button>
+          </div><div id="create-geo-status" class="geo-status">Nenhuma permissão de localização foi solicitada.</div></div>
+        <details><summary>Opções avançadas — latitude/longitude</summary><div class="coord-grid">
+          <input type="number" min="-90" max="90" step="0.000001" id="farm-lat" placeholder="Latitude">
+          <input type="number" min="-180" max="180" step="0.000001" id="farm-lon" placeholder="Longitude">
+        </div><button type="button" onclick="applyManualLocation('create')">Aplicar coordenadas e confirmar</button></details>
 
         <input type="hidden" id="kml-coords-hidden">
         <button type="submit" class="btn-save-farm">Salvar Propriedade & Geometria</button>
@@ -187,7 +195,7 @@
         </div>
         <div class="form-group">
           <label>Município / UF</label>
-          <input type="text" id="edit-farm-city" required>
+          <input type="text" id="edit-farm-city" readonly>
         </div>
         <div class="form-group">
           <label>Nome do Talhão</label>
@@ -208,13 +216,9 @@
           </select>
         </div>
 
-        <div class="form-group">
-          <label>Latitude / Longitude:</label>
-          <div class="coord-grid">
-            <input type="number" step="0.000001" id="edit-farm-lat" required>
-            <input type="number" step="0.000001" id="edit-farm-lon" required>
-          </div>
-        </div>
+        <div class="location-box"><strong>LOCALIZAÇÃO DETECTADA</strong><div id="edit-location-label"></div><div id="edit-map" class="map-picker"></div>
+          <div class="location-actions"><button type="button" onclick="startMapCorrection('edit')">Corrigir no mapa</button><button type="button" onclick="useDeviceLocation('edit')">Usar minha localização</button><button type="button" id="edit-confirm" onclick="confirmMapLocation('edit')" disabled>Confirmar localização</button></div><div id="edit-geo-status" class="geo-status"></div></div>
+        <details><summary>Opções avançadas — latitude/longitude</summary><div class="coord-grid"><input type="number" min="-90" max="90" step="0.000001" id="edit-farm-lat"><input type="number" min="-180" max="180" step="0.000001" id="edit-farm-lon"></div><button type="button" onclick="applyManualLocation('edit')">Aplicar coordenadas e confirmar</button></details>
 
         <input type="hidden" id="edit-kml-coords-hidden">
         <button type="submit" class="btn-save-farm" style="background:#238636;">Atualizar Dados</button>
@@ -222,9 +226,21 @@
     </div>
   </div>
 
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="app.js"></script>
   <script>
     let allFarmsCache = [];
+    const locationState = { create:{source:null,confirmed:false,candidate:null}, edit:{source:null,confirmed:false,candidate:null} };
+    const maps = {}, markers = {};
+    function initMap(context, lat=-23.5, lon=-47.5) { if(maps[context]) return; maps[context]=L.map(`${context}-map`).setView([lat,lon],6); L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap'}).addTo(maps[context]); maps[context].on('click', e => { if(locationState[context].correcting){ locationState[context].candidate=e.latlng; setMarker(context,e.latlng.lat,e.latlng.lng); document.getElementById(`${context}-confirm`).disabled=false; document.getElementById(`${context}-geo-status`).textContent='Posição candidata — confirme para não sobrescrever acidentalmente.'; }}); }
+    function setMarker(c,lat,lon){ initMap(c,lat,lon); if(markers[c]) markers[c].setLatLng([lat,lon]); else markers[c]=L.marker([lat,lon]).addTo(maps[c]); maps[c].setView([lat,lon],15); }
+    function startMapCorrection(c){ locationState[c].correcting=true; document.getElementById(`${c}-geo-status`).textContent='Clique no mapa; nada será salvo antes da confirmação.'; }
+    async function reverseLocation(c,lat,lon,source){ const r=await fetch(`${API_URL}/location/reverse`,{method:'POST',headers:{'Content-Type':'application/json',...authHeaders()},body:JSON.stringify({latitude:lat,longitude:lon})}); if(!r.ok) throw new Error('Não foi possível identificar o município.'); const g=await r.json(); applyDetected(c,g,source); }
+    function applyDetected(c,g,source){ const prefix=c==='edit'?'edit-':''; document.getElementById(`${prefix}farm-lat`).value=Number(g.latitude).toFixed(6); document.getElementById(`${prefix}farm-lon`).value=Number(g.longitude).toFixed(6); const place=g.city ? `${g.city}${g.state_code?' - '+g.state_code:''}` : 'Município não identificado'; document.getElementById(`${prefix}farm-city`).value=place; document.getElementById(`${c}-location-label`).textContent=place; document.getElementById(`${c}-geo-status`).textContent=g.status==='ok'?`Localização calculada (${source}).`:'Geocodificador indisponível; coordenadas preservadas para tentar novamente.'; locationState[c]={source,confirmed:true,candidate:null,correcting:false}; setMarker(c,g.latitude,g.longitude); }
+    async function confirmMapLocation(c){ const p=locationState[c].candidate; if(!p)return; await reverseLocation(c,p.lat,p.lng,'map'); document.getElementById(`${c}-confirm`).disabled=true; }
+    function useDeviceLocation(c){ if(!navigator.geolocation){ document.getElementById(`${c}-geo-status`).textContent='Localização do dispositivo indisponível.'; return; } navigator.geolocation.getCurrentPosition(p=>reverseLocation(c,p.coords.latitude,p.coords.longitude,'device'),e=>document.getElementById(`${c}-geo-status`).textContent=e.code===1?'Permissão de localização negada.':'Localização do dispositivo indisponível.'); }
+    function applyManualLocation(c){ const p=c==='edit'?'edit-':''; const lat=Number(document.getElementById(`${p}farm-lat`).value),lon=Number(document.getElementById(`${p}farm-lon`).value); if(!Number.isFinite(lat)||lat < -90||lat > 90||!Number.isFinite(lon)||lon < -180||lon > 180){ alert('Latitude deve estar entre -90 e 90 e longitude entre -180 e 180.'); return;} reverseLocation(c,lat,lon,'manual'); }
+    setTimeout(()=>initMap('create'),0);
 
     const user = AuthService.getCurrentUser();
     if (!user) {
@@ -292,18 +308,13 @@
       }
     }
 
-    function applyGeometry(latLngs, context) {
-      let sumLat = 0, sumLon = 0;
-      latLngs.forEach(pt => { sumLat += pt[0]; sumLon += pt[1]; });
-      const centerLat = (sumLat / latLngs.length).toFixed(6);
-      const centerLon = (sumLon / latLngs.length).toFixed(6);
-
+    async function applyGeometry(latLngs, context) {
       const prefix = context === 'edit' ? 'edit-' : '';
-      document.getElementById(`${prefix}farm-lat`).value = centerLat;
-      document.getElementById(`${prefix}farm-lon`).value = centerLon;
-      document.getElementById(`${prefix}kml-coords-hidden`).value = JSON.stringify(latLngs);
-
-      alert(`Geometria carregada!\nCentroide: Lat ${centerLat}, Lon ${centerLon}`);
+      const geometry=JSON.stringify(latLngs);
+      document.getElementById(`${prefix}kml-coords-hidden`).value=geometry;
+      document.getElementById(`${context}-geo-status`).textContent='Interpretando geometria…';
+      try { const r=await fetch(`${API_URL}/location/from-geometry`,{method:'POST',headers:{'Content-Type':'application/json',...authHeaders()},body:JSON.stringify({geometry})}); const g=await r.json(); if(!r.ok) throw new Error(g.detail||'Geometria inválida'); applyDetected(context,g,'geometry'); }
+      catch(e){ document.getElementById(`${context}-geo-status`).textContent=e.message; alert(e.message); }
     }
 
     // Listagem com botões Editar e Excluir
@@ -331,6 +342,8 @@
               <div class="farm-info">
                 <h4>${f.name}</h4>
                 <p>📍 ${f.city} • <strong>${f.total_area} ha</strong> • Lat: ${lat}, Lon: ${lon}</p>
+                ${f.location_status === 'unverified' ? '<p style="color:#d29922">⚠ Localização legada ainda não confirmada</p>' : ''}
+                ${f.location_status === 'legacy_divergence_corrected' ? '<p style="color:#d29922">⚠ Divergência legada corrigida pela geometria</p>' : ''}
                 <p style="margin-top:4px; color:#58a6ff;">${talhao.name} (${talhao.crop})</p>
               </div>
               <div class="action-btns">
@@ -364,6 +377,7 @@
       document.getElementById('edit-kml-coords-hidden').value = talhao.kml_coordinates || '';
 
       document.getElementById('edit-modal').classList.add('active');
+      setTimeout(()=>{ initMap('edit',farm.latitude,farm.longitude); maps.edit.invalidateSize(); setMarker('edit',farm.latitude,farm.longitude); document.getElementById('edit-location-label').textContent=farm.city; locationState.edit={source:farm.location_source||'legacy',confirmed:true,candidate:null}; },0);
     }
 
     function closeEditModal() {
@@ -387,7 +401,7 @@
           document.getElementById('edit-farm-crop').value,
           document.getElementById('edit-farm-lat').value,
           document.getElementById('edit-farm-lon').value,
-          document.getElementById('edit-kml-coords-hidden').value
+          document.getElementById('edit-kml-coords-hidden').value, locationState.edit.source || 'legacy'
         );
         closeEditModal();
         await renderFarms();
@@ -429,7 +443,7 @@
           document.getElementById('farm-crop').value,
           document.getElementById('farm-lat').value,
           document.getElementById('farm-lon').value,
-          document.getElementById('kml-coords-hidden').value
+          document.getElementById('kml-coords-hidden').value, locationState.create.source || 'legacy'
         );
 
         e.target.reset();
