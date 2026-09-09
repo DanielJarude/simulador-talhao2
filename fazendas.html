@@ -131,17 +131,14 @@
           <label>Nome da Fazenda</label>
           <input type="text" id="farm-name" required placeholder="Ex: Fazenda Santa Fé">
         </div>
-        <div class="form-group">
-          <label>Município / UF</label>
-          <input type="text" id="farm-city" readonly placeholder="Detectado automaticamente">
-        </div>
+        <input type="hidden" id="farm-city">
         <div class="form-group">
           <label>Nome do Talhão</label>
           <input type="text" id="talhao-name" required placeholder="Ex: Talhão 01 - Sede">
         </div>
         <div class="form-group">
-          <label>Área do Talhão (Hectares)</label>
-          <input type="number" step="0.01" id="farm-area" required placeholder="Ex: 45.20">
+          <label>Área do Talhão (hectares) <small>— calculada ao importar um polígono</small></label>
+          <input type="number" step="0.01" id="farm-area" required placeholder="Calculada automaticamente ou informe a área">
         </div>
         <div class="form-group">
           <label>Cultura Principal</label>
@@ -156,7 +153,7 @@
 
         <div class="location-box"><strong>LOCALIZAÇÃO DETECTADA</strong><div id="create-location-label">Importe o talhão, selecione no mapa ou use sua localização.</div>
           <div id="create-map" class="map-picker"></div><div class="location-actions">
-            <button type="button" onclick="startMapCorrection('create')">Corrigir no mapa</button>
+            <button type="button" onclick="startMapCorrection('create')">Selecionar localização no mapa</button>
             <button type="button" onclick="useDeviceLocation('create')">Usar minha localização</button>
             <button type="button" id="create-confirm" onclick="confirmMapLocation('create')" disabled>Confirmar localização</button>
           </div><div id="create-geo-status" class="geo-status">Nenhuma permissão de localização foi solicitada.</div></div>
@@ -193,10 +190,7 @@
           <label>Nome da Fazenda</label>
           <input type="text" id="edit-farm-name" required>
         </div>
-        <div class="form-group">
-          <label>Município / UF</label>
-          <input type="text" id="edit-farm-city" readonly>
-        </div>
+        <input type="hidden" id="edit-farm-city">
         <div class="form-group">
           <label>Nome do Talhão</label>
           <input type="text" id="edit-talhao-name" required>
@@ -216,8 +210,15 @@
           </select>
         </div>
 
+        <div id="edit-legacy-warning" class="location-box" style="display:none;border-color:#d29922">
+          <strong style="color:#d29922">⚠ ATENÇÃO — LOCALIZAÇÃO NÃO VERIFICADA</strong>
+          <p>Os dados geográficos desta fazenda são anteriores ao sistema de localização automática.</p>
+          <div>Localização cadastrada: <b id="edit-stored-city"></b></div>
+          <div>Coordenadas armazenadas: <code id="edit-stored-coords"></code></div>
+          <div id="edit-verification-result">Verificando localização atual…</div>
+        </div>
         <div class="location-box"><strong>LOCALIZAÇÃO DETECTADA</strong><div id="edit-location-label"></div><div id="edit-map" class="map-picker"></div>
-          <div class="location-actions"><button type="button" onclick="startMapCorrection('edit')">Corrigir no mapa</button><button type="button" onclick="useDeviceLocation('edit')">Usar minha localização</button><button type="button" id="edit-confirm" onclick="confirmMapLocation('edit')" disabled>Confirmar localização</button></div><div id="edit-geo-status" class="geo-status"></div></div>
+          <div class="location-actions"><button type="button" onclick="startMapCorrection('edit')">Corrigir no mapa</button><button type="button" onclick="useDeviceLocation('edit')">Usar minha localização</button><button type="button" id="edit-confirm" onclick="confirmMapLocation('edit')" disabled>Confirmar localização detectada</button></div><div id="edit-geo-status" class="geo-status"></div></div>
         <details><summary>Opções avançadas — latitude/longitude</summary><div class="coord-grid"><input type="number" min="-90" max="90" step="0.000001" id="edit-farm-lat"><input type="number" min="-180" max="180" step="0.000001" id="edit-farm-lon"></div><button type="button" onclick="applyManualLocation('edit')">Aplicar coordenadas e confirmar</button></details>
 
         <input type="hidden" id="edit-kml-coords-hidden">
@@ -235,11 +236,49 @@
     function initMap(context, lat=-23.5, lon=-47.5) { if(maps[context]) return; maps[context]=L.map(`${context}-map`).setView([lat,lon],6); L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap'}).addTo(maps[context]); maps[context].on('click', e => { if(locationState[context].correcting){ locationState[context].candidate=e.latlng; setMarker(context,e.latlng.lat,e.latlng.lng); document.getElementById(`${context}-confirm`).disabled=false; document.getElementById(`${context}-geo-status`).textContent='Posição candidata — confirme para não sobrescrever acidentalmente.'; }}); }
     function setMarker(c,lat,lon){ initMap(c,lat,lon); if(markers[c]) markers[c].setLatLng([lat,lon]); else markers[c]=L.marker([lat,lon]).addTo(maps[c]); maps[c].setView([lat,lon],15); }
     function startMapCorrection(c){ locationState[c].correcting=true; document.getElementById(`${c}-geo-status`).textContent='Clique no mapa; nada será salvo antes da confirmação.'; }
-    async function reverseLocation(c,lat,lon,source){ const r=await fetch(`${API_URL}/location/reverse`,{method:'POST',headers:{'Content-Type':'application/json',...authHeaders()},body:JSON.stringify({latitude:lat,longitude:lon})}); if(!r.ok) throw new Error('Não foi possível identificar o município.'); const g=await r.json(); applyDetected(c,g,source); }
-    function applyDetected(c,g,source){ const prefix=c==='edit'?'edit-':''; document.getElementById(`${prefix}farm-lat`).value=Number(g.latitude).toFixed(6); document.getElementById(`${prefix}farm-lon`).value=Number(g.longitude).toFixed(6); const place=g.city ? `${g.city}${g.state_code?' - '+g.state_code:''}` : 'Município não identificado'; document.getElementById(`${prefix}farm-city`).value=place; document.getElementById(`${c}-location-label`).textContent=place; document.getElementById(`${c}-geo-status`).textContent=g.status==='ok'?`Localização calculada (${source}).`:'Geocodificador indisponível; coordenadas preservadas para tentar novamente.'; locationState[c]={source,confirmed:true,candidate:null,correcting:false}; setMarker(c,g.latitude,g.longitude); }
-    async function confirmMapLocation(c){ const p=locationState[c].candidate; if(!p)return; await reverseLocation(c,p.lat,p.lng,'map'); document.getElementById(`${c}-confirm`).disabled=true; }
-    function useDeviceLocation(c){ if(!navigator.geolocation){ document.getElementById(`${c}-geo-status`).textContent='Localização do dispositivo indisponível.'; return; } navigator.geolocation.getCurrentPosition(p=>reverseLocation(c,p.coords.latitude,p.coords.longitude,'device'),e=>document.getElementById(`${c}-geo-status`).textContent=e.code===1?'Permissão de localização negada.':'Localização do dispositivo indisponível.'); }
-    function applyManualLocation(c){ const p=c==='edit'?'edit-':''; const lat=Number(document.getElementById(`${p}farm-lat`).value),lon=Number(document.getElementById(`${p}farm-lon`).value); if(!Number.isFinite(lat)||lat < -90||lat > 90||!Number.isFinite(lon)||lon < -180||lon > 180){ alert('Latitude deve estar entre -90 e 90 e longitude entre -180 e 180.'); return;} reverseLocation(c,lat,lon,'manual'); }
+    async function reverseLocation(c,lat,lon,source,commit=false){
+      const r=await fetch(`${API_URL}/location/reverse`,{method:'POST',headers:{'Content-Type':'application/json',...authHeaders()},body:JSON.stringify({latitude:lat,longitude:lon})});
+      if(!r.ok) throw new Error('Não foi possível verificar a localização agora.');
+      const g=await r.json(); showDetection(c,g,source);
+      if(commit) await commitDetection(c);
+    }
+    function showDetection(c,g,source){
+      const place=g.city ? `${g.city}${g.state_code?' — '+g.state_code:''}` : 'Município não identificado';
+      locationState[c].pendingGeo=g; locationState[c].pendingSource=source; locationState[c].confirmed=false;
+      document.getElementById(`${c}-location-label`).textContent=place;
+      document.getElementById(`${c}-confirm`).disabled=!(g.status==='ok' || source==='geometry');
+      document.getElementById(`${c}-geo-status`).textContent=g.status==='ok'
+        ? (source==='geometry'?'Localização calculada a partir do talhão. Confirme para aplicar.':'Localização detectada. Confirme para aplicar.')
+        : 'Não foi possível verificar a localização agora. Os dados existentes foram preservados.';
+      if(c==='edit') document.getElementById('edit-verification-result').textContent=`Localização detectada pelas coordenadas: ${place}`;
+      setMarker(c,g.latitude,g.longitude);
+    }
+    async function commitDetection(c){
+      const g=locationState[c].pendingGeo; if(!g)return;
+      const prefix=c==='edit'?'edit-':''; const place=g.city ? `${g.city}${g.state_code?' - '+g.state_code:''}` : 'Município não identificado';
+      document.getElementById(`${prefix}farm-lat`).value=Number(g.latitude).toFixed(6);
+      document.getElementById(`${prefix}farm-lon`).value=Number(g.longitude).toFixed(6);
+      document.getElementById(`${prefix}farm-city`).value=place;
+      locationState[c].source=locationState[c].pendingSource; locationState[c].confirmed=true; locationState[c].candidate=null; locationState[c].correcting=false;
+      document.getElementById(`${c}-confirm`).disabled=true;
+      document.getElementById(`${c}-geo-status`).textContent=`Localização confirmada (${locationState[c].source}).`;
+      if(c==='edit') await persistConfirmedEdit();
+    }
+    async function confirmMapLocation(c){
+      const p=locationState[c].candidate;
+      if(p) { try { await reverseLocation(c,p.lat,p.lng,'map',true); } catch(e){ document.getElementById(`${c}-geo-status`).textContent='Não foi possível verificar a localização agora. Os dados existentes foram preservados.'; } }
+      else await commitDetection(c);
+    }
+    function useDeviceLocation(c){
+      if(!navigator.geolocation){ document.getElementById(`${c}-geo-status`).textContent='Localização do dispositivo indisponível.'; return; }
+      navigator.geolocation.getCurrentPosition(p=>reverseLocation(c,p.coords.latitude,p.coords.longitude,'device'),e=>document.getElementById(`${c}-geo-status`).textContent=e.code===1?'Permissão de localização negada.':'Localização do dispositivo indisponível.');
+    }
+    function applyManualLocation(c){
+      const p=c==='edit'?'edit-':''; const lat=Number(document.getElementById(`${p}farm-lat`).value),lon=Number(document.getElementById(`${p}farm-lon`).value);
+      if(!Number.isFinite(lat)||lat < -90||lat > 90||!Number.isFinite(lon)||lon < -180||lon > 180){ alert('Latitude deve estar entre -90 e 90 e longitude entre -180 e 180.'); return;}
+      reverseLocation(c,lat,lon,'manual');
+    }
+
     setTimeout(()=>initMap('create'),0);
 
     const user = AuthService.getCurrentUser();
@@ -308,12 +347,18 @@
       }
     }
 
+    function polygonAreaHa(points) {
+      if(!points || points.length<3) return null;
+      const lat0=points.reduce((a,p)=>a+p[0],0)/points.length*Math.PI/180, R=6371008.8;
+      const xy=points.map(p=>[p[1]*Math.PI/180*Math.cos(lat0)*R,p[0]*Math.PI/180*R]); let sum=0;
+      xy.forEach((p,i)=>{const q=xy[(i+1)%xy.length]; sum+=p[0]*q[1]-q[0]*p[1];}); return Math.abs(sum)/2/10000;
+    }
     async function applyGeometry(latLngs, context) {
-      const prefix = context === 'edit' ? 'edit-' : '';
-      const geometry=JSON.stringify(latLngs);
+      const prefix = context === 'edit' ? 'edit-' : ''; const geometry=JSON.stringify(latLngs);
       document.getElementById(`${prefix}kml-coords-hidden`).value=geometry;
+      const area=polygonAreaHa(latLngs); if(area && context==='create') document.getElementById('farm-area').value=area.toFixed(2); if(area && context==='edit') document.getElementById('edit-farm-area').value=area.toFixed(2);
       document.getElementById(`${context}-geo-status`).textContent='Interpretando geometria…';
-      try { const r=await fetch(`${API_URL}/location/from-geometry`,{method:'POST',headers:{'Content-Type':'application/json',...authHeaders()},body:JSON.stringify({geometry})}); const g=await r.json(); if(!r.ok) throw new Error(g.detail||'Geometria inválida'); applyDetected(context,g,'geometry'); }
+      try { const r=await fetch(`${API_URL}/location/from-geometry`,{method:'POST',headers:{'Content-Type':'application/json',...authHeaders()},body:JSON.stringify({geometry})}); const g=await r.json(); if(!r.ok) throw new Error(g.detail||'Geometria inválida'); showDetection(context,g,'geometry'); }
       catch(e){ document.getElementById(`${context}-geo-status`).textContent=e.message; alert(e.message); }
     }
 
@@ -341,12 +386,13 @@
             <div class="farm-item">
               <div class="farm-info">
                 <h4>${f.name}</h4>
-                <p>📍 ${f.city} • <strong>${f.total_area} ha</strong> • Lat: ${lat}, Lon: ${lon}</p>
-                ${f.location_status === 'unverified' ? '<p style="color:#d29922">⚠ Localização legada ainda não confirmada</p>' : ''}
+                ${(f.location_source === 'legacy' || !f.location_status || f.location_status === 'unverified') ? '<p style="color:#d29922">⚠ Localização não verificada</p>' : `<p>📍 ${f.city}</p>`}
+                <p><strong>${Number(f.total_area).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})} ha</strong></p>
                 ${f.location_status === 'legacy_divergence_corrected' ? '<p style="color:#d29922">⚠ Divergência legada corrigida pela geometria</p>' : ''}
                 <p style="margin-top:4px; color:#58a6ff;">${talhao.name} (${talhao.crop})</p>
               </div>
               <div class="action-btns">
+                ${(f.location_source === 'legacy' || !f.location_status || f.location_status === 'unverified') ? `<button class="btn-edit" onclick="openEditModal(${f.id})">📍 Verificar localização</button>` : ''}
                 <button class="btn-edit" onclick="openEditModal(${f.id})">✏️ Editar</button>
                 <button class="btn-delete" onclick="handleDeleteFarm(${f.id}, '${f.name}')">🗑️ Excluir</button>
                 <a href="index.html?farm_id=${f.id}" class="btn-enter-3d">Simulador 3D ↗</a>
@@ -377,11 +423,21 @@
       document.getElementById('edit-kml-coords-hidden').value = talhao.kml_coordinates || '';
 
       document.getElementById('edit-modal').classList.add('active');
-      setTimeout(()=>{ initMap('edit',farm.latitude,farm.longitude); maps.edit.invalidateSize(); setMarker('edit',farm.latitude,farm.longitude); document.getElementById('edit-location-label').textContent=farm.city; locationState.edit={source:farm.location_source||'legacy',confirmed:true,candidate:null}; },0);
+      setTimeout(async ()=>{ initMap('edit',farm.latitude,farm.longitude); maps.edit.invalidateSize(); setMarker('edit',farm.latitude,farm.longitude); document.getElementById('edit-location-label').textContent=farm.city; locationState.edit={source:farm.location_source||'legacy',confirmed:false,candidate:null};
+        const legacy=farm.location_source==='legacy'||!farm.location_status||farm.location_status==='unverified'; document.getElementById('edit-legacy-warning').style.display=legacy?'block':'none'; document.getElementById('edit-stored-city').textContent=farm.city; document.getElementById('edit-stored-coords').textContent=`${farm.latitude}, ${farm.longitude}`;
+        if(legacy){ try { const geom=talhao.kml_coordinates; if(geom){ const r=await fetch(`${API_URL}/location/from-geometry`,{method:'POST',headers:{'Content-Type':'application/json',...authHeaders()},body:JSON.stringify({geometry:geom})}); const g=await r.json(); if(!r.ok)throw new Error(); showDetection('edit',g,'geometry'); } else await reverseLocation('edit',farm.latitude,farm.longitude,'manual'); } catch(e){ document.getElementById('edit-verification-result').textContent='Não foi possível verificar a localização agora.'; } }
+      },0);
     }
 
     function closeEditModal() {
       document.getElementById('edit-modal').classList.remove('active');
+    }
+
+    async function persistConfirmedEdit() {
+      const id=Number(document.getElementById('edit-farm-id').value), farm=allFarmsCache.find(f=>f.id===id); if(!farm)return;
+      const talhao=(farm.talhoes&&farm.talhoes[0])||{};
+      await FarmService.updateFarm(id,document.getElementById('edit-farm-name').value,document.getElementById('edit-farm-city').value,document.getElementById('edit-farm-area').value,document.getElementById('edit-talhao-name').value,document.getElementById('edit-farm-crop').value,document.getElementById('edit-farm-lat').value,document.getElementById('edit-farm-lon').value,document.getElementById('edit-kml-coords-hidden').value,locationState.edit.source);
+      document.getElementById('edit-legacy-warning').style.display='none'; await renderFarms();
     }
 
     async function handleUpdateFarm(e) {

@@ -447,7 +447,12 @@ def update_farm(
 ):
     farm = _require_farm_write(db, farm_id, user)  # apenas dono | admin
 
-    effective_geometry = farm_in.kml_coordinates or (farm.talhoes[0].kml_coordinates if farm.talhoes else None)
+    # Nova geometria sempre vence. Uma correção explicitamente confirmada no
+    # mapa/manual pode ajustar o ponto canônico sem apagar o polígono real.
+    stored_geometry = farm.talhoes[0].kml_coordinates if farm.talhoes else None
+    effective_geometry = farm_in.kml_coordinates
+    if not effective_geometry and farm_in.location_source in ("legacy", "geometry"):
+        effective_geometry = stored_geometry
     effective_input = farm_in.model_copy(update={"kml_coordinates": effective_geometry})
     try:
         location = _canonical_location(effective_input, farm)
