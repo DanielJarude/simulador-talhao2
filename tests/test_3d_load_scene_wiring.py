@@ -274,14 +274,22 @@ const TX_META = {
   assert.equal(sandbox.player.error, null);
 
   // ============ 5. layer swap congela e retoma o Play ============
+  // PR #5f (cronológico): o Play só tem para onde avançar quando a cena
+  // aplicada NÃO é a mais recente. Aplica a cena ANTIGA (31/07, idx 1) antes.
+  fetchQueue = [{ status: 200, json: { ...TX_META, date: '2026-07-31', acquisition_date: '2026-07-31' } }];
+  const pOldBase = await sandbox.loadScene(1, 'ndvi');
+  assert.equal(pOldBase.ok, true);
+  assert.equal(sandbox.player.appliedIndex, 1, 'cena antiga (31/07) aplicada');
   sandbox.playerPlay(sandbox.player);
-  fetchQueue = [{ status: 200, json: { ...TX_META, date: '2026-08-15' } }];
+  fetchQueue = [{ status: 200, json: { ...TX_META, date: '2026-07-31' } }];
   sandbox.setSpectralLayer('evi');  // troca manual (Play ativo)
   await new Promise((r) => setTimeout(r, 20));
   assert.equal(sandbox.player.appliedLayer, 'evi', 'layer trocada e aplicada');
   assert.equal(sandbox.player.status, 'ready');
   assert.equal(sandbox.player.mode, 'playing', 'Play preservado através da troca');
   assert.equal(sandbox.playerCanAdvance(sandbox.player), true, 'após aplicar, o Play pode avançar');
+  assert.equal(sandbox.playerNextIndex(sandbox.player), 0,
+    'após a troca, o Play avança na direção temporal (31/07 → 15/08)');
   // Determinismo p/ os cenários de cache/preload: zera timers e estado.
   sandbox.pauseTimelinePlay();
   sandbox.sceneCache = sandbox.createSceneCache(12);
@@ -323,14 +331,26 @@ const TX_META = {
   assert.equal(sandbox.preloadStates.get(preKey), 'ready', 'preload concluiu e marcou pronta');
   assert.equal(sandbox.sceneCache.has(preKey), true, 'cena pré-carregada no cache');
 
-  // ============ 8. Play avança para cena PRONTA sem novo request ============
+  // ============ 8. Play avança ANTIGA → RECENTE (cronológico) sem request ============
+  // `dates` interno é DESC (contrato: 0 = 15/08 = mais recente; 1 = 31/07).
+  // Aplica a cena ANTIGA (1) do cache (pronta pela seção 7) e avança p/ 0.
   fetchCalls.length = 0;
+  const pOld = await sandbox.loadScene(1, 'ndvi');           // 31/07 aplicada
+  assert.equal(pOld.fromCache, true, 'cena antiga vem do cache (sem refetch)');
+  assert.equal(sandbox.player.appliedIndex, 1);
+  assert.equal(fetchCalls.length, 0, 'load da cena pronta NÃO refaz request');
   sandbox.playerPlay(sandbox.player);
   await sandbox.advanceToNext();
-  assert.equal(sandbox.player.appliedIndex, 1, 'avançou para a cena pré-carregada');
+  assert.equal(sandbox.player.appliedIndex, 0, 'Play avança para a cena MAIS RECENTE (15/08)');
   assert.equal(sandbox.player.appliedLayer, 'ndvi');
   assert.equal(sandbox.player.status, 'ready');
   assert.equal(fetchCalls.length, 0, 'Play entre cenas prontas NÃO refaz request');
+  // Chegou à mais recente → PÁRA (sem loop) e o botão volta a "▶ Play".
+  sandbox.playerPlay(sandbox.player);   // ainda playing → testa o fim da linha
+  await sandbox.advanceToNext();
+  assert.equal(sandbox.player.appliedIndex, 0, 'mais recente mantida (não volta à antiga)');
+  assert.equal(sandbox.player.status, 'ready');
+  assert.equal(sandbox.player.mode, 'paused', 'Play PAROU ao chegar na mais recente (sem loop)');
   sandbox.pauseTimelinePlay();          // limpa timers antes de sair
 
   // ============ 9. textura descartada (VRAM LRU) invalida a cena ============

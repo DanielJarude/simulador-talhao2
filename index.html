@@ -807,25 +807,60 @@
     }
 
     /**
-     * Gera EXATAMENTE um botão por data da API (ordem preservada — desc):
-     *   {date, day:'30', month:'AGO', year:'2026', label:'30 AGO',
-     *    subLabel:'2026', title:'30/08/2026\nNuvens: 9,8%', cloud}
-     * NUNCA insere datas artificiais/fixas: entrada = saída.
+     * ORDEM VISUAL da timeline — PR #5f (correção do sentido cronológico):
+     * esquerda = mais ANTIGA, direita = mais RECENTE.
+     * A API continua DESC internamente (`dates[0]` = mais recente, usado por
+     * latest_date/cache/preload/consulta); ESTA função devolve uma CÓPIA ASC
+     * usada SOMENTE para renderizar os botões. `dates` nunca é mutado aqui.
+     */
+    function timelineOrderDates(datesList) {
+      if (!Array.isArray(datesList)) return [];
+      return datesList.slice().sort(); // ISO 'AAAA-MM-DD' ordena cronologicamente
+    }
+
+    /**
+     * Índice (no array INTERNO `dates`, DESC da API) da cena MAIS RECENTE:
+     *  1. usa `latest_date` retornado pelo endpoint (fonte de verdade);
+     *  2. sem `latest_date`/não encontrado → contrato explícito: a API entrega
+     *     DESC, logo `dates[0]` é a mais recente (NUNCA depende da ordem visual).
+     * Retorna -1 quando o calendário está vazio.
+     */
+    function latestSceneIndex(datesList, latestDate) {
+      const list = Array.isArray(datesList) ? datesList : [];
+      if (list.length === 0) return -1;
+      if (latestDate) {
+        const idx = list.indexOf(String(latestDate));
+        if (idx >= 0) return idx;
+      }
+      return 0;
+    }
+
+    /**
+     * Gera EXATAMENTE um botão por data da API, em ORDEM CRONOLÓGICA (antiga
+     * → recente) para a UI:
+     *   {idx, visualIdx, date, day:'18', month:'JUL', year:'2026',
+     *    label:'18 JUL', subLabel:'2026', title:'18/07/2026\nNuvens: —', cloud}
+     * `idx` é o índice da cena no array INTERNO (`dates`, DESC da API) — a
+     * identidade por DATA (não por posição visual) usada por cache/load/estados.
+     * NUNCA insere datas artificiais/fixas: entrada = saída, sem perdas/duplicatas.
      */
     function buildSceneChips(datesList, calendar) {
+      const apiDates = Array.isArray(datesList) ? datesList.slice() : [];
+      const apiIndex = new Map(apiDates.map((d, i) => [String(d), i]));
       const byDate = new Map();
       (Array.isArray(calendar) ? calendar : []).forEach(sc => {
-        if (sc && sc.date) byDate.set(sc.date, sc);
+        if (sc && sc.date) byDate.set(String(sc.date), sc);
       });
-      return (Array.isArray(datesList) ? datesList : []).map((dateStr, idx) => {
+      return timelineOrderDates(apiDates).map((dateStr, visualIdx) => {
         const parts = String(dateStr).split('-');
         const day = parts.length === 3 ? String(Number(parts[2])).padStart(2, '0') : '';
         const monthIdx = parts.length === 3 ? (Number(parts[1]) - 1) : -1;
         const month = (monthIdx >= 0 && monthIdx < 12) ? SCENE_MONTHS_SHORT[monthIdx] : '';
         const year = parts.length === 3 ? parts[0] : String(dateStr);
-        const scene = byDate.get(dateStr) || null;
+        const scene = byDate.get(String(dateStr)) || null;
         return {
-          idx,
+          idx: apiIndex.get(String(dateStr)),   // identidade: índice no array interno
+          visualIdx,                             // posição na timeline visual (asc)
           date: dateStr,
           day,
           month,
@@ -857,16 +892,18 @@
     // [3D-TIMELINE-DOM-START] — render dos chips 3D / pílulas (min. DOM).
     // =====================================================================
     function renderDatePills() {
-      // (a) Dashboard (legado): pílulas simples dd/mm/aaaa.
+      // (a) Dashboard (legado): pílulas dd/mm/aaaa — também em ordem
+      //     cronológica (antiga → recente); id continua o índice INTERNO.
       const container = document.getElementById('dashboard-dates-bar');
       if (container) {
         container.innerHTML = '';
-        dates.forEach((d, idx) => {
-          const formatted = d.split('-').reverse().join('/');
+        timelineOrderDates(dates).forEach(d => {
+          const idx = dates.indexOf(d);
+          if (idx < 0) return;
           const btn = document.createElement('button');
           btn.className = `date-pill ${idx === currentIndex ? 'active' : ''} available`;
           btn.id = `date-pill-${idx}`;
-          btn.innerText = formatted;
+          btn.innerText = formatSceneDate(d);
           const dot = document.createElement('span');
           dot.className = 'state-dot';
           btn.appendChild(dot);
@@ -874,7 +911,9 @@
           container.appendChild(btn);
         });
       }
-      // (b) TIMELINE 3D (PR #5f): UM botão por cena real, clicável, rolável.
+      // (b) TIMELINE 3D (PR #5f): UM botão por cena real, clicável, rolável,
+      //     em ordem cronológica (esquerda = mais antiga → direita = mais
+      //     recente). `chip.idx` = identidade da cena no array interno (API desc).
       const scroller = document.getElementById('scene-timeline');
       if (!scroller) return;
       scroller.innerHTML = '';
@@ -1156,7 +1195,9 @@
       preloadStates.clear();
       preloadQueue.length = 0;
       preloadQueuedKeys.clear();
-      const startIdx = 0; // 0 = mais recente SEMPRE (catálogo vem DESC; demo também)
+      // PR #5f: início explícito pela cena MAIS RECENTE via latest_date (ou,
+      // no contrato da API, dates[0] — DESC). Nunca depende da ordem visual.
+      const startIdx = latestSceneIndex(dates, decision.latest);
       player = createTimelineMachine(startIdx, dates.length);
       setTimelineControls(dates.length > 0, dates.length - 1);
       renderDatePills();          // reconstrói do zero (nunca pílulas antigas)
@@ -1899,8 +1940,28 @@
     function playerCanAdvance(state) {
       return state.mode === 'playing' && state.status === 'ready';
     }
+    /**
+     * PR #5f (correção cronológica) — próxima cena do Play na direção TEMPORAL:
+     * mais ANTIGA → mais RECENTE. O array interno `dates` continua DESC (API),
+     * logo "avançar no tempo" = índice - 1 (0 = mais recente).
+     * Retorna `null` quando já está na cena mais recente → Play PÁRA (sem loop).
+     */
     function playerNextIndex(state) {
-      return (state.appliedIndex + 1) % state.count;
+      const idx = Number(state.appliedIndex);
+      if (!Number.isFinite(idx) || idx <= 0) return null;
+      return idx - 1;
+    }
+    /**
+     * Decisão de Início do Play (antiga → recente):
+     *  - cena intermediária/antiga selecionada → `null` (continua para frente);
+     *  - cena MAIS RECENTE selecionada → retorna o índice da cena mais ANTIGA
+     *    (reinício EXPLÍCITO da evolução completa; nunca loop infinito);
+     *  - uma única cena → `null` (o chamador pausa imediatamente).
+     */
+    function chronoPlayStartIndex(state) {
+      const next = playerNextIndex(state);
+      if (next === null && Number(state.count) > 1) return Number(state.count) - 1;
+      return null;
     }
     /** Troca de layer: congela avanço, mas preserva intenção de Play. */
     function playerBeginLayerSwap(state, layer) {
@@ -3043,6 +3104,14 @@
 
     function schedulePlayNext() {
       if (!playerCanAdvance(player)) return;
+      // PR #5f (cronológico): chegou à cena MAIS RECENTE → PÁRA explicitamente,
+      // mantém a cena selecionada e devolve o botão para "▶ Play" (sem loop).
+      const next = playerNextIndex(player);
+      if (next === null) {
+        playerPause(player);
+        setPlayButtonUI();
+        return;
+      }
       if (playTimer) clearTimeout(playTimer);
       playTimer = setTimeout(() => { playTimer = null; advanceToNext(); }, PLAY_INTERVAL_MS);
     }
@@ -3052,6 +3121,12 @@
       // (durante LOADING/ERROR o intervalo é simplesmente descartado).
       if (!playerCanAdvance(player)) return;
       const next = playerNextIndex(player);
+      if (next === null) {
+        // Cena mais recente: pausa (nunca volta para a mais antiga sozinho).
+        playerPause(player);
+        setPlayButtonUI();
+        return;
+      }
       await loadScene(next, player.appliedLayer || currentLayer, { fromPlay: true });
       // loadScene reagenda o intervalo ao aplicar com sucesso (mode=playing).
     }
@@ -3221,9 +3296,11 @@
     }
 
     document.getElementById('btn-latest').addEventListener('click', () => {
-      // "Mais recente" = cena válida MAIS RECENTE do catálogo STAC (índice 0),
-      // nunca a data de hoje.
-      if (dates.length > 0) selectDateIndex(0);
+      // PR #5f: "Mais recente" = cena válida MAIS RECENTE do catálogo,
+      // resolvida por `latestSceneIndex` (preferência explícita por
+      // `latest_date` da API; fallback documentado = dates[0] do contrato DESC).
+      const latestIdx = latestSceneIndex(dates, calendarMeta && calendarMeta.latest_date);
+      if (latestIdx >= 0) selectDateIndex(latestIdx);
     });
     document.getElementById('custom-apply').addEventListener('click', applyCustomPeriod);
 
@@ -3266,14 +3343,23 @@
       // automático só é disparado quando a cena atual está READY.
       playerPlay(player);
       setPlayButtonUI();
-      if (player.status === 'ready') schedulePlayNext();
-      else if (player.status === 'error' && lastFailedScene) {
+      if (player.status === 'ready' || player.status === 'idle') {
+        // PR #5f (cronológico): se a cena aplicada já é a MAIS RECENTE, o Play
+        // reinicia explicitamente pela mais ANTIGA (rever a evolução completa);
+        // caso contrário, continua para a frente a partir da cena atual.
+        const restart = chronoPlayStartIndex(player);
+        if (restart !== null) {
+          loadScene(restart, player.appliedLayer || currentLayer);
+        } else if (player.status === 'ready') {
+          schedulePlayNext();
+        } else {
+          loadScene(player.appliedIndex, currentLayer);
+        }
+      } else if (player.status === 'error' && lastFailedScene) {
         // Play também serve de RETRY: nunca fica preso após erro.
         const retry = lastFailedScene;
         lastFailedScene = null;
         loadScene(retry.index, retry.layer);
-      } else if (player.status === 'idle') {
-        loadScene(player.appliedIndex, currentLayer);
       }
       // Se estiver LOADING, loadScene reagendará ao aplicar (se ainda playing).
     });

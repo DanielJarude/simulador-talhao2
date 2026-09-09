@@ -36,6 +36,11 @@ def helpers() -> dict:
         "calendar": _slice(
             source, "// [3D-CALENDAR-HELPERS-START]", "// [3D-CALENDAR-HELPERS-END]"
         ),
+        # PR #5f — `latestSceneIndex`/`timelineOrderDates` (semântica visual
+        # ASC, identidade interna DESC) usados pelo wiring abaixo.
+        "chips": _slice(
+            source, "// [3D-TIMELINE-HELPERS-START]", "// [3D-TIMELINE-HELPERS-END]"
+        ),
         "wiring": _slice(
             source, "// [3D-CALENDAR-WIRING-START]", "// [3D-CALENDAR-WIRING-END]"
         ),
@@ -195,8 +200,9 @@ const sandbox = {
 };
 
 const calendarSource = process.env.CALENDAR_HELPERS;
+const chipsSource = process.env.CALENDAR_CHIPS_HELPERS;
 const wiringSource = process.env.CALENDAR_WIRING_HELPERS;
-vm.runInNewContext(calendarSource + '\n' + wiringSource, sandbox);
+vm.runInNewContext(calendarSource + '\n' + chipsSource + '\n' + wiringSource, sandbox);
 
 (async () => {
   // =====================================================================
@@ -276,6 +282,7 @@ vm.runInNewContext(calendarSource + '\n' + wiringSource, sandbox);
         cwd=REPO_ROOT,
         env={
             "CALENDAR_HELPERS": helpers["calendar"],
+            "CALENDAR_CHIPS_HELPERS": helpers["chips"],
             "CALENDAR_WIRING_HELPERS": helpers["wiring"],
         },
         capture_output=True,

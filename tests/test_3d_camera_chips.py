@@ -13,8 +13,15 @@ Extratos REAIS do `index.html`:
 Garante §22 (câmera + timeline + cache): visão oblíqua elevada nunca rasante
 nem abaixo do plano; distância proporcional ao tamanho do talhão; fit
 determinístico (reset restaura a mesma vista); chips = exatamente as datas da
-API (desc), clicáveis, com tooltip data+nuvens; destaque "aplicada" só via
-estado do player (preload não muda a seleção); reconstrução por período.
+API, clicáveis, com tooltip data+nuvens; destaque "aplicada" só via estado do
+player (preload não muda a seleção); reconstrução por período.
+
+PR #5f (sentido cronológico, 2ª rodada): a API segue DESC internamente
+(`dates[0]` = mais recente, contrato de `latest_date`/cache); a UI renderiza
+ASC — esquerda = mais antiga, direita = mais recente — via `timelineOrderDates`
++ `buildSceneChips` (identidade por `idx` interno, nunca por posição visual);
+Play direção antiga → recente, para na mais recente e reinicia pela mais
+antiga quando acionado nela; "Mais recente" via `latestSceneIndex`.
 """
 import json
 import shutil
@@ -141,7 +148,8 @@ vm.runInNewContext(
   sandbox
 );
 
-// ---- 1. UM BOTÃO POR CENA STAC: entrada (desc) = saída, sem adições ----
+// ---- 1. UM BOTÃO POR CENA STAC — VISUAL ASC (antiga → recente) ----
+// API continua DESC internamente: 0 = mais recente (30/08); a UI reverte.
 const REAL = ['2026-08-30', '2026-08-27', '2026-08-15',
               '2026-07-31', '2026-07-26', '2026-07-18'];
 const CAL = [
@@ -150,18 +158,40 @@ const CAL = [
 ];
 const chips = sandbox.buildSceneChips(REAL, CAL);
 assert.equal(chips.length, REAL.length, 'exatamente um chip por cena');
-assert.deepEqual(Array.from(chips.map(c => c.date)), REAL, 'ordem do catálogo preservada (desc)');
-assert.deepEqual(Array.from(chips.map(c => c.idx)), [0, 1, 2, 3, 4, 5]);
+assert.deepEqual(Array.from(chips.map(c => c.date)),
+  ['2026-07-18', '2026-07-26', '2026-07-31', '2026-08-15', '2026-08-27', '2026-08-30'],
+  'timeline VISUAL: mais antiga → mais recente (ASC)');
+assert.deepEqual(Array.from(chips.map(c => c.idx)), [5, 4, 3, 2, 1, 0],
+  'identidade = índice no array INTERNO (API DESC), não posição visual');
+assert.deepEqual(Array.from(chips.map(c => c.visualIdx)), [0, 1, 2, 3, 4, 5]);
 assert.ok(chips.every(c => c.date && c.day && c.month && c.year), 'dia/mês/ano preenchidos');
-assert.equal(chips[0].label, '30 AGO');
+assert.equal(chips[0].label, '18 JUL', 'primeiro chip visual = mais antiga');
 assert.equal(chips[0].subLabel, '2026');
+assert.equal(chips[5].label, '30 AGO', 'último chip visual = mais recente');
+assert.equal(chips[5].idx, 0, 'a cena mais recente aponta para dates[0] interno');
+assert.equal(chips[0].idx, 5, 'a cena mais antiga aponta para o último índice interno');
 assert.ok(!chips.some(c => c.date === '2025-04-07'), 'nenhuma data fixa/demo entra');
 
+// ---- 1b. SEM PERDAS NEM DUPLICATAS + helper de ordem explícito ----
+assert.equal(new Set(chips.map(c => c.date)).size, REAL.length, 'nenhuma cena duplicada');
+assert.deepEqual(Array.from(sandbox.timelineOrderDates(REAL)),
+  ['2026-07-18', '2026-07-26', '2026-07-31', '2026-08-15', '2026-08-27', '2026-08-30'],
+  'timelineOrderDates = cópia ASC (não muta a API)');
+assert.deepEqual(REAL, ['2026-08-30', '2026-08-27', '2026-08-15',
+  '2026-07-31', '2026-07-26', '2026-07-18'], 'dates interno permanece DESC (contrato)');
+
+// ---- 1c. "MAIS RECENTE" por latest_date (nunca pela ordem visual) ----
+assert.equal(sandbox.latestSceneIndex(REAL, '2026-08-30'), 0, 'latest_date → dates[0]');
+assert.equal(sandbox.latestSceneIndex(REAL, '2026-07-18'), 5, 'latest_date explícito vence');
+assert.equal(sandbox.latestSceneIndex(REAL, '1999-01-01'), 0, 'não encontrado → contrato DISC (dates[0])');
+assert.equal(sandbox.latestSceneIndex(REAL, null), 0);
+assert.equal(sandbox.latestSceneIndex([], '2026-08-30'), -1, 'calendário vazio → -1');
+
 // ---- 2. TOOLTIP: data completa + nuvens do catálogo (pt-BR, vírgula) ----
-assert.ok(chips[0].title.includes('30/08/2026'), 'tooltip com a data completa');
-assert.ok(chips[0].title.includes('Nuvens: 9,8%'), 'nuvens com vírgula decimal');
-assert.equal(chips[0].cloud, 9.75, 'nuvens preservadas no chip');
-assert.equal(chips[1].cloud, 22.5);
+assert.ok(chips[5].title.includes('30/08/2026'), 'tooltip com a data completa');
+assert.ok(chips[5].title.includes('Nuvens: 9,8%'), 'nuvens com vírgula decimal');
+assert.equal(chips[5].cloud, 9.75, 'nuvens preservadas no chip');
+assert.equal(chips[4].cloud, 22.5);
 assert.equal(chips[2].cloud, null, 'sem metadado → cloud null');
 
 // ---- 3. DATA SEM METADADO → nuvens '—' (nunca inventa) ----
@@ -172,12 +202,15 @@ assert.ok(sandbox.sceneChipTitle('2026-08-15', { cloud_cover: 5.56 }).includes('
 assert.equal(Array.from(sandbox.buildSceneChips([], [])).length, 0);
 assert.equal(Array.from(sandbox.buildSceneChips(undefined, [])).length, 0);
 
-// ---- 5. 20+ CENAS: todos os chips gerados, navegáveis por índice ----
+// ---- 5. 20+ CENAS: todos os chips gerados, navegáveis ----
 const many = Array.from({ length: 24 }, (_, i) =>
   `2026-08-${String(30 - i).padStart(2, '0')}`);
 const chipsMany = sandbox.buildSceneChips(many, []);
 assert.equal(chipsMany.length, 24, '20+ cenas → 24 chips');
-assert.equal(chipsMany.at(-1).idx, 23);
+assert.equal(chipsMany[0].date, '2026-08-07', 'começa na mais antiga');
+assert.equal(chipsMany.at(-1).date, '2026-08-30', 'termina na mais recente');
+assert.equal(chipsMany[0].idx, 23, 'mais antiga = último índice interno');
+assert.equal(chipsMany.at(-1).idx, 0, 'mais recente = dates[0] interno');
 
 process.stdout.write(JSON.stringify({ ok: true }));
 """
@@ -285,45 +318,51 @@ vm.runInNewContext(
   sandbox
 );
 
-// player com cena 2 APLICADA (layer ndvi) — única fonte do destaque
+// player com cena INTERNA 2 (15/08/2026) APLICADA (layer ndvi) — única fonte do destaque.
+// Visual ASC: chip[0]=15/08(idx2) · chip[1]=27/08(idx1) · chip[2]=30/08(idx0).
 sandbox.player = sandbox.createTimelineMachine(2, 3);
 sandbox.player.appliedLayer = 'ndvi';
 sandbox.preloadStates = new Map();
 sandbox.sceneCache = sandbox.createSceneCache(12);
-// cena 0 já pré-carregada (preload) — NUNCA pode virar seleção
+// cena interna 0 (30/08 = mais recente) já pré-carregada — NUNCA pode virar seleção
 sandbox.preloadStates.set('7|3|2026-08-30|ndvi', 'ready');
 
 sandbox.renderDatePills();
 
-// ---- 1. UM CHIP POR DATA DA API, labels compactos + tooltip real ----
+// ---- 1. UM CHIP POR DATA DA API, VISUAL ASC (antiga → recente), tooltip real ----
 const chips = documentShim.querySelectorAll('[id^="scene-chip-"]');
 assert.equal(chips.length, 3, 'um botão por cena real');
-assert.deepEqual(Array.from(chips.map(c => c.id)), ['scene-chip-0', 'scene-chip-1', 'scene-chip-2']);
-assert.equal(chips[0].children[0].innerText, '30 AGO');
-assert.equal(chips[0].children[1].innerText, '2026');
-assert.ok(chips[0].title.includes('30/08/2026') && chips[0].title.includes('9,8%'),
+assert.deepEqual(Array.from(chips.map(c => c.id)),
+  ['scene-chip-2', 'scene-chip-1', 'scene-chip-0'],
+  'id = identidade INTERNA (API DESC); DOM renderiza antiga → recente');
+assert.equal(chips[0].children[0].innerText, '15 AGO', 'primeiro chip = mais antiga');
+assert.equal(chips[2].children[0].innerText, '30 AGO', 'último chip = mais recente');
+assert.equal(chips[2].children[1].innerText, '2026');
+assert.ok(chips[2].title.includes('30/08/2026') && chips[2].title.includes('9,8%'),
   'tooltip: data completa + nuvens');
 
-// ---- 2. ESTADOS DISCRETOS: applied = só a cena COMITADA (2); ready=0; av=1 ----
-assert.ok(chips[2].classList.contains('applied'), 'cena comitada → applied');
-assert.ok(chips[2].classList.contains('active'), 'aplicada recebe destaque inequívoco');
-assert.ok(chips[0].classList.contains('ready'), 'preload pronta → ready');
-assert.ok(!chips[0].classList.contains('active'), 'PRELOAD NÃO muda a seleção');
+// ---- 2. ESTADOS DISCRETOS por IDENTIDADE de cena (não por posição visual) ----
+assert.ok(chips[0].classList.contains('applied'), 'cena comitada (15/08) → applied');
+assert.ok(chips[0].classList.contains('active'), 'aplicada recebe destaque inequívoco');
+assert.ok(chips[2].classList.contains('ready'), 'preload da mais recente (30/08) → ready');
+assert.ok(!chips[2].classList.contains('active'), 'PRELOAD NÃO muda a seleção');
 assert.ok(chips[1].classList.contains('available'), 'sem estado → available');
 
-// ---- 3. CLIQUE → selectDateIndex da CENA correspondente ----
-chips[1].onclick();
-assert.deepEqual(calls.select, [1], 'clique no chip chama a cena certa');
+// ---- 3. CLIQUE → selectDateIndex da CENA correspondente (índice interno) ----
+chips[1].onclick();                       // 27/08 (idx interno 1)
+assert.deepEqual(calls.select, [1], 'clique no chip chama a cena certa (por data)');
 
-// ---- 4. TROCA DE PERÍODO → reconstrói do zero (nenhum chip antigo fica) ----
+// ---- 4. TROCA DE PERÍODO → reconstrói do zero, SEMPRE antiga → recente ----
 sandbox.dates = ['2026-08-30', '2026-08-27', '2026-08-15', '2026-07-31', '2026-07-26'];
 sandbox.renderDatePills();
 const rebuilt = documentShim.querySelectorAll('[id^="scene-chip-"]');
 assert.equal(rebuilt.length, 5, 'período novo → 5 chips, sem sobras');
 assert.deepEqual(Array.from(rebuilt.map(c => c.id)),
-  ['scene-chip-0', 'scene-chip-1', 'scene-chip-2', 'scene-chip-3', 'scene-chip-4']);
-// aplicada (índice 2) continua destacada após o rebuild
+  ['scene-chip-4', 'scene-chip-3', 'scene-chip-2', 'scene-chip-1', 'scene-chip-0'],
+  'visual ASC: 26/07 → 31/07 → 15/08 → 27/08 → 30/08');
+// aplicada (15/08, idx interno 2) continua destacada após o rebuild
 assert.ok(rebuilt[2].classList.contains('applied') && rebuilt[2].classList.contains('active'));
+assert.equal(rebuilt[2].id, 'scene-chip-2');
 
 // ---- 5. CARREGANDO → loading; erro em OUTRA cena → error (ponto discreto);
 //         'error' na cena APLICADA não vence o estado 'applied' ----
@@ -332,11 +371,11 @@ sandbox.preloadStates.set('7|3|2026-08-15|ndvi', 'error');   // aplicada: vence 
 sandbox.preloadStates.set('7|3|2026-07-26|ndvi', 'error');   // outra cena: error
 sandbox.updateTimelinePillStates();
 const after = documentShim.querySelectorAll('[id^="scene-chip-"]');
-assert.ok(after[1].classList.contains('loading'));
+assert.ok(after[3].classList.contains('loading'), '27/08 (visual posição 3) em loading');
 assert.ok(after[2].classList.contains('applied'), 'aplicada prevalece sobre erro no mesmo key');
 assert.ok(after[2].classList.contains('active'));
 assert.ok(!after[2].classList.contains('error'));
-assert.ok(after[4].classList.contains('error'), 'erro visível em cena não aplicada');
+assert.ok(after[0].classList.contains('error'), 'erro na 26/07 (mais antiga, visual 0) correto');
 
 process.stdout.write(JSON.stringify({ ok: true }));
 """

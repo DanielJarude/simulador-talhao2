@@ -1173,3 +1173,82 @@ DEM OK). O requisito "timeline = cenas reais do STAC" não estava funcionando na
   PostgreSQL, Docker e demais páginas: **NÃO alterados**.
 
 **Status: PRONTO PARA NOVO PLAYTEST HUMANO.** Sem merge; branch `arena/01a083cd-simulador-talhao2`.
+
+## Anexo I — Sentido cronológico da timeline (PR #5f, 2ª rodada, 09/09/2026)
+
+### I1 — Onde a ordem DESC estava aplicada (causa do playtest)
+
+A API `/api/talhao/{farm_id}/dates` entrega as cenas **mais recente primeiro**
+(`dates[0]` = mais recente; contrato dele: `latest_date`, cache, preload e
+consulta STAC). O PR anterior renderizava os chips nessa ordem **direta**:
+`buildSceneChips` mapeava `dates` sem reordenar → a timeline aparecia
+30 AGO → 27 AGO → … → 16 JUL, contrariando a leitura natural do usuário
+(esquerda = passado).
+
+### I2 — Separação ordem da API × ordem visual
+
+- `dates` (array interno) **continua exatamente como a API devolve**: DESC.
+  Nada do contrato STAC foi alterado; backend intocado.
+- `timelineOrderDates(datesList)` — helper puro que devolve **cópia ASC**
+  (sort de ISO `AAAA-MM-DD`), sem mutar a entrada.
+- `buildSceneChips(dates, calendar)` agora itera a cópia ASC e anota **dois
+  índices**: `idx` = identidade no array interno (usado por cache/load/estados/
+  clique) e `visualIdx` = posição visual — nunca se usa posição visual como
+  identidade.
+- `latestSceneIndex(dates, latest_date)` — resolve a cena mais recente por
+  `latest_date` da API (preferência); ausente/não encontrado → fallback
+  documentado `dates[0]` (contrato DESC). Nunca depende da ordem visual.
+
+### I3 — Ordem final exibida
+
+```
+PASSADO                                        MAIS RECENTE
+16 JUL → 18 JUL → 26 JUL → 31 JUL → 15 AGO → 27 AGO → 30 AGO
+```
+Vale para 30d/60d/90d/6m/1a/Personalizado (reconstrução sempre ASC; novas cenas
+antigas entram pela esquerda; a mais recente fica na extrema direita).
+
+### I4 — Comportamentos
+
+- **"Mais recente"**: `latestSceneIndex(dates, calendarMeta.latest_date)` →
+  `selectDateIndex(idx)`; `updateTimelineUI` faz `scrollIntoView` do chip
+  (scroll automático §13).
+- **Play (direção)**: antiga → recente. Como o array interno é DESC, avançar no
+  tempo = `appliedIndex - 1` (`playerNextIndex`); `null` quando já é a mais
+  recente.
+- **Chegada à mais recente**: `schedulePlayNext`/`advanceToNext` → pausam o
+  player (mode=paused), mantêm a cena selecionada e devolvem o botão a "▶ Play"
+  — **sem loop**.
+- **Início em cena intermediária**: continua para frente (31/07 → 15/08 → 27/08
+  → 30/08).
+- **Início na mais recente**: `chronoPlayStartIndex` devolve a mais antiga
+  (`count-1`) → reinício explícito da evolução completa (aceito no §7).
+- **Preload/cache**: intactos — chaves continuam `farmId|talhao|data|layer`
+  (por data, nunca posição visual); nenhum request duplicado, cache/texture
+  cache inalterados; prioridade manual > play > preload preservada.
+- **Estados**: `available/loading/ready/applied/error` por `chip.idx` (data);
+  preload continua `ready` (nunca seleção); `applied` só no COMMIT.
+- **What-If / proveniência**: inalterados (usam `appliedMeta` do COMMIT).
+
+### I5 — Testes (ajustados/adicionados)
+
+- `tests/test_3d_player_state.py` — máquina: `playerNextIndex` cronológico
+  (3→2; 6→5; 0→null), `chronoPlayStartIndex` (mais recente → count-1;
+  intermediária → null; 1 cena → null), layer swap (avança para applied-1).
+- `tests/test_3d_load_scene_wiring.py` — Play antiga→recente com cenas prontas
+  **sem request**, parada na mais recente (sem loop) e layer swap partindo de
+  cena intermediária (Play preservado).
+- `tests/test_3d_camera_chips.py` — `timelineOrderDates` ASC (não muta a API),
+  `latestSceneIndex` (latest_date explícito), 1-chip-por-data ASC no DOM com
+  identidade interna correta, estados por data, período reconstrói ASC, 24 cenas.
+- `tests/test_3d_calendar_timeline.py` — harness agora inclui o bloco
+  `[3D-TIMELINE-HELPERS]` (funções usadas pelo `refreshRealTimeline`).
+
+### I6 — Qualidade
+
+- `pytest tests/ -q` → **265 passed, 1 skipped, 24 warnings**;
+- `node --check` do JS inline extraído → **OK**;
+- backend/STAC/câmera/DEM/exagero/iluminação/grade/Resetar visão/NASA POWER/
+  auth/cadastro/analytics/outras páginas: **NÃO alterados**.
+
+**Status: PRONTO PARA RETESTE DA TIMELINE.** Sem merge; branch `arena/01a083cd-simulador-talhao2`.

@@ -69,15 +69,15 @@ const realMeta = {
   provider: 'Copernicus Data Space Ecosystem',
 };
 
-// ---- 1. Play NÃO avança durante loading ----
+// ---- 1. Play NÃO avança durante loading; direção CRONOLÓGICA (desc→asc) ----
 {
-  const st = sandbox.createTimelineMachine(3, 7);
+  const st = sandbox.createTimelineMachine(3, 7); // 3 = data média (array interno DESC)
   sandbox.playerPlay(st);
-  sandbox.playerStartLoad(st, 4, 'ndvi');
+  sandbox.playerStartLoad(st, 2, 'ndvi');
   assert.equal(st.status, 'loading');
   assert.equal(st.appliedIndex, 3, 'data aplicada intacta durante loading');
   assert.equal(sandbox.playerCanAdvance(st), false, 'loading bloqueia avanço');
-  assert.equal(sandbox.playerNextIndex(st), 4, 'próxima = aplicada+1 (não a pendente enquanto não aplicou)');
+  assert.equal(sandbox.playerNextIndex(st), 2, 'próxima temporal = aplicada-1 (mais recente, internamente DESC)');
 }
 
 // ---- 2. Data só muda APÓS aplicar (CARREGAR → APLICAR) ----
@@ -139,7 +139,7 @@ const realMeta = {
   assert.equal(st.appliedLayer, 'ndmi');
   assert.equal(st.resumeAfterLayer, false, 'aplicado → flag de retomada consumida');
   assert.equal(sandbox.playerCanAdvance(st), true, 'Play retomado após aplicar');
-  assert.equal(sandbox.playerNextIndex(st), 4, 'avança a partir da data aplicada');
+  assert.equal(sandbox.playerNextIndex(st), 2, 'avança na direção temporal (aplicada-1)');
 }
 
 // ---- 7. Falha → error + PAUSA (recuperável, nunca pula) ----
@@ -209,7 +209,21 @@ const realMeta = {
   assert.equal(sandbox.isAbortError({ name: 'AbortError' }), true);
   assert.equal(sandbox.isAbortError(new Error('The operation was aborted')), true);
   assert.equal(sandbox.isAbortError(new Error('HTTP 500')), false);
-  assert.equal(sandbox.playerNextIndex(sandbox.createTimelineMachine(6, 7)), 0, 'volta ao início');
+
+  // ---- 11. DIREÇÃO CRONOLÓGICA DO PLAY (antiga → recente; sem loop) ----
+  {
+    const mid = sandbox.createTimelineMachine(3, 7);
+    const oldest = sandbox.createTimelineMachine(6, 7);
+    const newest = sandbox.createTimelineMachine(0, 7);
+    const single = sandbox.createTimelineMachine(0, 1);
+    assert.equal(sandbox.playerNextIndex(mid), 2, 'intermediária → avança p/ mais recente');
+    assert.equal(sandbox.playerNextIndex(oldest), 5, 'mais antiga → avança para a anterior');
+    assert.equal(sandbox.playerNextIndex(newest), null, 'mais recente → null (PARA, sem loop)');
+    // reinício EXPLÍCITO: aplicada = mais recente → Play volta à mais antiga
+    assert.equal(sandbox.chronoPlayStartIndex(newest), 6, 'Play na mais recente reinicia pela mais antiga');
+    assert.equal(sandbox.chronoPlayStartIndex(mid), null, 'cena intermediária NÃO reinicia');
+    assert.equal(sandbox.chronoPlayStartIndex(single), null, 'uma única cena: sem reinício');
+  }
 }
 
 process.stdout.write(JSON.stringify({ ok: true }));
