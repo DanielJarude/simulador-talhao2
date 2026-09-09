@@ -697,6 +697,7 @@
           <button class="exag-btn" type="button" data-exag="1">1×</button>
           <button class="exag-btn active" type="button" data-exag="2">2×</button>
           <button class="exag-btn" type="button" data-exag="3">3×</button>
+          <button class="exag-btn" type="button" data-exag="5">5×</button>
         </div>
       </div>
 
@@ -1457,19 +1458,21 @@
     // O DEM (Copernicus COPERNICUS_30/90) é normalizado 0–1 pelo backend;
     // aqui ele desloca os VÉRTICES da malha (eixo local Z → mundo Y) e
     // recalcula as normais — o terreno é GEOMETRIA, não truque de câmera.
+    // PR #5g: escala HORIZONTAL × VERTICAL explícita, altitude RELATIVA,
+    // lateral (skirt) + base, hillshade multiplicativo e estatísticas [3D-DEM].
     // =====================================================================
-    const DEM_EXAGGERATION_STEPS = [1, 2, 3];
-    const DEM_EXAGGERATION_DEFAULT = 2;
+    const DEM_EXAGGERATION_STEPS = [1, 2, 3, 5];  // 5× = opção visual extra
+    const DEM_EXAGGERATION_DEFAULT = 2;           // default NÃO muda (2×)
 
     /** Configuração da câmera 3D (oblíqua aérea, órbita/zoom/limites). */
     // «var» para ficar visível ao harness Node (VM); no navegador continua local.
     var CAMERA_PRESET = {
       fov: 45,
-      // PR #5f: a posição INICIAL vem do enquadramento (fitCameraToTerrain);
+      // PR #5f/#5g: a posição INICIAL vem do enquadramento (fitCameraToTerrain);
       // estes valores são o fallback (talhão 50×50) e as regras geométricas.
-      elevationDeg: 42,                 // ~35–55° acima do plano (nunca rasante)
+      elevationDeg: 42,                 // 35–50° (playtest aprovado): SUPERFÍCIE + LATERAL
       azimuthDeg: 35,                   // diagonal: largura + profundidade visíveis
-      fitMargin: 1.25,                  // folga p/ talhão inteiro no quadro
+      fitMargin: 1.3,                   // folga p/ talhão inteiro no quadro
       position: [26, 58, 66],
       target: [0, 0, 0],
       minDistance: 10,
@@ -1479,12 +1482,278 @@
       rotate: true, zoom: true, pan: true,
       rotateSpeed: 0.85, zoomSpeed: 1.0, panSpeed: 0.75,
     };
+    /**
+     * Regras de ESCALA e VOLUME (PR #5g) — sem magic numbers:
+     *  - `planeUnits` (50) = lado maior da malha em unidades de mundo;
+     *  - `worldUnitsPerMeterHorizontal` = planeUnits / spanMetros (dinâmico);
+     *  - em 1× o eixo VERTICAL usa a MESMA conversão (proporção topográfica
+     *    real: 23 m de relevo em 900 m de fazenda ≈ 2,6% da extensão);
+     *  - exagero multiplica SOMENTE a diferença relativa de altitude;
+     *  - base (espessura do bloco) = `baseDepthRatio` × extensão (mínimo fixo).
+     * Valores REAIS exibidos (592–615 m, alívio ~23 m) NUNCA são alterados.
+     */
+    var TERRAIN_SCALE = {
+      planeUnits: 50,
+      exagOptions: DEM_EXAGGERATION_STEPS,
+      defaultExag: DEM_EXAGGERATION_DEFAULT,
+      baseDepthRatio: 0.08,             // espessura da base = 8% da extensão
+      baseDepthMin: 1.0,                // piso em unidades de mundo
+      hillshadeStrength: 1.0,           // 0 = hillshade desligado
+    };
     /** Regras do terreno expostas para teste (const não viram global em VM). */
     var DEM_RULES = {
       steps: DEM_EXAGGERATION_STEPS,
       default: DEM_EXAGGERATION_DEFAULT,
       camera: CAMERA_PRESET,
+      scale: TERRAIN_SCALE,
     };
+
+    /** Unidades de mundo por METRO HORIZONTAL (plano de `planeUnits` = span). */
+    function terrainWorldUnitsPerMeter(spanMeters, planeUnits = 50) {
+      const span = Math.max(Number(spanMeters) || 1, 1);
+      return planeUnits / span;
+    }
+
+    /**
+     * ALTURA RELATIVA em unidades de mundo: `sample01` ∈ [0,1] é a altura
+     * normalizada do DEM (0 = elevação mínima, 1 = máxima) — a base fica em 0,
+     * NUNCA em Y=592. `reliefWorld` = alívio em unidades (1×); `exag` ∈ 1|2|3|5
+     * multiplica SOMENTE a diferença relativa. Finito p/ qualquer entrada.
+     */
+    function terrainRelativeY(sample01, reliefWorld, exag) {
+      const s = Math.max(0, Math.min(1, Number(sample01) || 0));
+      const relief = Math.max(Number(reliefWorld) || 0, 0);
+      const e = Math.max(1, Number(exag) || 1);
+      return s * relief * e;
+    }
+
+    /** Amplitude VERTICAL esperada em unidades de mundo (metas por exagero). */
+    function terrainAmplitudeWorld(reliefMeters, spanMeters, planeUnits = 50, exag = 1) {
+      const relief = Math.max(Number(reliefMeters) || 0, 0);
+      return terrainRelativeY(1, demReliefWorldUnits(relief, spanMeters, planeUnits), exag);
+    }
+
+    /** Espessura da base (proporcional à cena; nunca um valor absurdo). */
+    function terrainBaseDepthWorld(extent) {
+      const e = Math.max(Number(extent) || 1, 1);
+      return Math.max(e * TERRAIN_SCALE.baseDepthRatio, TERRAIN_SCALE.baseDepthMin);
+    }
+
+    /**
+     * Converte as posições LOCAIS da PlaneGeometry (x, y, z=altura) para o
+     * MUNDO (x, y=altura, z=-y) — mesma rotação aplicada aos meshes.
+     * Retorna Float32Array novo (nunca muta a malha).
+     */
+    function terrainWorldPositionsFromLocal(arr) {
+      const n = Math.floor((arr ? arr.length : 0) / 3);
+      const out = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) {
+        const j = i * 3;
+        out[j] = arr[j];        // x
+        out[j + 1] = arr[j + 2]; // y mundo = ALTURA (relativa, 0 = mín)
+        out[j + 2] = -arr[j + 1]; // z mundo
+      }
+      return out;
+    }
+
+    /** Estatísticas XY Z do terreno já em coordenadas de MUNDO. */
+    function terrainWorldStats(world) {
+      if (!world || world.length < 3) return null;
+      let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+      let minY = Infinity, maxY = -Infinity;
+      for (let i = 0; i < world.length; i += 3) {
+        const x = world[i], y = world[i + 1], z = world[i + 2];
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+      }
+      return {
+        minX, maxX, minZ, maxZ, minY, maxY,
+        extent: Math.max(maxX - minX, maxZ - minZ, 1e-9),
+        amplitudeY: maxY - minY,
+      };
+    }
+
+    /**
+     * LATERAL DO BLOCO (skirt) + BASE inferior — geometria PURA:
+     * para cada vértice da borda da malha é duplicado um vértice em `baseY`,
+     * formando paredes verticais que fecham o contorno; a base é fechada com
+     * 2 triângulos. Tudo em coordenadas de MUNDO (x, y=altura, z).
+     * Retorna { positions, indices, vertexCount, triangleCount } p/ BufferGeometry.
+     */
+    function buildTerrainSkirtGeometryData(world, cols, rows, baseY) {
+      const positions = [];
+      const indices = [];
+      const push = (x, y, z) => {
+        positions.push(x, y, z);
+        return positions.length / 3 - 1;
+      };
+      const idx = (ix, iy) => (iy * cols + ix) * 3;
+      // Arestas: bottom (iy=0), top (iy=rows-1), left (ix=0, 1..rows-2), right
+      const edges = [];
+      for (let ix = 0; ix < cols - 1; ix++) {        // borda inferior (v=0)
+        edges.push([idx(ix, 0), idx(ix + 1, 0)]);
+      }
+      for (let ix = 0; ix < cols - 1; ix++) {        // borda superior (v=1)
+        edges.push([idx(ix + 1, rows - 1), idx(ix, rows - 1)]);
+      }
+      for (let iy = 0; iy < rows - 1; iy++) {        // esquerda (u=0)
+        edges.push([idx(0, iy + 1), idx(0, iy)]);
+      }
+      for (let iy = 0; iy < rows - 1; iy++) {        // direita (u=1)
+        edges.push([idx(cols - 1, iy), idx(cols - 1, iy + 1)]);
+      }
+      edges.forEach(([a, b]) => {
+        const ax = world[a], ay = world[a + 1], az = world[a + 2];
+        const bx = world[b], by = world[b + 1], bz = world[b + 2];
+        const t0 = push(ax, ay, az);                 // topo (acompanha o DEM)
+        const b0 = push(ax, baseY, az);              // base
+        const t1 = push(bx, by, bz);
+        const b1 = push(bx, baseY, bz);
+        indices.push(t0, b0, b1);                    // face 1 (parede)
+        indices.push(t0, b1, t1);                    // face 2 (parede)
+      });
+      // Base inferior (2 triângulos ligando os 4 cantos em baseY)
+      const s = terrainWorldStats(world);
+      const c0 = push(s.minX, baseY, s.minZ);
+      const c1 = push(s.maxX, baseY, s.minZ);
+      const c2 = push(s.maxX, baseY, s.maxZ);
+      const c3 = push(s.minX, baseY, s.maxZ);
+      indices.push(c0, c2, c1, c0, c3, c2);
+      return {
+        positions: new Float32Array(positions),
+        indices: new Uint32Array(indices),
+        vertexCount: positions.length / 3,
+        triangleCount: indices.length / 3,
+      };
+    }
+
+    /** Ponto dentro de polígono 2D (ray casting) — máscara do contorno. */
+    function pointInPolygon(x, y, poly) {
+      if (!poly || poly.length < 3) return false;
+      let inside = false;
+      for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+        const xi = poly[i][0], yi = poly[i][1];
+        const xj = poly[j][0], yj = poly[j][1];
+        const intersect = ((yi > y) !== (yj > y)) &&
+          (x < ((xj - xi) * (y - yi)) / (yj - yi) + xi);
+        if (intersect) inside = !inside;
+      }
+      return inside;
+    }
+
+    /**
+     * Remove da malha os triângulos FORA do polígono real do talhão (KML):
+     * a superfície passa a ser o CONTORNO do talhão (grade 97×97 preservada,
+     * textura/UV intactos) — nunca um retângulo com máscara pintada.
+     */
+    function maskPlaneGeometryToPolygon(geometry, outlineLocal) {
+      const idx = geometry && geometry.index;
+      const pos = geometry && geometry.attributes && geometry.attributes.position;
+      if (!idx || !pos || !outlineLocal || outlineLocal.length < 3) return false;
+      const src = idx.array;
+      const arr = pos.array;
+      const keep = [];
+      for (let t = 0; t < src.length; t += 3) {
+        const a = src[t] * 3, b = src[t + 1] * 3, c = src[t + 2] * 3;
+        const cx = (arr[a] + arr[b] + arr[c]) / 3;
+        const cy = (arr[a + 1] + arr[b + 1] + arr[c + 1]) / 3;
+        if (pointInPolygon(cx, cy, outlineLocal)) {
+          keep.push(src[t], src[t + 1], src[t + 2]);
+        }
+      }
+      geometry.setIndex(keep);
+      return true;
+    }
+
+    /**
+     * Amostra bilinear a altura do RELEVO já aplicado (coordenadas de mundo)
+     * em qualquer (x, z) — usada para as paredes acompanharem a topografia.
+     */
+    function terrainGridSampleWorld(world, cols, rows, x, z, stats) {
+      if (!world || !cols || !rows || !stats) return 0;
+      const u = Math.max(0, Math.min(1, (Number(x) - stats.minX) / Math.max(stats.maxX - stats.minX, 1e-9)));
+      const v = Math.max(0, Math.min(1, (Number(z) - stats.minZ) / Math.max(stats.maxZ - stats.minZ, 1e-9)));
+      const gx = u * (cols - 1), gy = v * (rows - 1);
+      const x0 = Math.floor(gx), y0 = Math.floor(gy);
+      const x1 = Math.min(x0 + 1, cols - 1), y1 = Math.min(y0 + 1, rows - 1);
+      const fx = gx - x0, fy = gy - y0;
+      const at = (cx, cy) => world[(cy * cols + cx) * 3 + 1];
+      const top = at(x0, y0) * (1 - fx) + at(x1, y0) * fx;
+      const bottom = at(x0, y1) * (1 - fx) + at(x1, y1) * fx;
+      return top * (1 - fy) + bottom * fy;
+    }
+
+    /**
+     * PAREDES DO CONTORNO REAL (PR #5g): para CADA aresta do polígono do
+     * talhão (coordenadas de MUNDO [x,z]), um quadrilátero vertical do topo
+     * (altura do DEM na aresta) até `baseY`. O bloco é o talhão, não a caixa.
+     */
+    function buildPolygonSkirtGeometryData(outlineWorld, heightFn, baseY) {
+      const positions = [];
+      const indices = [];
+      const push = (x, y, z) => {
+        positions.push(x, y, z);
+        return positions.length / 3 - 1;
+      };
+      for (let i = 0; i < outlineWorld.length; i++) {
+        const p0 = outlineWorld[i];
+        const p1 = outlineWorld[(i + 1) % outlineWorld.length];
+        const x0 = p0[0], z0 = p0[1];
+        const x1 = p1[0], z1 = p1[1];
+        const y0 = heightFn(x0, z0);
+        const y1 = heightFn(x1, z1);
+        const t0 = push(x0, y0, z0);
+        const b0 = push(x0, baseY, z0);
+        const t1 = push(x1, y1, z1);
+        const b1 = push(x1, baseY, z1);
+        indices.push(t0, b0, b1, t0, b1, t1);
+      }
+      return {
+        positions: new Float32Array(positions),
+        indices: new Uint32Array(indices),
+        vertexCount: positions.length / 3,
+        triangleCount: indices.length / 3,
+      };
+    }
+
+    /**
+     * HILLSHADE multiplicativo subtil por vértice (PR #5g): calcula a normal
+     * do relevo pelo gradiente e aplica lambert contra a luz direcional.
+     * Plano (normal ↑) → fator ≈ 1.0 (cores Sentinel PRESERVADAS); encostas
+     * voltadas à luz até ~1.18, opostas até ~0.82. O valor é usado como
+     * `vertexColors` — o material multiplica a textura por este fator.
+     */
+    function terrainHillshadeColors(world, cols, rows, strength = TERRAIN_SCALE.hillshadeStrength) {
+      const n = cols * rows;
+      const colors = new Float32Array(n * 3);
+      const L = [-0.55, 1.0, 0.6];                    // mesma direção da luz diag.
+      const ll = Math.hypot(L[0], L[1], L[2]) || 1;
+      const Lx = L[0] / ll, Ly = L[1] / ll, Lz = L[2] / ll;
+      const flatLambert = Ly;                         // normal (0,1,0) · L
+      const k = Math.max(0, Number(strength) || 0);
+      for (let iy = 0; iy < rows; iy++) {
+        for (let ix = 0; ix < cols; ix++) {
+          const i = (iy * cols + ix) * 3;
+          const xm = Math.max(0, ix - 1), xp = Math.min(cols - 1, ix + 1);
+          const ym = Math.max(0, iy - 1), yp = Math.min(rows - 1, iy + 1);
+          const dhdx = (world[(iy * cols + xp) * 3 + 1] - world[(iy * cols + xm) * 3 + 1])
+            / Math.max(xp - xm, 1);
+          const dhdz = (world[(yp * cols + ix) * 3 + 1] - world[(ym * cols + ix) * 3 + 1])
+            / Math.max(yp - ym, 1);
+          let nx = -dhdx, ny = 1, nz = -dhdz;
+          const nl = Math.hypot(nx, ny, nz) || 1;
+          nx /= nl; ny /= nl; nz /= nl;
+          const lam = Math.max(0, nx * Lx + ny * Ly + nz * Lz);
+          const rel = flatLambert > 1e-6 ? lam / flatLambert : 1;
+          const shade = Math.max(0.8, Math.min(1.2, 1 + (rel - 1) * k));
+          colors[i] = shade;
+          colors[i + 1] = shade;
+          colors[i + 2] = shade;
+        }
+      }
+      return colors;
+    }
 
     /**
      * ENQUADRAMENTO automático (PR #5f) — matemática PURA testável:
@@ -1555,10 +1824,13 @@
 
     /**
      * Aplica o DEM à malha: `sampleFn(u, v)` → 0–1 (altura normalizada do
-     * heightmap), `reliefWorld` = alívio em unidades de mundo na escala 1×,
-     * `exaggeration` = 1|2|3 (APENAS visual — as elevações reais em metros
-     * continuam as do DEM original). Recalcula normais para o relevo ganhar
-     * sombreamento real no render.
+     * heightmap, 0 = elevação MÍNIMA), `reliefWorld` = alívio em unidades de
+     * mundo na escala 1×, `exaggeration` = 1|2|3|5 (APENAS visual — as
+     * elevações reais em metros continuam as do DEM original).
+     * PR #5g: usa ALTURA RELATIVA (`terrainRelativeY`, mín = 0) e grava em
+     * `geometry.userData` as coordenadas de MUNDO, estatísticas (min/max Y,
+     * amplitude, extent), dados da lateral/base (skirt) e cores de hillshade.
+     * Recalcula normais para o relevo ganhar sombreamento real no render.
      */
     function applyDemToGeometry(geometry, sampleFn, reliefWorld, exaggeration) {
       const pos = geometry.attributes.position;
@@ -1568,16 +1840,28 @@
       const rows = (geometry.parameters && geometry.parameters.heightSegments || segments) + 1;
       const arr = pos.array;
       const exag = Math.max(1, Number(exaggeration) || 1);
+      // 1) Desloca a ALTURA RELATIVA (0 = elevação mínima) — eixo local Z.
       for (let iy = 0; iy < rows; iy++) {
         const v = iy / (rows - 1);
         for (let ix = 0; ix < cols; ix++) {
           const u = ix / (cols - 1);
           const i = (iy * cols + ix) * 3;
-          arr[i + 2] = sampleFn(u, v) * reliefWorld * exag; // eixo local Z (→ Y no mundo)
+          arr[i + 2] = terrainRelativeY(sampleFn(u, v), reliefWorld, exag);
         }
       }
       pos.needsUpdate = true;
       if (typeof geometry.computeVertexNormals === 'function') geometry.computeVertexNormals();
+      // 2) Estatísticas/pipeline do VOLUME em coordenadas de MUNDO.
+      const world = terrainWorldPositionsFromLocal(arr);
+      const stats = terrainWorldStats(world);
+      geometry.userData = geometry.userData || {};
+      geometry.userData.terrain = {
+        worldPositions: world,
+        worldStats: stats,
+        cols, rows,
+        reliefWorld, exag, baseY: stats ? stats.minY - terrainBaseDepthWorld(stats.extent) : 0,
+        hillshade: null,
+      };
       return true;
     }
 
@@ -1589,6 +1873,19 @@
       for (let i = 2; i < arr.length; i += 3) arr[i] = 0;
       pos.needsUpdate = true;
       if (typeof geometry.computeVertexNormals === 'function') geometry.computeVertexNormals();
+      // PR #5g: mesmo SEM DEM o volume existe (base) — estatísticas válidas.
+      const world = terrainWorldPositionsFromLocal(arr);
+      const stats = terrainWorldStats(world);
+      geometry.userData = geometry.userData || {};
+      geometry.userData.terrain = {
+        worldPositions: world,
+        worldStats: stats,
+        cols: (geometry.parameters && geometry.parameters.widthSegments || 64) + 1,
+        rows: (geometry.parameters && geometry.parameters.heightSegments || 64) + 1,
+        reliefWorld: 0, exag: 1,
+        baseY: stats ? stats.minY - terrainBaseDepthWorld(stats.extent) : 0,
+        hillshade: null,
+      };
       return true;
     }
     // [3D-TERRAIN-HELPERS-END]
@@ -1629,27 +1926,43 @@
     controls.zoomSpeed = CAMERA_SETTINGS.zoomSpeed;
     controls.panSpeed = CAMERA_SETTINGS.panSpeed;
 
-    // PR #5f — iluminação que REVELA o relevo: ambiente suave + hemisférica
+    // PR #5f/#5g — iluminação que REVELA o relevo: ambiente suave + hemisférica
     // (céu/chão) + direcional LATERAL/diagonal (sombra nas encostas), sem
-    // escurecer a textura Sentinel. Grid discreto abaixo do terreno.
+    // escurecer a textura Sentinel. Sombras SUAVES (PCFSoft, 1 luz, 1024² ≈
+    // 4 MB/float) — custo pequeno; se o device for fraco, desligue em
+    // ?debug3d=1 (ver helpers de debug). Grid discreto ABAIXO do bloco.
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     [sceneReal, sceneSim].forEach(sc => {
       sc.add(new THREE.AmbientLight(0xffffff, 0.28));                    // base suave
       const hemi = new THREE.HemisphereLight(0xcfe3ff, 0x1b2430, 0.55);  // céu × solo
       sc.add(hemi);
       const dl = new THREE.DirectionalLight(0xffffff, 0.95);
       dl.position.set(-0.55, 1.0, 0.6).normalize().multiplyScalar(90);   // diagonal: revela encosta
+      // Sombra suave do bloco (orçamento: 1 casca 1024², nada de PCF grande).
+      dl.castShadow = true;
+      dl.shadow.mapSize.set(1024, 1024);
+      dl.shadow.camera.left = -40; dl.shadow.camera.right = 40;
+      dl.shadow.camera.top = 40; dl.shadow.camera.bottom = -40;
+      dl.shadow.camera.near = 10; dl.shadow.camera.far = 220;
+      dl.shadow.bias = -0.0004;
+      dl.shadow.radius = 3;                     // PCFSoft: bordas suaves
       sc.add(dl);
       const fill = new THREE.DirectionalLight(0x9cc7ff, 0.28);
       fill.position.set(70, 45, -60);
       sc.add(fill);
     });
-    // Grade discreta: acompanha o tamanho do terreno e fica ABAIXO dele.
+    // Grade discreta: acompanha o tamanho do terreno e fica ABAIXO da BASE
+    // do bloco topográfico (PR #5g) — nunca atravessa a superfície.
     let groundGridReal = null, groundGridSim = null;
     function updateGroundGrid(size) {
       const s = Math.max(Number(size) || 60, 20);
+      const t = terrainGeometry && terrainGeometry.userData && terrainGeometry.userData.terrain;
+      const baseY = (t && t.worldStats) ? t.baseY : -0.06;
+      const gap = Math.max(0.15, Math.abs(baseY) * 0.02); // folga: grade × base
       const mk = () => {
         const g = new THREE.GridHelper(s, 20, 0x2b3a52, 0x1b2436);
-        g.position.y = -0.06;
+        g.position.y = baseY - gap;
         const mats = Array.isArray(g.material) ? g.material : [g.material];
         mats.forEach(m => { m.transparent = true; m.opacity = 0.16; m.depthWrite = false; });
         return g;
@@ -1665,7 +1978,10 @@
 
     // Subdivisão do terreno: 96×96 (≈9 m por quad em talhão de ~900 m) —
     // suficiente para o DEM COPERNICUS_30 (30 m) sem custo de VRAM relevante.
+    // PR #5g: grade 1:1 com o grid do heightmap (97×97) — interpolação suave
+    // bilinear, sem resolução artificial superestimada.
     const TERRAIN_SEGMENTS = 96;
+    const DEM_GRID_SIZE = TERRAIN_SEGMENTS + 1;   // 97 → amostrado no DEM do backend
     const geo = new THREE.PlaneGeometry(50, 50, TERRAIN_SEGMENTS, TERRAIN_SEGMENTS);
 
     // ---------- CACHE DE TEXTURAS (gerenciamento de VRAM) ----------
@@ -1798,11 +2114,15 @@
     // Terreno no plano XZ (Y para cima): o deslocamento do DEM (eixo Z local
     // da PlaneGeometry) vira elevação real no eixo Y do mundo.
     meshReal.rotation.x = -Math.PI / 2;
+    // PR #5g: sombras suaves caem e os "morros" se destacam uns dos outros.
+    meshReal.castShadow = false;               // superfície: só RECEBE (custo)
+    meshReal.receiveShadow = true;
     sceneReal.add(meshReal);
 
     const matSim = new THREE.MeshStandardMaterial({ roughness: 0.85, side: THREE.DoubleSide });
     const meshSim = new THREE.Mesh(geo, matSim);
     meshSim.rotation.x = -Math.PI / 2;
+    meshSim.receiveShadow = true;
     sceneSim.add(meshSim);
 
     // Par extra para CROSSFADE visual (200–500 ms) entre cenas já prontas.
@@ -1837,22 +2157,32 @@
       box.getCenter(center);
       // Extensão dominante do talhão (largura/profundidade; relevo conta menos).
       const extent = Math.max(size.x, size.z, Math.max(size.y, 1));
+      // PR #5g — mira no MEIO do volume (topo+lateral visíveis na mesma vista)
+      // e sobe a câmera proporcionalmente à amplitude do relevo.
+      const t = meshReal.geometry.userData && meshReal.geometry.userData.terrain;
+      const stats = (t && t.worldStats) || null;
+      const targetY = stats ? (stats.minY + stats.maxY) / 2 : center.y;
+      const amp = stats ? stats.amplitudeY : 0;
       const w = container.clientWidth || window.innerWidth;
       const h = container.clientHeight || (window.innerHeight - 56);
       const aspect = Math.max((w / 2) / Math.max(h, 1), 0.2);
       const fit = computeCameraFit(extent, aspect, CAMERA_PRESET);
       camera.position.set(
         fit.position[0] + center.x,
-        fit.position[1] + center.y,
+        fit.position[1] + targetY + amp * 0.55,
         fit.position[2] + center.z
       );
-      controls.target.set(fit.target[0] + center.x, fit.target[1] + center.y, fit.target[2] + center.z);
+      controls.target.set(fit.target[0] + center.x, fit.target[1] + targetY, fit.target[2] + center.z);
       controls.minDistance = fit.minDistance;
       controls.maxDistance = fit.maxDistance;
       controls.update();
       updateGroundGrid(Math.max(size.x, size.z) * 1.4);
-      console.info(`[3D-CAM] fit: extent=${extent.toFixed(1)}u distance=${fit.distance.toFixed(1)}u elev=${fit.elevationDeg}°`);
-      return { extent, distance: fit.distance, elevationDeg: fit.elevationDeg, center: center.toArray() };
+      const baseY = stats ? (t && t.baseY) : null;
+      console.info(
+        `[3D-CAM] fit: extent=${extent.toFixed(1)}u distance=${fit.distance.toFixed(1)}u elev=${fit.elevationDeg}°` +
+        (stats ? ` minY=${stats.minY.toFixed(2)} maxY=${stats.maxY.toFixed(2)} baseY=${baseY.toFixed(2)}` : '')
+      );
+      return { extent, distance: fit.distance, elevationDeg: fit.elevationDeg, center: center.toArray(), targetY };
     }
 
     // =====================================================================
@@ -2473,9 +2803,61 @@
     let talhaoOutlineReal = null;
     let talhaoOutlineSim = null;
 
+    // PR #5g — LATERAIS + BASE do bloco topográfico (volume real, não "folha").
+    // Geometria derivada da malha do terreno (mesma borda + mesmo DEM), então
+    // acompanha o contorno EXATO e nunca interfere nos cálculos do relevo.
+    let volumeSkirtReal = null;
+    let volumeSkirtSim = null;
+    let skirtGeoReal = null;
+    let skirtGeoSim = null;
+
+    function rebuildVolumeSides() {
+      if (volumeSkirtReal) {
+        sceneReal.remove(volumeSkirtReal);
+        if (volumeSkirtReal.material) volumeSkirtReal.material.dispose();
+        volumeSkirtReal = null;
+      }
+      if (skirtGeoReal) { skirtGeoReal.dispose(); skirtGeoReal = null; }
+      if (volumeSkirtSim) {
+        sceneSim.remove(volumeSkirtSim);
+        if (volumeSkirtSim.material) volumeSkirtSim.material.dispose();
+        volumeSkirtSim = null;
+      }
+      if (skirtGeoSim) { skirtGeoSim.dispose(); skirtGeoSim = null; }
+      const t = terrainGeometry && terrainGeometry.userData && terrainGeometry.userData.terrain;
+      if (!t || !t.worldPositions || !t.worldStats) return;
+      // PR #5g: com contorno real (KML/elipse) as paredes seguem o POLÍGONO;
+      // sem contorno, fecham a borda da grade (fallback defensivo).
+      const data = (t.outlineWorld && t.outlineWorld.length >= 3)
+        ? buildPolygonSkirtGeometryData(
+            t.outlineWorld,
+            (x, z) => terrainGridSampleWorld(t.worldPositions, t.cols, t.rows, x, z, t.worldStats),
+            t.baseY
+          )
+        : buildTerrainSkirtGeometryData(t.worldPositions, t.cols, t.rows, t.baseY);
+      const mk = (scene, color) => {
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.BufferAttribute(data.positions, 3));
+        g.setIndex(new THREE.BufferAttribute(data.indices, 1));
+        g.computeVertexNormals();
+        const mat = new THREE.MeshLambertMaterial({ color, side: THREE.DoubleSide });
+        const mesh = new THREE.Mesh(g, mat);
+        mesh.frustumCulled = true;
+        scene.add(mesh);
+        return mesh;
+      };
+      volumeSkirtReal = mk(sceneReal, 0x101820);
+      skirtGeoReal = volumeSkirtReal.geometry;
+      volumeSkirtSim = mk(sceneSim, 0x141a20);
+      skirtGeoSim = volumeSkirtSim.geometry;
+    }
+
     function applyTalhaoGeometry(kmlCoordinates, lat, lon, areaHa) {
       const g = talhaoWorldGeometry(kmlCoordinates, lat, lon, areaHa);
       const newGeo = new THREE.PlaneGeometry(g.width, g.height, TERRAIN_SEGMENTS, TERRAIN_SEGMENTS);
+      // PR #5g — a SUPERFÍCIE é o contorno real do talhão (máscara de grid
+      // 97×97), não um retângulo com o polígono apenas "pintado" na textura.
+      maskPlaneGeometryToPolygon(newGeo, g.points);
       meshReal.geometry.dispose();
       meshReal.geometry = newGeo;
       meshSim.geometry = newGeo; // compartilha a geometria (mesmo recorte)
@@ -2483,10 +2865,15 @@
       meshSimFade.geometry = newGeo;
       terrainGeometry = newGeo;
       terrainMetersPerUnit = g.metersPerUnit || 50.0;
-      // Se o DEM já foi carregado, aplica-o à nova malha SEM novo fetch
-      // (o DEM é carregado 1× por fazenda e reutilizado em qualquer data).
-      if (demGrid) applyDemToGeometry(newGeo, (u, v) => demGridSample(demGrid, DEM_GRID_SIZE, u, v), demReliefWorld, demExaggeration);
-      else flattenDemGeometry(newGeo);
+      // PR #5g — um único passe: relevo RELATIVO + laterais/base + hillshade
+      // (aplica a geometria DEM à NOVA malha sem nenhum fetch).
+      bakeDemGeometry();
+      // Contorno real do talhão para as PAREDES (sem fetch; só geometria).
+      if (newGeo.userData && newGeo.userData.terrain) {
+        newGeo.userData.terrain.outlineLocal = g.points;
+        newGeo.userData.terrain.outlineWorld = g.points.map((p) => [p[0], -p[1]]);
+      }
+      rebuildVolumeSides(); // paredes seguem o POLÍGONO real (KML/elipse)
 
       if (talhaoOutlineReal) { sceneReal.remove(talhaoOutlineReal); talhaoOutlineReal.geometry.dispose(); talhaoOutlineReal = null; }
       if (talhaoOutlineSim) { sceneSim.remove(talhaoOutlineSim); talhaoOutlineSim.geometry.dispose(); talhaoOutlineSim = null; }
@@ -2532,7 +2919,7 @@
     let preloadRunning = false;
     let preloadActiveCount = 0;
 
-    // ---------- TOPOGRAFIA REAL (Copernicus DEM GL-30) — PR #5e ----------
+    // ---------- TOPOGRAFIA REAL (Copernicus DEM GL-30) — PR #5e/#5g ----------
     // O DEM é carregado 1× por fazenda e REUTILIZADO: trocar a data troca a
     // TEXTURA, nunca reconstrói o DEM. O relevo é gravado nos VÉRTICES da
     // malha (Y no mundo) com recomputação de normais — geometria real 3D.
@@ -2540,10 +2927,16 @@
     let demGrid = null;                       // grid 0–255 (canvas → Float32) do DEM
     let demGridSize = 0;
     let demReliefWorld = 0;                   // alívio real em unidades do mundo (1×)
-    let demExaggeration = DEM_EXAGGERATION_DEFAULT; // 1×|2×|3× — só visual
+    let demExaggeration = DEM_EXAGGERATION_DEFAULT; // 1|2|3|5 — só visual
     let demInfo = null;                       // {min, max, relief, source, provider}
     let terrainGeometry = null;               // geometria COMPARTILHADA real×sim
     let terrainMetersPerUnit = 50.0;          // metros por unidade do plano 3D
+    // PR #5g — origem/escala explícitas (sem magic numbers):
+    let demMinElevation = null;               // elevação REAL mínima do DEM (m)
+    let demMaxElevation = null;               // elevação REAL máxima do DEM (m)
+    let demReliefMeters = 0;                  // alívio REAL (máx − mín)
+    let worldUnitsPerMeterHorizontal = 1.0;   // unidades de mundo por metro
+    let modelVerticalOrigin = 0;              // Y do modelo onde DEM = min (0 rel.)
 
     /** Decodifica a textura do heightmap em grid 0–255 (1× só, cacheado). */
     function sampleDemTexture(tex, size) {
@@ -2569,23 +2962,52 @@
     /** Aplica (ou re-aplica) o DEM à malha com o exagero atual. */
     function bakeDemGeometry() {
       if (!terrainGeometry) return false;
+      const prevT = terrainGeometry.userData && terrainGeometry.userData.terrain;
+      let ok = false;
       if (demGrid && demGridSize > 1) {
-        return applyDemToGeometry(
+        ok = applyDemToGeometry(
           terrainGeometry,
           (u, v) => demGridSample(demGrid, demGridSize, u, v),
           demReliefWorld,
           demExaggeration
         );
+      } else {
+        ok = flattenDemGeometry(terrainGeometry);
       }
-      return flattenDemGeometry(terrainGeometry);
+      // PR #5g — volume recriado a partir da GEOMETRIA já deformada (sem rede);
+      // o contorno do talhão é PRESERVADO entre re-bakes (nunca refeito).
+      if (ok) {
+        const t = terrainGeometry.userData && terrainGeometry.userData.terrain;
+        if (t && prevT && prevT.outlineLocal) {
+          t.outlineLocal = prevT.outlineLocal;
+          t.outlineWorld = prevT.outlineWorld;
+        }
+        rebuildVolumeSides();
+      }
+      // PR #5g — HILLSHADE multiplicativo por vértice: ilumina encostas sem
+      // destruir as cores agrícolas (o material multiplica textura × cor).
+      const t = terrainGeometry.userData && terrainGeometry.userData.terrain;
+      if (t && t.worldPositions && typeof terrainGeometry.setAttribute === 'function') {
+        const colors = terrainHillshadeColors(t.worldPositions, t.cols, t.rows);
+        t.hillshade = colors;
+        terrainGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        // Todos os materiais que usam a malha (incl. crossfade) recebem o
+        // hillshade — sem "lampejo" de textura sem sombreamento na transição.
+        [matReal, matRealFade, matSim, matSimFade].forEach(m => {
+          m.vertexColors = true;
+          m.needsUpdate = true;
+        });
+      }
+      return ok;
     }
 
     /** Atualiza o rótulo discreto de elevação real + exagero visual. */
     function updateElevationUI() {
       const line = document.getElementById('elevation-line');
       if (line) {
+        // PR #5g: valores REAIS preservados; o relevo RELATIVO começa em 0.
         line.innerText = demInfo
-          ? `Elevação real: ${demInfo.min}–${demInfo.max} m`
+          ? `Elevação real: ${demInfo.min}–${demInfo.max} m • relevo relativo: 0–${demInfo.relief.toFixed(0)} m • exagero ${demExaggeration}×`
           : 'Elevação aproximada (DEM indisponível)';
       }
       const row = document.getElementById('dem-exag-row');
@@ -2598,11 +3020,26 @@
     function setExaggeration(mult) {
       if (!DEM_EXAGGERATION_STEPS.includes(Number(mult))) return;
       demExaggeration = Number(mult);
+      // PR #5g: NENHUM fetch — só posições Y + normais + laterais (geometria).
       bakeDemGeometry();
       updateElevationUI();
       // Contorno acompanha o novo teto do relevo (evita linha "enterrada").
       if (talhaoOutlineReal) talhaoOutlineReal.position.y = 0.05 + demExaggeration * demReliefWorld;
       if (talhaoOutlineSim) talhaoOutlineSim.position.y = 0.05 + demExaggeration * demReliefWorld;
+      // Real×What-If compartilham a MESMA geometria → reenquadra os DOIS juntos.
+      fitCameraToTerrain();
+      // Log de auditoria [3D-DEM] (mesmo formato/atributos do carregamento).
+      const t = terrainGeometry && terrainGeometry.userData && terrainGeometry.userData.terrain;
+      const s = t && t.worldStats;
+      if (s) {
+        console.info(
+          `[3D-DEM] vertices=${(t.cols * t.rows).toLocaleString('pt-BR')} ` +
+          `dem_min=${demMinElevation} dem_max=${demMaxElevation} relief_real=${demReliefMeters.toFixed(1)}m ` +
+          `exaggeration=${demExaggeration}x mesh_relief_world=${s.amplitudeY.toFixed(3)}u ` +
+          `mesh_y_min=${s.minY.toFixed(3)} mesh_y_max=${s.maxY.toFixed(3)} base_y=${t.baseY.toFixed(3)} ` +
+          `world_units_per_meter=${worldUnitsPerMeterHorizontal.toFixed(6)}`
+        );
+      }
     }
 
     async function loadHeightmap() {
@@ -2623,6 +3060,13 @@
         demGrid = null;
         demInfo = null;
         demReliefWorld = 0;
+        demMinElevation = null;
+        demMaxElevation = null;
+        demReliefMeters = 0;
+        worldUnitsPerMeterHorizontal = terrainWorldUnitsPerMeter(
+          terrainMetersPerUnit * TERRAIN_SCALE.planeUnits, TERRAIN_SCALE.planeUnits
+        );
+        modelVerticalOrigin = 0;
         bakeDemGeometry();
         updateElevationUI();
         setDemLine('warn', 'DEM: indisponível • Elevação aproximada');
@@ -2637,9 +3081,12 @@
         if ("colorSpace" in tex) tex.colorSpace = THREE.NoColorSpace;
 
         heightTexture = tex;
-        const relief = Math.max(1, (info.max_elevation_m || 0) - (info.min_elevation_m || 0));
-        demGrid = sampleDemTexture(tex, TERRAIN_SEGMENTS + 1);
-        demGridSize = TERRAIN_SEGMENTS + 1;
+        const relief = Math.max(0, (info.max_elevation_m || 0) - (info.min_elevation_m || 0));
+        demGrid = sampleDemTexture(tex, DEM_GRID_SIZE);
+        demGridSize = DEM_GRID_SIZE;          // 97×97 (1:1 com a malha)
+        demMinElevation = info.min_elevation_m;
+        demMaxElevation = info.max_elevation_m;
+        demReliefMeters = relief;
         demInfo = {
           min: info.min_elevation_m,
           max: info.max_elevation_m,
@@ -2647,26 +3094,54 @@
           source: info.source || 'unknown',
           provider: info.provider || 'Copernicus DEM',
         };
-        // Escala REAL: metros → unidades do mundo (nunca um número arbitrário).
-        demReliefWorld = demReliefWorldUnits(relief, terrainMetersPerUnit * 50.0, 50.0);
+        // PR #5g — ESCALA EXPLÍCITA (sem magic numbers):
+        //   horizontal: 50 u ÷ span real (moldura de 50 u = maior dimensão).
+        worldUnitsPerMeterHorizontal = terrainWorldUnitsPerMeter(
+          terrainMetersPerUnit * TERRAIN_SCALE.planeUnits, TERRAIN_SCALE.planeUnits
+        );
+        //   vertical (1×): MESMA conversão → proporção topográfica real;
+        //   o exagero multiplica SOMENTE a diferença relativa (relativeHeight).
+        demReliefWorld = demReliefWorldUnits(relief, terrainMetersPerUnit * TERRAIN_SCALE.planeUnits, TERRAIN_SCALE.planeUnits);
+        //   origem do modelo: elevation MÍNIMA → Y relativo 0 (base em 0).
+        modelVerticalOrigin = 0;
         // Geometria real (os dois cenários compartilham a MESMA malha).
         bakeDemGeometry();
+        // Prova de que o DEM deforma a GEOMETRIA (auditoria técnica, §5):
+        const t3 = terrainGeometry && terrainGeometry.userData && terrainGeometry.userData.terrain;
+        const s3 = t3 && t3.worldStats;
+        if (s3) {
+          console.info(
+            `[3D-DEM] vertices=${(t3.cols * t3.rows).toLocaleString('pt-BR')} ` +
+            `dem_min=${info.min_elevation_m} dem_max=${info.max_elevation_m} relief_real=${relief.toFixed(1)}m ` +
+            `exaggeration=${demExaggeration}x mesh_relief_world=${s3.amplitudeY.toFixed(3)}u ` +
+            `mesh_y_min=${s3.minY.toFixed(3)} mesh_y_max=${s3.maxY.toFixed(3)} base_y=${t3.baseY.toFixed(3)} ` +
+            `world_units_per_meter=${worldUnitsPerMeterHorizontal.toFixed(6)}`
+          );
+        }
         calculateImpact(); // re-aplica efeitos What-If (mesma base geométrica)
         updateElevationUI();
 
         const sourceLabel = (info.source || 'unknown').replace(/_/g, ' ').toUpperCase();
         setDemLine(
           'ok',
-          `DEM: ${sourceLabel} • ${info.min_elevation_m}–${info.max_elevation_m} m • alívio ~${relief.toFixed(0)} m`
+          `DEM: ${sourceLabel} • ${info.min_elevation_m}–${info.max_elevation_m} m • alívio ~${relief.toFixed(0)} m • escala 1:1 (${worldUnitsPerMeterHorizontal.toFixed(4)} u/m)`
         );
         console.info(`DEM ${sourceLabel}: relevo real ativo (alívio ~${relief.toFixed(0)} m, ${info.min_elevation_m}–${info.max_elevation_m} m)`);
-        // PR #5f — o relevo muda o bounding box; reenquadra (mantém ângulo).
+        // PR #5f/#5g — o relevo muda o bounding box; reenquadra (mantém ângulo)
+        // com a câmera no meio do volume (topo + lateral visíveis).
         fitCameraToTerrain();
       } catch (e) {
         console.error('heightmap: falha ao aplicar heightmap DEM', e);
         demGrid = null;
         demInfo = null;
         demReliefWorld = 0;
+        demMinElevation = null;
+        demMaxElevation = null;
+        demReliefMeters = 0;
+        worldUnitsPerMeterHorizontal = terrainWorldUnitsPerMeter(
+          terrainMetersPerUnit * TERRAIN_SCALE.planeUnits, TERRAIN_SCALE.planeUnits
+        );
+        modelVerticalOrigin = 0;
         bakeDemGeometry();
         updateElevationUI();
         setDemLine('warn', 'DEM: falha ao aplicar • Elevação aproximada');
@@ -3407,6 +3882,7 @@
       requestAnimationFrame(animate);
 
       controls.update();
+      debug3dUpdate();   // ?debug3d=1 (no-op sem o parâmetro)
 
       const container = document.getElementById('canvas-container');
       const w = container.clientWidth || window.innerWidth;
@@ -3425,6 +3901,83 @@
     }
     // O loop inicia sob demanda via startRenderLoop() ao abrir a aba 3D
     // (antes: `animate();` mantinha o rAF ativo para sempre desde o load).
+
+    // =====================================================================
+    // PR #5g — ?debug3d=1: wireframe + bounding box + eixos + estatísticas da
+    // malha. Habilita SOMENTE com o parâmetro explícito na URL (nunca default).
+    // =====================================================================
+    let debug3dEnabled = false;
+    let debug3dAttached = false;
+    let debugAxesReal = null, debugAxesSim = null;
+    let debugBoxReal = null, debugBoxSim = null;
+    let debugWireReal = null, debugWireSim = null;
+    const debugOverlay = document.createElement('div');
+
+    function debugOverlayText() {
+      const t = terrainGeometry && terrainGeometry.userData && terrainGeometry.userData.terrain;
+      if (!t || !t.worldStats) return '[3D-DEBUG] aguardando terreno…';
+      const s = t.worldStats;
+      const vc = (t.cols * t.rows).toLocaleString('pt-BR');
+      return [
+        `[3D-DEBUG] vértices=${vc} triângulos≈${(vc * 2).toLocaleString('pt-BR')}`,
+        `DEM real: ${demMinElevation ?? '—'}–${demMaxElevation ?? '—'} m • alívio ${demReliefMeters.toFixed(1)} m`,
+        `exagero=${demExaggeration}× • relevo na malha=${s.amplitudeY.toFixed(3)} u`,
+        `Y mínimo=${s.minY.toFixed(3)} • Y máximo=${s.maxY.toFixed(3)} • base=${t.baseY.toFixed(3)}`,
+        `escala h=${worldUnitsPerMeterHorizontal.toFixed(6)} u/m • extent=${s.extent.toFixed(2)} u`,
+        `render: ${renderer.info.render.calls} calls • ${renderer.info.render.triangles} tris`,
+      ].join('\n');
+    }
+
+    function ensureDebug3D() {
+      if (debug3dAttached && debugWireReal && debugWireReal.geometry === terrainGeometry) return;
+      const remove = (scene, obj) => { if (obj) { scene.remove(obj); if (obj.geometry) obj.geometry.dispose(); } };
+      remove(sceneReal, debugAxesReal); remove(sceneReal, debugBoxReal); remove(sceneReal, debugWireReal);
+      remove(sceneSim, debugAxesSim); remove(sceneSim, debugBoxSim); remove(sceneSim, debugWireSim);
+      debugAxesReal = debugAxesSim = debugBoxReal = debugBoxSim = debugWireReal = debugWireSim = null;
+      if (!terrainGeometry) { debug3dAttached = false; return; }
+      const t = terrainGeometry.userData && terrainGeometry.userData.terrain;
+      const s = t && t.worldStats;
+      const extent = s ? s.extent : 50;
+      const box = s ? new THREE.Box3(
+        new THREE.Vector3(s.minX, t.baseY, s.minZ),
+        new THREE.Vector3(s.maxX, s.maxY, s.maxZ)
+      ) : new THREE.Box3(new THREE.Vector3(-25, -1, -25), new THREE.Vector3(25, 0, 25));
+      const mk = (scene) => {
+        const axes = new THREE.AxesHelper(Math.max(extent * 0.75, 10));
+        axes.position.set(0, box.min.y, 0);
+        const bbox = new THREE.Box3Helper(box, 0xff7b72);
+        const wire = new THREE.LineSegments(
+          new THREE.WireframeGeometry(terrainGeometry),
+          new THREE.LineBasicMaterial({ color: 0xffa657, transparent: true, opacity: 0.55 })
+        );
+        wire.rotation.x = -Math.PI / 2;      // mesma orientação da malha
+        scene.add(axes); scene.add(bbox); scene.add(wire);
+        return { axes, bbox, wire };
+      };
+      const r = mk(sceneReal), s2 = mk(sceneSim);
+      debugAxesReal = r.axes; debugBoxReal = r.bbox; debugWireReal = r.wire;
+      debugAxesSim = s2.axes; debugBoxSim = s2.bbox; debugWireSim = s2.wire;
+      debug3dAttached = true;
+    }
+
+    function debug3dUpdate() {
+      if (!debug3dEnabled) return;
+      ensureDebug3D();
+      debugOverlay.textContent = debugOverlayText();
+    }
+
+    function initDebug3D() {
+      const q = new URLSearchParams(window.location.search);
+      debug3dEnabled = q.get('debug3d') === '1' || q.get('debug3d') === 'true';
+      if (!debug3dEnabled) return;
+      debugOverlay.style.cssText =
+        'position:fixed;top:64px;left:16px;z-index:9999;background:rgba(0,0,0,.82);' +
+        'color:#7ee787;font:11px/1.5 monospace;padding:8px 10px;border:1px solid #2ea043;' +
+        'border-radius:6px;white-space:pre;pointer-events:none;max-width:420px;';
+      document.body.appendChild(debugOverlay);
+      console.warn('[3D-DEBUG] modo debug3d ATIVO (wireframe/bbox/eixos/estatísticas)');
+    }
+    initDebug3D();
 
     loadActiveFarm();
   </script>

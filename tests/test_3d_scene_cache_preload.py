@@ -7,7 +7,7 @@ Executa os blocos puros extraídos do `index.html` em uma VM Node:
     estado discreto da timeline e prioridade manual > play > preload;
   - `[3D-TERRAIN-HELPERS-START/END]`: agregação metros→unidades de mundo,
     amostragem bilinear do heightmap, deslocamento REAL de VÉRTICES com
-    recomputação de normais (não é truque de câmera) e exagero 1×/2×/3×
+    recomputação de normais (não é truque de câmera) e exagero 1×/2×/3×/5×
     como escala VISUAL (valores reais preservados);
   - `[3D-UX-HELPERS-START/END]`: `formatSceneDate`/`isAbortError` usados pelos
     blocos acima.
@@ -175,20 +175,26 @@ assert.equal(geo.arr[iMin + 2], 0, 'vértice em u=0 permanece em 0 (base real)')
 assert.equal(geo.attributes.position.needsUpdate, true);
 
 // =====================================================================
-// 8. EXAGERO 1×/2×/3× é APENAS escala visual — a base (DEM) não muda
+// 8. EXAGERO 1×/2×/3×/5× é APENAS escala visual — a base (DEM) não muda;
+//    ALTITUDE RELATIVA (mín = 0) garante 1× < 2× < 3× < 5× em todo vértice.
 // =====================================================================
 const peak = (u, v) => (u >= 1 ? 0.75 : 0.25);
-const g1 = fakeGeometry(4, 4), g2 = fakeGeometry(4, 4), g3 = fakeGeometry(4, 4);
+const g1 = fakeGeometry(4, 4), g2 = fakeGeometry(4, 4), g3 = fakeGeometry(4, 4), g5 = fakeGeometry(4, 4);
 sandbox.applyDemToGeometry(g1, peak, 2.0, 1);
 sandbox.applyDemToGeometry(g2, peak, 2.0, 2);
 sandbox.applyDemToGeometry(g3, peak, 2.0, 3);
+sandbox.applyDemToGeometry(g5, peak, 2.0, 5);
 const peakIdx = (0 * 4 + 3) * 3;
 assert.ok(Math.abs(g1.arr[peakIdx + 2] * 2 - g2.arr[peakIdx + 2]) < 1e-6, '2× = 2× o deslocamento de 1×');
 assert.ok(Math.abs(g1.arr[peakIdx + 2] * 3 - g3.arr[peakIdx + 2]) < 1e-6, '3× = 3× o deslocamento de 1×');
-// A PROPORÇÃO entre dois pontos do RELEVO é a MESMA em 1×, 2× e 3×
-const low1 = g1.arr[(0 * 4 + 0) * 3 + 2], low2 = g2.arr[(0 * 4 + 0) * 3 + 2], low3 = g3.arr[(0 * 4 + 0) * 3 + 2];
+assert.ok(Math.abs(g1.arr[peakIdx + 2] * 5 - g5.arr[peakIdx + 2]) < 1e-6, '5× = 5× o deslocamento de 1×');
+// A PROPORÇÃO entre dois pontos do RELEVO é a MESMA em 1×, 2×, 3× e 5×
+const low1 = g1.arr[(0 * 4 + 0) * 3 + 2], low2 = g2.arr[(0 * 4 + 0) * 3 + 2], low3 = g3.arr[(0 * 4 + 0) * 3 + 2], low5 = g5.arr[(0 * 4 + 0) * 3 + 2];
 assert.ok(Math.abs((low2 / low1) - 2.0) < 1e-6, 'todo o relevo escala igualmente (1×→2×)');
 assert.ok(Math.abs((low3 / low1) - 3.0) < 1e-6, 'todo o relevo escala igualmente (1×→3×)');
+assert.ok(Math.abs((low5 / low1) - 5.0) < 1e-6, 'todo o relevo escala igualmente (1×→5×)');
+// ALTITUDE RELATIVA: o menor ponto do DEM fica em Z = 0 (mín de referência)
+assert.equal(g1.arr[(1 * 4 + 0) * 3 + 2], 0.25 * 2.0 * 1, 'v = min relativo → 0 × alívio × exagero');
 // alturas REAIS (metros do DEM) não são alteradas pela função — ela só
 // recebe a escala; os valores min/max do backend permanecem no rótulo.
 
@@ -212,7 +218,7 @@ assert.ok(cam.position[2] > 0, 'visão oblíqua (deslocada no eixo Z)');
 assert.ok(cam.maxPolarAngle < Math.PI / 2, 'nunca abaixo do horizonte');
 assert.ok(cam.minPolarAngle < cam.maxPolarAngle);
 assert.ok(cam.minDistance < cam.maxDistance, 'zoom com limites');
-assert.equal(sandbox.DEM_RULES.steps.join(','), '1,2,3');
+assert.equal(sandbox.DEM_RULES.steps.join(','), '1,2,3,5');
 assert.equal(sandbox.DEM_RULES.default, 2, 'default documentado = 2×');
 
 process.stdout.write(JSON.stringify({ ok: true }));

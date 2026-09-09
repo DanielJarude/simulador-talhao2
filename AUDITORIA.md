@@ -1252,3 +1252,85 @@ antigas entram pela esquerda; a mais recente fica na extrema direita).
   auth/cadastro/analytics/outras páginas: **NÃO alterados**.
 
 **Status: PRONTO PARA RETESTE DA TIMELINE.** Sem merge; branch `arena/01a083cd-simulador-talhao2`.
+
+---
+
+## PR #5g — TERRENO TOPOGRÁFICO COM VOLUME REAL (3D)
+
+### G1 — Prova técnica de que o DEM deforma a geometria
+
+- `TERRAIN_SEGMENTS = 96` → `PlaneGeometry(50,50,96,96)` = **97×97 vértices**
+  (9.409), ~18.432 triângulos; `DEM_GRID_SIZE = 97` (grade 1:1 com o heightmap,
+  amostragem bilinear — resolução menor que o DEM de 30 m, sem inventar detalhe).
+- `applyDemToGeometry` desloca **todos os vértices** no eixo local Z (→ Y mundo)
+  com `terrainRelativeY(sample, reliefWorld, exag)` e recalcula `computeVertexNormals`;
+  `flattenDemGeometry` é o fallback explícito (DEM indisponível → plano).
+- Log de auditoria **`[3D-DEM]`** (console) no carregamento E na troca de exagero:
+  `vertices | dem_min | dem_max | relief_real | exaggeration | mesh_relief_world |
+  mesh_y_min | mesh_y_max | base_y | world_units_per_meter` — sem segredos.
+- **Causa raiz do "parece 2D"**: `demReliefWorldUnits(23 m, 652 m, 50 u)` ≈ **1,76 u**
+  (3,5% do lado) na escala 1×; a malha antiga era uma FOLHA (sem laterais/base)
+  sobre um grid em y=-0,06 e sem sombras — o relevo existia, mas não tinha VOLUME.
+
+### G2 — Escala explícita (sem magic numbers)
+
+- `TERRAIN_SCALE = { planeUnits: 50, exagOptions:[1,2,3,5], defaultExag:2,
+  baseDepthRatio:0.08, baseDepthMin:1.0, hillshadeStrength:1.0 }` (exposto em
+  `DEM_RULES.scale` para testes).
+- `terrainWorldUnitsPerMeter(spanMeters, 50)` = 50/span → **horizontal**;
+  `demReliefWorldUnits` = alívio ÷ (span/50) → **vertical 1×** (mesma conversão
+  = proporção topográfica física real); `demExaggeration` multiplica **somente a
+  diferença relativa**.
+- 1× ≈ 1,76 u; 2× ≈ 3,52 u (7,0%); 3× ≈ 5,29 u (10,6%); 5× ≈ 8,82 u (17,6%) —
+  diferença visual clara entre todos. Default **2×** (inalterado).
+
+### G3 — Altitude relativa + valores reais
+
+- `relativeHeight = sample01 × reliefWorld × exag`; mínimo do DEM → Y **0**;
+  base do bloco em `baseY = minY − depth` (depth = 8% da extensão, piso 1 u).
+- UI preserva **"Elevação real: 592–615 m • relevo relativo: 0–23 m • exagero N×"**;
+  valores reais vêm do backend (nunca derivados da malha).
+
+### G4 — Contorno real + volume lateral
+
+- `maskPlaneGeometryToPolygon` remove os triângulos **fora do polígono KML**
+  (ou da elipse do fallback) — a superfície É o talhão, não um retângulo com a
+  máscara pintada; textura/UV intactos (mesmo mapeamento do rasterizador).
+- `buildPolygonSkirtGeometryData` cria paredes ao longo de **cada aresta do
+  polígono** com topo na altura do DEM (`terrainGridSampleWorld` bilinear) e base
+  em `baseY` — a lateral acompanha o contorno real. Fallback: `buildTerrainSkirtGeometryData`
+  (borda do grid). `rebuildVolumeSides` recria paredes ao trocar geometria/exagero
+  (dispose de geometry + material — sem vazamento).
+
+### G5 — Textura, sombreamento e sombras
+
+- Textura RGB/NDVI/EVI/NDRE/NDMI segue no **material** do mesh deformado
+  (`applyTextureToMaterial(matReal/matSim)`); a troca de data/layer NUNCA refaz o DEM.
+- `terrainHillshadeColors` (vertexColors **multiplicativos**): plano = 1,0;
+  encostas ≈ 0,8–1,2 → cores dos índices preservadas. Iluminação: ambient 0,28 +
+  hemisphere 0,55 + direcional diagonal 0,95 (castShadow PCFSoft 1024², bias,
+  radius 3) + fill 0,28. Terreno `receiveShadow` (custo baixo).
+- Grade discreta (GridHelper) posicionada em `baseY − gap` — **abaixo do bloco**.
+
+### G6 — Câmera e Real × What-If
+
+- `CAMERA_PRESET.elevationDeg = 42°` (playtest aprovado; dentro de 35–50°);
+  `fitCameraToTerrain` mira o **meio do volume** (`targetY`) e sobe a câmera
+  `+ amplitude×0.55` → topo + lateral visíveis; OrbitControls (órbita/zoom/pan,
+  polar ≤ 0.44π) e "⟲ Resetar visão" = re-fit determinístico.
+- Real e What-If compartilham **a mesma malha** (`meshSim.geometry = newGeo`),
+  a mesma escala/exagero e a mesma câmera (dois viewports, um controle).
+
+### G7 — Debug / performance / entregas
+
+- `?debug3d=1` → overlay com wireframe + Box3Helper + AxesHelper + estatísticas
+  (vértices, DEM real, exagero, min/max Y, base, escala, render calls/tris);
+  **nunca** habilitado por padrão.
+- Troca de exagero: nenhum fetch — só posições Y, normais, paredes e hillshade.
+  Caches (cenas/texturas/DEM) e preload **inalterados**.
+- Testes: novo `tests/test_3d_terrain_volume.py` (3) + extensão do
+  `test_3d_scene_cache_preload.py` (exagero 5× e altitude relativa);
+  `tools/playtest_dem.html` = harness dev (DEM sintético 592–615 m + texturas
+  sintéticas rotuladas, MESMO pipeline — para o playtest visual).
+- `pytest tests/ -q` → **268 passed, 1 skipped**; `node --check` → OK.
+- Backend, timeline (#5f), caches, auth, dashboards, PDF, infra: **NÃO alterados**.
