@@ -84,12 +84,15 @@ class FarmCreate(BaseModel):
     """Definição única (a duplicata foi removida)."""
 
     name: str = Field(min_length=2, max_length=160)
-    city: str = Field(min_length=2, max_length=160)
+    city: Optional[str] = Field(default=None, min_length=2, max_length=160)
+    state: Optional[str] = Field(default=None, max_length=100)
+    state_code: Optional[str] = Field(default=None, min_length=2, max_length=3)
     total_area: float = Field(gt=0, le=1_000_000, description="Área total em hectares")
     talhao_name: str = Field(min_length=1, max_length=160)
     crop: str = Field(min_length=2, max_length=80)
-    latitude: float = Field(ge=-90, le=90)
-    longitude: float = Field(ge=-180, le=180)
+    latitude: Optional[float] = Field(default=None, ge=-90, le=90)
+    longitude: Optional[float] = Field(default=None, ge=-180, le=180)
+    location_source: Literal["geometry", "map", "device", "manual", "legacy"] = "legacy"
     kml_coordinates: Optional[str] = Field(default=None, max_length=200_000)
 
 
@@ -97,6 +100,11 @@ class FarmResponse(BaseModel):
     id: int
     name: str
     city: str
+    state: Optional[str] = None
+    state_code: Optional[str] = None
+    location_source: str = "legacy"
+    location_status: str = "unverified"
+    location_divergence_km: Optional[float] = None
     total_area: float
     latitude: float
     longitude: float
@@ -155,3 +163,24 @@ class HeightmapResponse(BaseModel):
     ] = "none"
     heightmap_url: Optional[str] = None
     reason: Optional[str] = None
+
+
+class ReverseGeocodeRequest(BaseModel):
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+
+class GeometryLocationRequest(BaseModel):
+    geometry: str = Field(min_length=2, max_length=200_000)
+
+class LocationResponse(BaseModel):
+    latitude: float
+    longitude: float
+    city: Optional[str] = None
+    state: Optional[str] = None
+    state_code: Optional[str] = None
+    country: str = "Brasil"
+    country_code: str = "BR"
+    source: str
+    confidence: Optional[float] = None
+    status: str
+    cached: bool = False

@@ -76,6 +76,12 @@ class Settings(BaseSettings):
     ]
     dem_download_timeout_s: float = Field(default=30.0, gt=0, le=300)
 
+    # --- Reverse geocoding (Nominatim; configure outro endpoint compatível) ---
+    geocoder_url: str = "https://nominatim.openstreetmap.org/reverse"
+    geocoder_user_agent: str = "OrionAgro/1.6 (contato: admin@orionagro.local)"
+    geocoder_timeout_s: float = Field(default=8.0, gt=0, le=60)
+    geocoder_cache_hours: int = Field(default=168, ge=1, le=8760)
+
     # --- NASA POWER (clima) ---
     nasa_power_timeout_s: float = Field(default=15.0, gt=0, le=120)
     #: TTL do cache in-memory das respostas da NASA POWER.
