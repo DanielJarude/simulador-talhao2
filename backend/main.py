@@ -624,7 +624,7 @@ def get_farm_dates(
     farm = _require_farm_access(db, farm_id, user)
     talhao = farm.talhoes[0] if farm.talhoes else None
     try:
-        calendar, status = fetch_real_calendar(
+        calendar, status, detail = fetch_real_calendar(
             lat=farm.latitude,
             lon=farm.longitude,
             area_ha=farm.total_area,
@@ -633,13 +633,14 @@ def get_farm_dates(
         )
     except Exception:
         logger.exception("CDSE: falha ao obter calendário real")
-        calendar, status = [], "error"
+        calendar, status, detail = [], "error", None
     if calendar:
         return {
             "dates": [c["date"] for c in calendar],
             "calendar": calendar,
             "source": "sentinel-cdse",
             "status": status,
+            "stac_detail": detail,
             "indices": settings.spectral_indices,
             "visual_layers": ["rgb", *settings.spectral_indices],
         }
@@ -648,6 +649,7 @@ def get_farm_dates(
         "calendar": [],
         "source": "config",
         "status": status or ("not_configured" if not calendar else "no_scene"),
+        "stac_detail": detail,
         "indices": settings.spectral_indices,
         "visual_layers": ["rgb", *settings.spectral_indices],
     }
@@ -671,7 +673,7 @@ def get_farm_analytics(
     # si continua na grade oficial, usando estatísticas REAIS quando cacheadas.
     real_calendar: list = []
     try:
-        real_calendar, _ = fetch_real_calendar(
+        real_calendar, _, _ = fetch_real_calendar(
             lat=farm.latitude,
             lon=farm.longitude,
             area_ha=farm.total_area,

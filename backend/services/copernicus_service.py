@@ -36,6 +36,7 @@ import json
 import logging
 import math
 import os
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -78,11 +79,57 @@ class CopernicusNotConfigured(RuntimeError):
 
 
 class CopernicusError(RuntimeError):
-    """Erro operacional do CDSE (rede, auth, rate limit, dado inválido)."""
+    """Erro operacional do CDSE (rede, auth, rate limit, dado inválido).
 
-    def __init__(self, message: str, status: int | None = None):
+    Carrega diagnóstico SEGURO (nunca segredos/Authorization): status HTTP,
+    endpoint, Content-Type e um trecho do corpo devolvido pelo provedor
+    (limitado e sanitizado).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        status: int | None = None,
+        *,
+        endpoint: str | None = None,
+        content_type: str | None = None,
+        body_snippet: str | None = None,
+        stage: str | None = None,
+    ):
         super().__init__(message)
         self.status = status
+        self.endpoint = endpoint
+        self.content_type = content_type
+        self.body_snippet = body_snippet
+        self.stage = stage
+
+    def to_detail(self) -> dict:
+        """Representação JSON-safe p/ UI/relatório (sem credenciais)."""
+        return {
+            "stage": self.stage,
+            "endpoint": self.endpoint,
+            "http_status": self.status,
+            "content_type": self.content_type,
+            "message": self.body_snippet or str(self),
+        }
+
+
+#: Limite do corpo de erro logado/exibido (evita logs gigantes)
+_ERROR_BODY_LIMIT = 1200
+
+
+def _sanitize_snippet(text: str | None, limit: int = _ERROR_BODY_LIMIT) -> str | None:
+    """Trecho do corpo de resposta CDSE, truncado e sem credenciais."""
+    if not text:
+        return None
+    out = str(text)[:limit]
+    # Nunca vazar token/secret caso o provedor ecoe credenciais no corpo.
+    out = re.sub(
+        r"(?i)(access_token|refresh_token|client_secret|client_id|authorization)\s*[\"']?\s*[:=]\s*[\"']?\S+",
+        r"\1=***",
+        out,
+    )
+    return out
 
 
 #: Cache de token OAuth2 (nunca logado, nunca em disco; guardado em memória)
@@ -173,8 +220,14 @@ def _get_token() -> str:
     return token
 
 
-def _request(method: str, url: str, *, json_body: dict | None = None, headers: dict | None = None):
-    """POST/GET com tratamento de 429 (1 retry com backoff), 401/403, 5xx etc."""
+def _request(method: str, url: str, *, json_body: dict | None = None,
+             headers: dict | None = None, stage: str = "HTTP"):
+    """
+    POST/GET com tratamento de 429 (1 retry com backoff), 401/403, 5xx etc.
+
+    Em 4xx/5xx/nunca loga Authorization nem tokens: o corpo devolvido pelo
+    CDSE é sanitizado/truncado e anexado ao erro (diagnóstico seguro).
+    """
     attempts = 2 if settings.cdse_retry_on_429 else 1
     last: requests.Response | None = None
     for attempt in range(1, attempts + 1):
@@ -184,21 +237,47 @@ def _request(method: str, url: str, *, json_body: dict | None = None, headers: d
                 timeout=settings.cdse_timeout_s,
             )
         except requests.RequestException as exc:
-            raise CopernicusError(f"Falha de rede CDSE ({type(exc).__name__})")
+            raise CopernicusError(
+                f"Falha de rede CDSE ({type(exc).__name__}) — {stage}",
+                endpoint=url, stage=stage,
+            )
+        snippet = _sanitize_snippet(getattr(last, "text", None) or "")
+        ctype = None
+        try:
+            ctype = last.headers.get("Content-Type")
+        except Exception:
+            ctype = None
+
         if last.status_code == 429 and attempt < attempts:
             logger.warning("CDSE: 429 — retry com backoff de %.1fs", settings.cdse_retry_backoff_s)
             time.sleep(settings.cdse_retry_backoff_s)
             continue
         if last.status_code == 429:
-            raise CopernicusError("CDSE rate limit (429)", status=429)
+            raise CopernicusError(
+                f"CDSE rate limit (429) — {stage}", status=429,
+                endpoint=url, content_type=ctype, body_snippet=snippet, stage=stage,
+            )
         if last.status_code in (401, 403):
-            raise CopernicusError(f"CDSE autenticação negada (HTTP {last.status_code})", status=last.status_code)
+            # 401/403: NÃO expõe o corpo do provedor (pode ecoar credenciais).
+            raise CopernicusError(
+                f"CDSE autenticação negada (HTTP {last.status_code}) — {stage}",
+                status=last.status_code, endpoint=url,
+                content_type=ctype, stage=stage,
+            )
         if last.status_code >= 500:
-            raise CopernicusError(f"CDSE erro remoto (HTTP {last.status_code})", status=last.status_code)
+            raise CopernicusError(
+                f"CDSE erro remoto (HTTP {last.status_code}) — {stage}",
+                status=last.status_code, endpoint=url,
+                content_type=ctype, body_snippet=snippet, stage=stage,
+            )
         if last.status_code >= 400:
-            raise CopernicusError(f"CDSE requisição recusada (HTTP {last.status_code})", status=last.status_code)
+            raise CopernicusError(
+                f"CDSE requisição recusada (HTTP {last.status_code}) — {stage}",
+                status=last.status_code, endpoint=url,
+                content_type=ctype, body_snippet=snippet, stage=stage,
+            )
         return last
-    raise CopernicusError("CDSE: sem resposta após retries")
+    raise CopernicusError("CDSE: sem resposta após retries", endpoint=url, stage=stage)
 
 
 # ---------------------------------------------------------------------------
@@ -227,20 +306,28 @@ def aoi_bounds(
     area_ha: float,
     kml_coordinates=None,
 ) -> tuple[float, float, float, float]:
-    """(min_lat, max_lat, min_lon, max_lon) — polígono ou quadrado da área."""
+    """
+    Bounding box do talhão na ORDEM GEOGRÁFICA das APIs CDSE:
+
+        (min_lon, min_lat, max_lon, max_lat)  ==  [west, south, east, north]
+
+    Mesma ordem exigida por STAC (`bbox`) e Process API (`bounds.bbox`).
+    Corrige o bug anterior que devolvia (min_lat, max_lat, min_lon, max_lon)
+    e era enviado ao STAC invertido (west > east → HTTP 400).
+    """
     if kml_coordinates:
         try:
             coords = json.loads(kml_coordinates) if isinstance(kml_coordinates, str) else kml_coordinates
             if coords and len(coords) >= 3:
                 lats = [float(p[0]) for p in coords]
                 lons = [float(p[1]) for p in coords]
-                return min(lats), max(lats), min(lons), max(lons)
+                return min(lons), min(lats), max(lons), max(lats)
         except Exception:
             logger.warning("CDSE: KML inválido nos bounds; usando área.")
     side_m = math.sqrt(max(area_ha, 0.01)) * 100.0
     half_lat = (side_m / 2.0) / 111_320.0
     half_lon = (side_m / 2.0) / (111_320.0 * max(math.cos(math.radians(lat)), 1e-6))
-    return lat - half_lat, lat + half_lat, lon - half_lon, lon + half_lon
+    return lon - half_lon, lat - half_lat, lon + half_lon, lat + half_lat
 
 
 def geometry_digest(lat: float, lon: float, area_ha: float, kml_coordinates) -> str:
@@ -303,26 +390,36 @@ def stac_search(
     end: date,
     limit: int = 10,
 ) -> list[SceneInfo]:
-    """POST /search da STAC CDSE (coleção sentinel-2-l2a)."""
+    """
+    POST https://stac.dataspace.copernicus.eu/v1/search (STAC 1.1.0).
+
+    `bbox` deve estar na ordem geográfica [minLon, minLat, maxLon, maxLat]
+    (ver `aoi_bounds`). `geometry`, quando presente, é GeoJSON [lon, lat] —
+    o CDSE prioriza `intersects` (interseção real do polígono).
+    """
     url = settings.cdse_stac_url.rstrip("/") + "/search"
     body: dict = {
-        "collections": [COLLECTION],
+        "collections": [COLLECTION],          # sentinel-2-l2a
         "limit": limit,
+        # Intervalo RFC3339 aceito pelo STAC: inicio/fim com offset UTC.
         "datetime": f"{start.isoformat()}T00:00:00Z/{end.isoformat()}T23:59:59Z",
     }
     if geometry:
         body["intersects"] = geometry            # prioriza interseção REAL do polígono
     else:
-        body["bbox"] = bbox
+        body["bbox"] = list(bbox)                # [minLon, minLat, maxLon, maxLat]
 
     headers = {"Content-Type": "application/json"}
     if is_configured():
         headers["Authorization"] = f"Bearer {_get_token()}"
-    resp = _request("POST", url, json_body=body, headers=headers)
+    resp = _request("POST", url, json_body=body, headers=headers, stage="STAC_SEARCH")
     try:
         data = resp.json()
     except Exception:
-        raise CopernicusError("CDSE STAC: JSON inválido na resposta")
+        raise CopernicusError(
+            "CDSE STAC: JSON inválido na resposta",
+            endpoint=url, content_type="application/json", stage="STAC_SEARCH",
+        )
     features = data.get("features") or []
     return [parse_stac_item(f) for f in features]
 
@@ -334,22 +431,24 @@ def fetch_real_calendar(
     kml_coordinates: str | None,
     limit: int = 12,
     lookback_days: int | None = None,
-) -> tuple[list[dict], str]:
+) -> tuple[list[dict], str, dict | None]:
     """
     Calendário real de passagens Sentinel-2 (STAC) — até `limit` cenas
     úteis (<= max_cloud_cover da config), da mais recente para a mais antiga.
 
-    Devolve (cenas, status) onde status ∈ {"ok", "not_configured", "error",
-    "no_scene"}. NUNCA levanta exceção: o chamador decide o fallback.
+    Devolve (cenas, status, detail) onde status ∈ {"ok", "not_configured",
+    "error", "no_scene"} e `detail` é um dict de diagnóstico SEGURO quando
+    status="error" (HTTP, endpoint, etapa, corpo truncado — nunca segredos).
+    NUNCA levanta exceção: o chamador decide o fallback.
     """
     if not is_configured():
-        return [], "not_configured"
+        return [], "not_configured", None
     end = date.today()
     start = end - timedelta(days=lookback_days or settings.cdse_lookback_days)
     try:
         bounds = aoi_bounds(lat, lon, area_ha, kml_coordinates)
         geometry = kml_to_geojson_polygon(kml_coordinates)
-        scenes = stac_search(geometry, list(bounds), start, end, limit=max(limit, 20))
+        scenes = stac_search(geometry, bounds, start, end, limit=max(limit, 20))
         usable = [s for s in scenes if s.cloud_cover is not None and s.cloud_cover <= settings.cdse_max_cloud_cover]
         usable.sort(key=lambda s: (s.datetime or "", s.item_id or ""), reverse=True)
         calendar = [
@@ -362,9 +461,9 @@ def fetch_real_calendar(
             }
             for s in usable[:limit]
         ]
-        return calendar, ("ok" if calendar else "no_scene")
-    except (CopernicusNotConfigured, CopernicusError):
-        return [], "error"
+        return calendar, ("ok" if calendar else "no_scene"), None
+    except (CopernicusNotConfigured, CopernicusError) as exc:
+        return [], "error", exc.to_detail() if isinstance(exc, CopernicusError) else None
 
 
 def select_best_scene(
@@ -454,8 +553,10 @@ def _process_request(
     time_range: tuple[str, str] | None = None,
     max_cloud: float | None = None,
     dem_instance: str | None = None,
+    mosaicking_order: str | None = None,
 ) -> bytes:
-    min_lat, max_lat, min_lon, max_lon = bounds
+    # bounds na ordem geográfica [west, south, east, north] (aoi_bounds)
+    west, south, east, north = bounds
     data_filter: dict = {}
     if time_range:
         data_filter["timeRange"] = {
@@ -464,6 +565,10 @@ def _process_request(
         }
     if max_cloud is not None:
         data_filter["maxCloudCoverage"] = float(max_cloud)
+    if mosaicking_order:
+        # determinismo quando há mais de uma cena na janela (ex.: 2 órbitas
+        # no mesmo dia) — "leastCC" = menor cobertura de nuvens por tile.
+        data_filter["mosaickingOrder"] = mosaicking_order
 
     data_entry: dict = {"type": data_type, "dataFilter": data_filter}
     if dem_instance:
@@ -474,7 +579,7 @@ def _process_request(
     body = {
         "input": {
             "bounds": {
-                "bbox": [min_lon, min_lat, max_lon, max_lat],
+                "bbox": [west, south, east, north],  # [minLon, minLat, maxLon, maxLat]
                 "properties": {"crs": "http://www.opengis.net/def/crs/OGC/1.3/CRS84"},
             },
             "data": [data_entry],
@@ -489,9 +594,13 @@ def _process_request(
     headers = {"Content-Type": "application/json"}
     if is_configured():
         headers["Authorization"] = f"Bearer {_get_token()}"
-    resp = _request("POST", settings.cdse_process_url, json_body=body, headers=headers)
+    resp = _request("POST", settings.cdse_process_url, json_body=body,
+                    headers=headers, stage="PROCESS_API")
     if not resp.content or len(resp.content) < 100:
-        raise CopernicusError("CDSE Process: resposta de imagem vazia/inválida")
+        raise CopernicusError(
+            "CDSE Process: resposta de imagem vazia/inválida",
+            endpoint=settings.cdse_process_url, stage="PROCESS_API",
+        )
     return resp.content
 
 
@@ -542,8 +651,10 @@ def polygon_mask(size: int, bounds, kml_coordinates) -> np.ndarray:
     """
     Máscara do polígono do talhão no raster (mesma projeção do rasterizador
     procedural: margem 12%, drawable 76% → contorno 3D alinhado).
+
+    `bounds` segue a ordem geográfica (min_lon, min_lat, max_lon, max_lat).
     """
-    min_lat, max_lat, min_lon, max_lon = bounds
+    min_lon, min_lat, max_lon, max_lat = bounds
     mask_img = Image.new("L", (size, size), 0)
     draw = ImageDraw.Draw(mask_img)
     margin = 0.12 * size
@@ -695,6 +806,7 @@ def _result_not_configured(layer: str, requested_date: str | None) -> dict:
         "data_origin": "procedural",
         "real_data_status": "not_configured",
         "real_data_message": "DADOS SATELITAIS REAIS NÃO CONFIGURADOS",
+        "real_data_error": None,
         "layer": layer,
         "date": requested_date,
     }
@@ -705,17 +817,24 @@ def _result_no_scene(layer: str, requested_date: str | None) -> dict:
         "data_origin": "procedural",
         "real_data_status": "no_scene",
         "real_data_message": "NENHUMA CENA SENTINEL-2 DISPONÍVEL NA JANELA",
+        "real_data_error": None,
         "layer": layer,
         "date": requested_date,
     }
 
 
 def _result_error(layer: str, requested_date: str | None, exc: Exception) -> dict:
-    logger.warning("CDSE: falha ao obter dado real (%s)", exc)
+    detail = exc.to_detail() if isinstance(exc, CopernicusError) else None
+    logger.warning(
+        "CDSE: falha ao obter dado real — etapa=%s status=%s endpoint=%s motivo=%s corpo=%s",
+        getattr(exc, "stage", None), getattr(exc, "status", None),
+        getattr(exc, "endpoint", None), exc, getattr(exc, "body_snippet", None),
+    )
     return {
         "data_origin": "procedural",
         "real_data_status": "error",
         "real_data_message": f"DADOS REAIS INDISPONÍVEIS ({type(exc).__name__})",
+        "real_data_error": detail,
         "layer": layer,
         "date": requested_date,
     }
@@ -768,7 +887,7 @@ def process_farm_layer(
         stac_key = f"stac:{digest}:{start.isoformat()}:{end.isoformat()}"
         scenes = _mem_get(stac_key)
         if scenes is None:
-            scenes = stac_search(geometry, list(bounds), start, end, limit=12)
+            scenes = stac_search(geometry, bounds, start, end, limit=12)
             _mem_set(stac_key, scenes)
         scene, reason, used_limit = select_best_scene(scenes, target_date=date_str)
     except (CopernicusNotConfigured, CopernicusError) as exc:
@@ -803,6 +922,9 @@ def process_farm_layer(
                 size=size,
                 time_range=(acq, acq),
                 max_cloud=used_limit,
+                # mosaico determinístico: menor cobertura de nuvens por tile
+                # (comportamento documentado para sentinel-2 no Process API)
+                mosaicking_order="leastCC",
             )
             _mem_set(process_key, content)
         bands = read_band_raster(content, size)

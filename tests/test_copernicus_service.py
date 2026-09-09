@@ -117,10 +117,23 @@ def _tiff_dem(size: int = 64, lo: float = 300.0, hi: float = 500.0) -> bytes:
 
 class _FakeResponse:
     def __init__(self, status_code: int = 200, body: dict | None = None,
-                 content: bytes | None = None):
+                 content: bytes | None = None, headers: dict | None = None,
+                 text: str | None = None):
         self.status_code = status_code
         self._body = body
         self.content = content if content is not None else b""
+        self.headers = headers or {"Content-Type": "application/json"}
+        self._text = text
+
+    @property
+    def text(self) -> str:
+        if self._text is not None:
+            return self._text
+        if self.content:
+            return self.content.decode("utf-8", errors="replace")
+        if self._body is not None:
+            return json.dumps(self._body, ensure_ascii=False)
+        return ""
 
     def json(self):
         if self._body is None:
@@ -270,10 +283,16 @@ class TestGeometria:
         assert kml_to_geojson_polygon("[[1,2],[3,4]]") is None  # menos de 3 pontos
         assert kml_to_geojson_polygon(None) is None
 
-    def test_aoi_bounds_quadrado_por_area(self):
+    def test_aoi_bounds_ordem_geografica_west_south_east_north(self):
+        # Ordem exigida por STAC/Process API: [minLon, minLat, maxLon, maxLat]
         b = aoi_bounds(-22.7182, -55.5421, 42.54)
-        assert b[1] > b[0] and b[3] > b[2]
-        assert (b[0] + b[1]) / 2 == pytest.approx(-22.7182, abs=1e-9)
+        assert b[0] < b[2], "minLon < maxLon (west < east)"
+        assert b[1] < b[3], "minLat < maxLat (south < north)"
+        assert b[0] == pytest.approx(-55.5421 - (b[2] - b[0]) / 2.0, abs=1e-9)
+        assert b[1] == pytest.approx(-22.7182 - (b[3] - b[1]) / 2.0, abs=1e-9)
+        # centro = lat/lon informados (sem inversão)
+        assert (b[1] + b[3]) / 2 == pytest.approx(-22.7182, abs=1e-9)
+        assert (b[0] + b[2]) / 2 == pytest.approx(-55.5421, abs=1e-9)
 
     def test_geometry_digest_estavel_e_diferente(self):
         d1 = geometry_digest(-22.7, -55.5, 42.5, None)
@@ -346,8 +365,8 @@ class TestStac:
 
     def test_fetch_real_calendar_sem_credenciais(self, monkeypatch):
         # sem cdse_configured: retorna status not_configured, nunca exceção
-        cal, status = fetch_real_calendar(-22.7, -55.5, 42.5, None)
-        assert cal == [] and status == "not_configured"
+        cal, status, detail = fetch_real_calendar(-22.7, -55.5, 42.5, None)
+        assert cal == [] and status == "not_configured" and detail is None
 
 
 # ---------------------------------------------------------------------------
@@ -376,6 +395,10 @@ class TestProcessApi:
             body = kwargs.get("json")
             seen.update({"url": url, "timeRange": body["input"]["data"][0]["dataFilter"].get("timeRange"),
                          "maxCloud": body["input"]["data"][0]["dataFilter"].get("maxCloudCoverage"),
+                         "mosaicking": body["input"]["data"][0]["dataFilter"].get("mosaickingOrder"),
+                         "bbox": body["input"]["bounds"]["bbox"],
+                         "crs": body["input"]["bounds"]["properties"]["crs"],
+                         "dataType": body["input"]["data"][0]["type"],
                          "width": body["output"]["width"],
                          "responses": body["output"]["responses"],
                          "evalscript": body["evalscript"]})
@@ -384,14 +407,22 @@ class TestProcessApi:
         monkeypatch.setattr(cds, "_get_token", lambda: "tok-falso")
         monkeypatch.setattr(cds.requests, "request", fake_request)
         monkeypatch.setattr(cds.requests, "post", fake_request)
+        bounds = aoi_bounds(-22.1, -49.05, 42.54)
         out = cds._process_request(
-            bounds=aoi_bounds(-22.1, -49.05, 42.54),
+            bounds=bounds,
             evalscript=cds.build_bands_evalscript(),
             size=64, time_range=("2025-04-07", "2025-04-07"), max_cloud=20.0,
+            mosaicking_order="leastCC",
         )
         assert seen["url"].endswith("/process/v1")
+        assert seen["dataType"] == "sentinel-2-l2a"
         assert seen["timeRange"]["from"].startswith("2025-04-07")
         assert seen["maxCloud"] == 20.0
+        assert seen["mosaicking"] == "leastCC"
+        # ordem geográfica [minLon, minLat, maxLon, maxLat] — sem inversão
+        assert seen["bbox"] == list(bounds)
+        assert seen["bbox"][0] < seen["bbox"][2] and seen["bbox"][1] < seen["bbox"][3]
+        assert seen["crs"].endswith("CRS84")
         assert seen["width"] == 64
         assert seen["responses"][0]["format"]["type"] == "image/tiff"
         assert "//VERSION=3" in seen["evalscript"]
@@ -418,6 +449,236 @@ class TestProcessApi:
         assert seen["demInstance"] == "COPERNICUS_30"
         assert "input: [\"DEM\"]" in seen["evalscript"]
         assert len(out) > 100
+
+
+# ---------------------------------------------------------------------------
+# FASE 7 — Contrato REAL (payloads fiéis ao CDSE; regressão lat/lon/bbox/datetime)
+# ---------------------------------------------------------------------------
+class TestContratoRealCDSE:
+    """Impede regressão de inversão lat/lon, bbox fora de ordem, datetime
+    inválido, payloads STAC/Process fora do contrato e STAC-error vs STAC-empty."""
+
+    def test_stac_payload_bbox_ordem_geografica(self, monkeypatch, cdse_configured):
+        seen = {}
+
+        def fake_post(method, url, **kwargs):
+            seen["url"] = url
+            seen["body"] = kwargs.get("json")
+            seen["headers"] = kwargs.get("headers") or {}
+            return _FakeResponse(200, {"features": []})
+
+        monkeypatch.setattr(cds, "_get_token", lambda: "tok-falso")
+        monkeypatch.setattr(cds.requests, "post", fake_post)
+        monkeypatch.setattr(cds.requests, "request", fake_post)
+
+        start = date(2026, 7, 11)
+        end = date(2026, 9, 9)
+        bounds = aoi_bounds(-22.7182, -55.5421, 42.54)
+        cds.stac_search(None, bounds, start, end, limit=12)
+
+        assert seen["url"] == "https://stac.dataspace.copernicus.eu/v1/search"
+        body = seen["body"]
+        assert body["collections"] == ["sentinel-2-l2a"]
+        assert body["limit"] == 12
+        assert body["datetime"] == "2026-07-11T00:00:00Z/2026-09-09T23:59:59Z"
+        # bbox NA ORDEM GEOGRÁFICA [minLon, minLat, maxLon, maxLat]
+        assert body["bbox"] == list(bounds)
+        assert body["bbox"][0] == pytest.approx(-55.5421 - (bounds[2] - bounds[0]) / 2, abs=1e-6)
+        assert body["bbox"][1] == pytest.approx(-22.7182 - (bounds[3] - bounds[1]) / 2, abs=1e-6)
+        assert body["bbox"][0] < body["bbox"][2], "west < east"
+        assert body["bbox"][1] < body["bbox"][3], "south < north"
+        assert "intersects" not in body
+        assert seen["headers"]["Authorization"] == "Bearer tok-falso"
+
+    def test_stac_payload_intersects_geojson_lonlat(self, monkeypatch, cdse_configured):
+        seen = {}
+
+        def fake_post(method, url, **kwargs):
+            seen["body"] = kwargs.get("json")
+            return _FakeResponse(200, {"features": []})
+
+        monkeypatch.setattr(cds, "_get_token", lambda: "tok")
+        monkeypatch.setattr(cds.requests, "post", fake_post)
+        monkeypatch.setattr(cds.requests, "request", fake_post)
+        bounds = aoi_bounds(-22.1, -49.05, 42.54)
+        geom = kml_to_geojson_polygon(
+            "[[-22.1,-49.1],[-22.0,-49.1],[-22.0,-49.0],[-22.1,-49.0]]")
+        cds.stac_search(geom, bounds, date(2026, 9, 1), date(2026, 9, 9))
+        body = seen["body"]
+        assert body["intersects"]["type"] == "Polygon"
+        ring = body["intersects"]["coordinates"][0]
+        # GeoJSON usa [lon, lat] — NUNCA [lat, lon]
+        assert ring[0] == [-49.1, -22.1]
+        assert "bbox" not in body
+
+    def test_process_payload_s2_contrato_real(self, monkeypatch, cdse_configured):
+        seen = {}
+
+        def fake_post(method, url, **kwargs):
+            seen["body"] = kwargs.get("json")
+            return _FakeResponse(200, content=_tiff_8())
+
+        monkeypatch.setattr(cds, "_get_token", lambda: "tok")
+        monkeypatch.setattr(cds.requests, "post", fake_post)
+        monkeypatch.setattr(cds.requests, "request", fake_post)
+        bounds = aoi_bounds(-22.7182, -55.5421, 42.54)
+        cds._process_request(
+            bounds=bounds, evalscript=cds.build_bands_evalscript(), size=256,
+            time_range=("2026-09-09", "2026-09-09"), max_cloud=20.0,
+            mosaicking_order="leastCC",
+        )
+        body = seen["body"]
+        data = body["input"]["data"][0]
+        assert data["type"] == "sentinel-2-l2a"
+        filt = data["dataFilter"]
+        assert filt["timeRange"] == {
+            "from": "2026-09-09T00:00:00Z", "to": "2026-09-09T23:59:59Z",
+        }
+        assert filt["maxCloudCoverage"] == 20.0
+        assert filt["mosaickingOrder"] == "leastCC"
+        assert body["input"]["bounds"]["bbox"] == list(bounds)
+        assert body["input"]["bounds"]["properties"]["crs"].endswith("CRS84")
+        assert body["output"] == {
+            "width": 256, "height": 256,
+            "responses": [{"identifier": "default", "format": {"type": "image/tiff"}}],
+        }
+        script = body["evalscript"]
+        for band in ("B02", "B03", "B04", "B05", "B08", "B11", "SCL", "dataMask"):
+            assert band in script, f"evalscript sem {band}"
+        assert "SampleType.FLOAT32" in script
+        assert "//VERSION=3" in script
+
+    def test_process_payload_dem_bbox_ordem_geografica(self, monkeypatch, cdse_configured):
+        seen = {}
+
+        def fake_post(method, url, **kwargs):
+            seen["body"] = kwargs.get("json")
+            return _FakeResponse(200, content=_tiff_dem())
+
+        monkeypatch.setattr(cds, "_get_token", lambda: "tok")
+        monkeypatch.setattr(cds.requests, "post", fake_post)
+        monkeypatch.setattr(cds.requests, "request", fake_post)
+        bounds = aoi_bounds(-22.7182, -55.5421, 42.54)
+        cds._process_request(bounds=bounds, evalscript=cds.build_dem_evalscript(),
+                             size=64, data_type="dem", dem_instance="COPERNICUS_30")
+        body = seen["body"]
+        assert body["input"]["data"][0]["type"] == "dem"
+        assert body["input"]["data"][0]["demInstance"] == "COPERNICUS_30"
+        assert body["input"]["bounds"]["bbox"] == list(bounds)
+        assert body["input"]["bounds"]["bbox"][0] < body["input"]["bounds"]["bbox"][2]
+
+    def test_datetime_invalido_cai_em_hoje(self, monkeypatch, cdse_configured):
+        """date_str inválida → janela termina HOJE (nunca intervalo futuro/roto)."""
+        seen = {}
+
+        def fake_stac(geometry, bbox, start, end, limit=10):
+            seen["start"], seen["end"] = start, end
+            return []
+
+        monkeypatch.setattr(cds, "stac_search", fake_stac)
+        out = cds.process_farm_layer(
+            farm_id=1, talhao_id=1, lat=-22.1, lon=-49.05, area_ha=42.54,
+            kml_coordinates=None, layer="ndvi", date_str="data-invalida-xyz",
+        )
+        assert out["real_data_status"] == "no_scene"
+        assert seen["end"] == date.today()
+        assert (seen["end"] - seen["start"]).days == cds.settings.cdse_lookback_days
+
+    def test_stac_vazio_nao_e_stac_erro(self, monkeypatch, cdse_configured):
+        """STAC 200 vazio = no_scene (detalhe None); STAC 400 = error + detalhe."""
+        monkeypatch.setattr(cds, "stac_search", lambda *a, **k: [])
+        cal, status, detail = cds.fetch_real_calendar(-22.7, -55.5, 42.5, None)
+        assert cal == [] and status == "no_scene" and detail is None
+
+    def test_stac_erro_400_traz_detalhe_seguro(self, monkeypatch, cdse_configured):
+        def boom(*a, **k):
+            raise CopernicusError(
+                "CDSE requisição recusada (HTTP 400) — STAC_SEARCH",
+                status=400,
+                endpoint="https://stac.dataspace.copernicus.eu/v1/search",
+                content_type="application/json",
+                body_snippet='{"detail":"Invalid bbox: west > east"}',
+                stage="STAC_SEARCH",
+            )
+
+        monkeypatch.setattr(cds, "stac_search", boom)
+        cal, status, detail = cds.fetch_real_calendar(-22.7, -55.5, 42.5, None)
+        assert cal == [] and status == "error"
+        assert detail["stage"] == "STAC_SEARCH"
+        assert detail["http_status"] == 400
+        assert detail["endpoint"] == "https://stac.dataspace.copernicus.eu/v1/search"
+        assert "west > east" in detail["message"]
+        # a representação segura nunca expõe headers de auth/token
+        assert "Authorization" not in json.dumps(detail)
+        assert "Bearer" not in json.dumps(detail)
+
+    def test_erro_400_do_process_captura_corpo(self, monkeypatch, cdse_configured):
+        f = _FailRequest([_FakeResponse(
+            400,
+            text='{"detail":"The property \'mosaickingOrder\' is not allowed"}',
+            headers={"Content-Type": "application/problem+json"},
+        )])
+        monkeypatch.setattr(cds, "_get_token", lambda: "tok")
+        monkeypatch.setattr(cds.requests, "post", f)
+        monkeypatch.setattr(cds.requests, "request", f)
+        with pytest.raises(CopernicusError) as exc:
+            cds._request("POST", "https://sh.dataspace.copernicus.eu/process/v1",
+                         json_body={}, stage="PROCESS_API")
+        assert exc.value.status == 400
+        assert exc.value.stage == "PROCESS_API"
+        assert exc.value.endpoint == "https://sh.dataspace.copernicus.eu/process/v1"
+        assert exc.value.content_type == "application/problem+json"
+        assert "mosaickingOrder" in (exc.value.body_snippet or "")
+        detail = exc.value.to_detail()
+        assert detail["http_status"] == 400
+        assert "mosaickingOrder" in detail["message"]
+
+    def test_sanitize_snippet_mascara_credenciais_e_limita_tamanho(self):
+        big = "x" * 5000
+        snippet = cds._sanitize_snippet(big)
+        assert snippet is not None and len(snippet) <= cds._ERROR_BODY_LIMIT
+        with_secret = '{"access_token":"segredo123","client_secret":"abc","ok":1}'
+        out = cds._sanitize_snippet(with_secret)
+        assert "segredo123" not in out and "abc" not in out
+        assert "access_token=***" in out or "access_token" in out
+
+    def test_erro_401_nao_expoe_corpo(self, monkeypatch, cdse_configured):
+        f = _FailRequest([_FakeResponse(401, {"error": "invalid_client"})])
+        monkeypatch.setattr(cds.requests, "post", f)
+        monkeypatch.setattr(cds.requests, "request", f)
+        with pytest.raises(CopernicusError) as exc:
+            cds._request("POST", "https://x/process/v1", json_body={}, stage="PROCESS_API")
+        assert exc.value.status == 401
+        assert exc.value.body_snippet is None
+
+    def test_process_farm_layer_expoe_real_data_error_400(self, monkeypatch, cdse_configured):
+        """Fase 2: HTTP 400 do Process chega como real_data_error SEM quebrar."""
+        cdse_configured(monkeypatch)
+        monkeypatch.setattr(cds, "stac_search", lambda *a, **k: [
+            _scene("real-1", "2026-09-09T10:00:00Z", 5.0)
+        ])
+
+        def fake_process(**kw):
+            raise CopernicusError(
+                "CDSE requisição recusada (HTTP 400) — PROCESS_API",
+                status=400,
+                endpoint="https://sh.dataspace.copernicus.eu/process/v1",
+                content_type="application/json",
+                body_snippet='{"detail":"evalscript inválido"}',
+                stage="PROCESS_API",
+            )
+
+        monkeypatch.setattr(cds, "_process_request", fake_process)
+        out = cds.process_farm_layer(
+            farm_id=90, talhao_id=1, lat=-22.1, lon=-49.05, area_ha=42.54,
+            kml_coordinates=None, layer="ndvi", date_str="2026-09-09",
+        )
+        assert out["data_origin"] == "procedural"
+        assert out["real_data_status"] == "error"
+        err = out["real_data_error"]
+        assert err["http_status"] == 400
+        assert err["stage"] == "PROCESS_API"
+        assert "evalscript inválido" in err["message"]
 
 
 class TestResiliencia:

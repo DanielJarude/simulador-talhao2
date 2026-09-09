@@ -250,6 +250,13 @@ polígono do talhão (KML ≥ 3 pts) → STAC search sentinel-2-l2a (intersects)
 - EVI = 2.5·(B08−B04)/(B08+6·B04−7.5·B02+1)
 - RGB = [2.5·B04, 2.5·B03, 2.5·B02] clampado a [0,1] (padrão visual CDSE)
 
+**Convenções de geometria (CRÍTICAS — corrigidas em PR #5c):**
+- `aoi_bounds()` devolve **`(min_lon, min_lat, max_lon, max_lat)`** = [west, south, east, north] — ordem exigida pelo STAC (`bbox`) e pela Process API (`bounds.bbox`). A versão anterior devolvia (min_lat, max_lat, min_lon, max_lon) e enviava bbox invertida ao STAC (`west > east` → HTTP 400).
+- GeoJSON (KML→`intersects`) usa **`[lon, lat]`**.
+- A janela temporal é RFC3339: `YYYY-MM-DDThh:mm:ssZ/YYYY-MM-DDThh:mm:ssZ`.
+
+**Diagnóstico de falhas (seguro):** qualquer 4xx/5xx do CDSE vira `real_data_error` com `stage` (`STAC_SEARCH`/`PROCESS_API`/`AUTH`), `http_status`, `endpoint`, `content_type` e um trecho truncado/sanitizado do corpo do provedor — nunca `Authorization`, `access_token`, `client_secret` ou `refresh_token`. `STAC OK SEM CENAS` (200 vazio) é distinto de `STAC ERRO` (4xx/5xx).
+
 **Camadas novas na API (mantendo compatibilidade):**
 - `GET /api/talhao/{id}/texture?layer=rgb|ndvi|evi|ndre|ndmi&date=YYYY-MM-DD` → `data_origin` (`sentinel`|`procedural`) + proveniência (`collection`, `product_id`, `acquisition_date`, `cloud_cover`, `processing_level`, `bands`, `valid_pixel_percentage`, `selection_reason`) quando real; `real_data_status` (`not_configured`|`no_scene`|`error`|`ok`) + `real_data_message` quando não.
 - `GET /api/talhao/{id}/texture.png?layer=...&date=YYYY-MM-DD` → PNG (real cacheado ou procedural).

@@ -837,3 +837,24 @@ Executada em **08/09/2026** antes da implementação do serviço CDSE:
 | Conectividade | Sandbox sem acesso TCP aos hosts do CDSE (curl → exit 35/000) — integração real fica no script opcional, fora da suíte | execução local |
 
 **Decisões aplicadas:** endpoints centralizados em `services/copernicus_service.py`; nunca versionar `CDSE_CLIENT_SECRET`; sem credenciais → `real_data_status="not_configured"` e fallback procedural explícito; índices com fórmulas documentadas e validadas numericamente; What-If permanece modelo/projeção (nunca "imagem futura do Sentinel"); autenticação dos assets continua via Bearer no frontend.
+
+## Anexo D — Correção do fluxo REAL (teste fora do sandbox, 09/09/2026)
+
+**Sintoma (Windows, credenciais válidas):** OAuth OK; DEM COPERNICUS_30 OK (592–615 m); STAC `status=error` + Process API "CDSE requisição recusada (HTTP 400)".
+
+**Causa raiz encontrada (detalhada por escrita + confirmação de contrato com a doc oficial):**
+
+| # | Problema | Detalhe |
+|---|----------|---------|
+| D1 | **bbox invertida no STAC/Process (causa do 400)** | `aoi_bounds()` retornava `(min_lat, max_lat, min_lon, max_lon)`; o STAC exige `[minLon, minLat, maxLon, maxLat]`. O corpo enviado tinha `west > east` → HTTP 400. Geométricamente o 400 era inevitável (mesmo OAuth/DEM funcionando, pois o DEM usava conversão própria) |
+| D2 | **Diagnóstico insuficiente** | 4xx/5xx guardavam apenas `status`; sem etapa, endpoint, Content-Type e corpo do provedor → impossível distinguir "sem cenas" de "payload inválido" |
+| D3 | **`fetch_real_calendar` silenciava o erro** | status "error" não carregava motivo; `status=error` era tratado como "sem cenas" |
+
+**Correções (commit desta etapa):**
+- `aoi_bounds()` → `(min_lon, min_lat, max_lon, max_lat)` (documentado e testado); `stac_search`/`_process_request`/`polygon_mask`/`dem_service` adaptados; DEM segue com conversão explícita.
+- `CopernicusError` ganha `stage`/`endpoint`/`content_type`/`body_snippet` + `to_detail()`; `_sanitize_snippet()` trunca (1200 chars) e mascara credenciais; 401/403 nunca expõem corpo.
+- `fetch_real_calendar` → `(cenas, status, detail)` com `ok` | `no_scene` | `not_configured` | `error` (detalhe seguro em erro).
+- Process API S2: `mosaickingOrder="leastCC"` no `dataFilter` (determinismo com múltiplas cenas na janela), corpo auditado contra a doc (`type`, `timeRange`, `maxCloudCoverage`, `bounds.bbox` em ordem geográfica, CRS84, `image/tiff`, evalscript com B02/B03/B04/B05/B08/B11+SCL+dataMask).
+- Endpoints: `real_data_error` exposto no JSON da textura e `stac_detail` em `/api/talhao/{id}/dates`.
+- Script `test_cdse_connection.py` distingue STAC OK COM CENAS / OK SEM CENAS / ERRO HTTP / ERRO PAYLOAD e PROCESS OK / HTTP 4xx-5xx, mostrando o motivo seguro do provedor.
+- Testes novos (Fase 7, sem rede): payload STAC real (bbox em ordem, `collections`, `datetime` RFC3339, GeoJSON `[lon,lat]`), payload Process S2/DEM, datetime inválido → janela até hoje, STAC vazio ≠ STAC erro, parsing de 400 (corpo+Content-Type), 401 sem corpo, sanitização de credenciais, `real_data_error` no pipeline. **253 passed, 1 skipped, 0 failed.**

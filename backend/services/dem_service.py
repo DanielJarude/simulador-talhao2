@@ -185,7 +185,10 @@ def process_talhao_heightmap(
         )
 
         if is_configured():
-            bounds = talhao_bounds(lat, lon, area_ha, kml_coordinates)
+            # talhao_bounds devolve (min_lat, max_lat, min_lon, max_lon);
+            # o CDSE espera [minLon, minLat, maxLon, maxLat] — converte aqui.
+            latlon = talhao_bounds(lat, lon, area_ha, kml_coordinates)
+            bounds = (latlon[2], latlon[0], latlon[3], latlon[1])
             for instance, source in (
                 ("COPERNICUS_30", "copernicus_30"),
                 ("COPERNICUS_90", "copernicus_90"),
@@ -210,8 +213,8 @@ def process_talhao_heightmap(
                         "size": size,
                         "min_elevation_m": dem["min_elevation_m"],
                         "max_elevation_m": dem["max_elevation_m"],
-                        "bounds": [round(bounds[2], 6), round(bounds[0], 6),
-                                   round(bounds[3], 6), round(bounds[1], 6)],
+                        "bounds": [round(bounds[0], 6), round(bounds[1], 6),
+                                   round(bounds[2], 6), round(bounds[3], 6)],
                         "source": source,
                         "heightmap_url": (
                             f"{settings.public_base_url}/api/talhao/{farm_id}/heightmap.png?size={size}"
