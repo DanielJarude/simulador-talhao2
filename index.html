@@ -655,15 +655,76 @@
     let isFetchingFarm = false;
     let analyticsTimelineCache = [];
 
-    // Grade temporal padrão (fallback explícito da aplicação). Quando o CDSE
-    // está configurado, `refreshRealTimeline()` substitui pelas passagens
-    // REAIS do Sentinel-2 (6–12 cenas úteis) devolvidas pelo backend.
-    let dates = [
+    // =====================================================================
+    // [3D-CALENDAR-HELPERS-START] — decisão PURA: STAC real × demonstração.
+    // NUNCA existe "data real" além das devolvidas pelo endpoint (CDSE/STAC).
+    // =====================================================================
+    const CALENDAR_REAL_SOURCE = 'sentinel-cdse';
+    const CALENDAR_FALLBACK_SOURCE = 'config_fallback';
+
+    /** Motivo legível (pt-BR) de quando o calendário NÃO é real. */
+    function buildCalendarFallbackReason(data, httpStatus, networkError) {
+      if (networkError) {
+        const name = (networkError && networkError.name) || 'Erro';
+        return `Falha de rede ao consultar o catálogo (${name})`;
+      }
+      if (httpStatus === 401) return 'Sessão não autenticada — faça login para ver as passagens reais';
+      if (httpStatus) return `Erro HTTP ${httpStatus} ao consultar o catálogo Sentinel-2`;
+      if (!data) return 'Resposta vazia do servidor de catálogo';
+      if (data.status === 'not_configured') return 'CDSE não configurado (credenciais ausentes ou CDSE_ENABLED=false)';
+      if (data.status === 'no_scene') return 'Sem cena Sentinel-2 válida na janela (política de nuvens)';
+      if (data.status === 'error') return 'Erro ao consultar o catálogo Sentinel-2 (CDSE)';
+      return 'Catálogo Sentinel-2 real indisponível';
+    }
+
+    /**
+     * Classifica a resposta do endpoint /dates:
+     *  - `kind: 'real'` → data.source === 'sentinel-cdse' E há cenas: a
+     *    timeline é EXATAMENTE as datas STAC (mais recente primeiro);
+     *  - `kind: 'demo'` → qualquer outro caso: datas de demonstração com
+     *    rótulo e motivo explícitos (nunca apresentadas como reais).
+     */
+    function classifyCalendarResponse(data, demoDates, httpStatus, networkError) {
+      const demo = (Array.isArray(demoDates) ? demoDates.slice() : [])
+        .sort().reverse(); // desc: "Mais recente" ≡ dates[0] também na demo
+      if (data && data.source === CALENDAR_REAL_SOURCE &&
+          Array.isArray(data.dates) && data.dates.length > 0) {
+        const realDates = data.dates.slice();
+        return {
+          kind: 'real',
+          source: CALENDAR_REAL_SOURCE,
+          dates: realDates,
+          count: (typeof data.count === 'number') ? data.count : realDates.length,
+          latest: data.latest_date || realDates[0],
+          source_label: data.source_label || 'Copernicus Sentinel-2 — catálogo STAC real',
+          status: data.status || 'ok',
+          fallback_reason: null,
+        };
+      }
+      return {
+        kind: 'demo',
+        source: CALENDAR_FALLBACK_SOURCE,
+        dates: demo,
+        count: demo.length,
+        latest: null,
+        source_label: 'Calendário demonstrativo (datas de demonstração)',
+        status: (data && data.status) || (httpStatus ? 'http_error' : 'network_error'),
+        fallback_reason: buildCalendarFallbackReason(data, httpStatus, networkError),
+      };
+    }
+    // [3D-CALENDAR-HELPERS-END]
+    // =====================================================================
+
+    // Datas de DEMONSTRAÇÃO: usadas SOMENTE quando o calendário STAC real não
+    // está disponível (fallback explícito). A timeline NUNCA nasce com elas:
+    // `dates` começa VAZIO e é preenchido pela API.
+    const DEMO_DATES = [
       "2025-04-07", "2025-04-22", "2025-05-02", "2025-06-11",
       "2025-10-04", "2025-10-11", "2025-11-18", "2025-11-20",
       "2025-12-10", "2025-12-18", "2026-01-27", "2026-02-11", "2026-03-08"
     ];
-    // PR #5e — metadados do calendário REAL (fonte/status/última aquisição).
+    let dates = [];              // fonte da verdade da timeline (SEMPRE da API)
+    // PR #5e — metadados do calendário (fonte/label/is_real/status/motivo).
     let calendarMeta = null;
     let currentPeriod = 60;    // 30/60/90/180/365 | 'custom'
 
@@ -829,13 +890,15 @@
         console.error('geometria: falha ao aplicar contorno do talhão', e);
       }
 
-      renderDatePills();
+      // PR #5e (correção): a timeline só é montada DEPOIS da resposta da API
+      // — nenhuma pílula fixa é renderizada antes. `refreshRealTimeline`
+      // reconstrói as datas (STAC real OU demo rotulada) e só então carrega
+      // a cena inicial e inicia o preload.
       renderPeriodPills();
       loadAnalyticsData();
-      updateTextures();
       loadLiveWeather();
       loadHeightmap(); // Copernicus DEM GL-30 (fire-and-forget; falha → aproximado)
-      refreshRealTimeline(currentPeriod); // STAC real como fonte principal
+      await refreshRealTimeline(currentPeriod); // STAC real como fonte principal
     }
 
     /**
@@ -843,14 +906,49 @@
      * Sem CDSE configurado / sem cenas, mantém a grade oficial (fallback
      * explícito) e comunica via console — nunca inventa data real.
      */
+    // =====================================================================
+    // [3D-CALENDAR-WIRING-START] — timeline SEMPRE reconstruída da API.
+    // Nenhuma pílula fixa é reaproveitada; datas reais = STAC, único caminho.
+    // =====================================================================
+    /** Estado visível enquanto o catálogo é consultado (nunca demos na tela). */
+    function setTimelineBusy(label) {
+      const meta = document.getElementById('timeline-meta');
+      if (meta) meta.innerText = label;
+      const pills = document.getElementById('dashboard-dates-bar');
+      if (pills) pills.innerHTML = '';
+      const latest = document.getElementById('btn-latest');
+      if (latest) latest.disabled = true;
+      const slider = document.getElementById('timeline-slider');
+      if (slider) slider.disabled = true;
+      const dateLabel = document.getElementById('date-label');
+      if (dateLabel) dateLabel.innerText = '—';
+    }
+
+    /** Habilita/desabilita os controles de timeline conforme o calendário. */
+    function setTimelineControls(enabled, maxIndex) {
+      const slider = document.getElementById('timeline-slider');
+      if (slider) {
+        slider.max = String(Math.max(0, Number(maxIndex) || 0));
+        slider.disabled = !enabled;
+      }
+      const latest = document.getElementById('btn-latest');
+      if (latest) latest.disabled = !enabled;
+    }
+
     /**
-     * PR #5e — calendário REAL como fonte principal da timeline.
+     * PR #5e (correção) — calendário REAL como ÚNICA fonte da timeline.
      * `period` ∈ {30,60,90,180,365} usa janela de dias; 'custom' usa
      * start/end explícitos. A consulta é SÓ metadados STAC (o processamento
-     * da cena continua sob demanda, no clique/Play). Sem CDSE, mantém a grade
-     * oficial como fallback explícito — nunca inventa data real.
+     * da cena continua sob demanda, no clique/Play).
+     * SEMPRE: limpa a timeline → "Buscando datas Sentinel-2…" → API →
+     * STAC real (reconstrói pílulas + seleciona mais recente + preload) OU
+     * fallback explícito "Calendário demonstrativo" com o motivo real.
      */
     async function refreshRealTimeline(period = 60, customStart = null, customEnd = null) {
+      setTimelineBusy('Buscando datas Sentinel-2…');
+      let data = null;
+      let httpStatus = null;
+      let networkError = null;
       try {
         const params = new URLSearchParams();
         if (customStart && customEnd && period === 'custom') {
@@ -865,35 +963,47 @@
           `${API_URL}/talhao/${activeFarm.id || 1}/dates?${params.toString()}`,
           { headers: { ...authHeaders() } }
         );
-        if (res.status === 401) { AuthService.logout(); return; }
-        if (!res.ok) return;
-        const data = await res.json();
-        if (data.source === 'sentinel-cdse' && Array.isArray(data.dates) && data.dates.length > 0) {
-          // Preserva a data APLICADA se ainda existir na nova janela; senão
-          // seleciona a MAIS RECENTE (data válida do catálogo, nunca "hoje").
-          const appliedDate = (player.appliedMeta && player.appliedMeta.date) || dates[player.appliedIndex] || null;
-          dates = data.dates;
-          calendarMeta = { ...data, count: data.count || dates.length };
-          preloadStates.clear();          // chaves antigas saem da timeline
-          preloadQueue.length = 0;
-          preloadQueuedKeys.clear();
-          const keepIdx = appliedDate ? dates.indexOf(appliedDate) : -1;
-          const startIdx = keepIdx >= 0 ? keepIdx : 0; // 0 = mais recente SEMPRE
-          player = createTimelineMachine(startIdx, dates.length);
-          document.getElementById('timeline-slider').max = dates.length - 1;
-          renderDatePills();
-          renderTimelineMeta();
-          selectDateIndex(startIdx);
-          // Após aplicar a data escolhida, o commit dispara o preload (janela).
-          console.info(`timeline: ${dates.length} passagens reais Sentinel-2 (janela ${period}d)`);
-        } else {
-          // Fallback explícito (config): nunca vira "real" na UI.
-          calendarMeta = { source: data.source || 'config', status: data.status, count: 0 };
-          renderTimelineMeta();
-          console.warn('timeline: calendário STAC indisponível — usando grade oficial', data.status);
-        }
+        if (res.status === 401) { AuthService.logout(); httpStatus = 401; }
+        else if (!res.ok) { httpStatus = res.status; }
+        else data = await res.json();
       } catch (err) {
-        console.warn('timeline: calendário real indisponível — usando grade oficial', err);
+        networkError = err;
+      }
+
+      const decision = classifyCalendarResponse(data, DEMO_DATES, httpStatus, networkError);
+      const appliedDate = (player && player.appliedMeta && player.appliedMeta.date) || null;
+      dates = decision.dates;
+      calendarMeta = {
+        source: decision.source,
+        source_label: decision.source_label,
+        is_real: decision.kind === 'real',
+        status: decision.status,
+        fallback_reason: decision.fallback_reason,
+        latest_date: decision.latest,
+        count: decision.count || dates.length,
+      };
+      // Chaves antigas saem da timeline (nunca reaproveitar cache de demo).
+      preloadStates.clear();
+      preloadQueue.length = 0;
+      preloadQueuedKeys.clear();
+      const startIdx = 0; // 0 = mais recente SEMPRE (catálogo vem DESC; demo também)
+      player = createTimelineMachine(startIdx, dates.length);
+      setTimelineControls(dates.length > 0, dates.length - 1);
+      renderDatePills();          // reconstrói do zero (nunca pílulas antigas)
+      renderTimelineMeta();
+
+      if (decision.kind === 'real') {
+        console.info(`[3D-DATES] source=${decision.source} count=${decision.count} latest=${decision.latest}`);
+        // Preserva a data APLICADA se ainda existir na janela; senão a mais
+        // recente (índice 0). Só DEPOIS disso a cena carrega e o preload entra.
+        const keepIdx = appliedDate ? dates.indexOf(appliedDate) : -1;
+        selectDateIndex(keepIdx >= 0 ? keepIdx : startIdx);
+      } else {
+        console.warn(`[3D-DATES] source=${decision.source} reason=${decision.fallback_reason}`);
+        // Fallback explícito: datas de demonstração ROTULADAS e a cena demo
+        // carregada (procedural) — nunca apresentadas como Sentinel real.
+        updateTimelineUI(0);
+        updateTextures();
       }
     }
 
@@ -906,21 +1016,25 @@
       return 12;
     }
 
-    /** Rodapé discreto: "Última aquisição disponível: …" + fonte da janela. */
+    /** Rodapé: "Última aquisição disponível: …" (real) ou rótulo demo + motivo. */
     function renderTimelineMeta() {
       const el = document.getElementById('timeline-meta');
       if (!el) return;
-      if (calendarMeta && calendarMeta.source === 'sentinel-cdse') {
+      if (calendarMeta && calendarMeta.is_real) {
         const latest = calendarMeta.latest_date || dates[0] || '';
         el.innerText = latest
           ? `Última aquisição disponível: ${formatSceneDate(latest)} • ${calendarMeta.count || dates.length} cenas`
           : `${dates.length} cenas reais`;
-      } else if (calendarMeta && calendarMeta.source === 'config') {
-        el.innerText = `Grade oficial (CDSE não configurado) • ${dates.length} datas`;
+      } else if (calendarMeta && (calendarMeta.source === CALENDAR_FALLBACK_SOURCE || calendarMeta.source === 'config')) {
+        el.innerText =
+          `${calendarMeta.source_label || 'Calendário demonstrativo'} • ${dates.length} datas • ` +
+          `${calendarMeta.fallback_reason || 'dados reais indisponíveis'}`;
       } else {
         el.innerText = '';
       }
     }
+    // [3D-CALENDAR-WIRING-END]
+    // =====================================================================
 
     async function loadAnalyticsData() {
       try {
@@ -2535,7 +2649,9 @@
       updateZoneCards(index);
       // Pré-carrega a nova layer/janela após cada cena aplicada (em background).
       // Só depois que o calendário STAC chegou (evita preload da grade antiga).
-      if (calendarMeta) schedulePreloadForTimeline();
+      // Preload SÓ com calendário STAC real: datas de demonstração nunca
+      // entram na fila (evita "preparar" cenas que não são aquisições).
+      if (calendarMeta && calendarMeta.is_real) schedulePreloadForTimeline();
       if (player.mode === 'playing') schedulePlayNext();  // LOADING→READY→intervalo
       console.info(`cena aplicada: ${dates[index]} (${layer})${opts.fromCache ? ' [cache]' : ''}`);
       return meta;

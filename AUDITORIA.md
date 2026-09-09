@@ -1039,3 +1039,74 @@ calendário STAC como fonte da timeline, pré-carregamento/cache de cenas, terre
 20. `pytest` completo continua verde.
 
 **Status: PRONTO PARA PLAYTEST HUMANO.** Sem merge; branch `arena/01a083cd-simulador-talhao2`.
+
+---
+
+## Anexo G — Correção do calendário: timeline SÓ do STAC real (playtest PR #5e, 09/09/2026)
+
+**Bug reportado no playtest:** o Simulador 3D continuava exibindo as datas predefinidas
+antigas (13 datas fixas), mesmo com CDSE validado antes (OAuth OK, 7 cenas, Process OK,
+DEM OK). O requisito "timeline = cenas reais do STAC" não estava funcionando na interface.
+
+### G1 — Causa raiz (confirmada por reprodução local)
+
+1. **Frontend nascia com a lista fixa e a mantinha em TODOS os caminhos de falha.**
+   `index.html` inicializava `let dates = [13 datas fixas]`, `renderDatePills()` desenhava
+   essas pílulas **imediatamente**, e `updateTextures()` carregava a cena **antes** do
+   calendário real chegar. Em seguida, `refreshRealTimeline()` fazia o fetch, mas:
+   - resposta `source: "config"` → o `else` apenas setava `calendarMeta` e **não tocava**
+     em `dates`/pílulas → as 13 datas antigas ficavam na tela;
+   - `!res.ok` / 401 / exceção → `return` silencioso → mesmas 13 datas na tela.
+   O único sinal era um `timeline-meta` discreto ("Grade oficial…") — fácil de passar
+   despercebido. Reproduzido: `curl /api/talhao/1/dates` (sem credenciais no ambiente)
+   retornou `{"dates": [13 fixas], "source": "config", "status": "not_configured"}`.
+2. **O `.env` do backend não era lido quando o processo subia fora de `backend/`.**
+   `SettingsConfigDict(env_file=".env")` resolve contra o **CWD** do processo. Com
+   `uvicorn backend.main:app` (da raiz) — ou qualquer wrapper — `backend/.env` era
+   ignorado → `cdse_client_id=""` → `not_configured` → endpoint devolvia a lista fixa.
+3. **O fallback não era explícito o suficiente.** `source: "config"` podia ser confundido
+   com algo "da configuração do sistema" e a UI não dizia "datas de demonstração".
+
+### G2 — Onde a lista fixa ainda era usada
+
+| Onde | Antes | Depois |
+|------|-------|--------|
+| `backend/config.py` `sentinel_dates` | fonte da timeline via `/dates` (fallback) e do `/api/talhao/dates` | **apenas** demos/fallback explícito (`config_fallback`, `is_real=false`); caminho real NÃO a usa |
+| `backend/main.py` `get_farm_dates` | `source: "config"` + datas fixas em qualquer falha | `source: "sentinel-cdse"` (real) x `config_fallback` (demo) + `is_real`, `source_label`, `fallback_reason`, `latest_date`, `count` |
+| `backend/main.py` `get_available_dates` | datas fixas sem identificação | `config_fallback` + `is_real=false` |
+| `index.html` `let dates` | **inicializada com as 13 datas fixas** | **inicia vazia** (`[]`); `DEMO_DATES` é constante separada, usada SÓ no fallback |
+| `index.html` `loadActiveFarm` | `renderDatePills()` + `updateTextures()` ANTES do calendário | pílulas/cena só depois da resposta da API (`await refreshRealTimeline`) |
+| `index.html` `refreshRealTimeline` | falha 401/HTTP/rede → silent | `setTimelineBusy('Buscando datas Sentinel-2…')` → API → real OU demo rotulada + motivo; `[3D-DATES]` no console |
+| `index.html` `commitScene` | preload com `calendarMeta` (inclusive demo) | preload **só** `calendarMeta.is_real` |
+
+### G3 — Comportamento novo (frontend)
+
+1. Abrir Simulador → timeline limpa, "Buscando datas Sentinel-2…", controles desabilitados;
+2. `GET /api/talhao/{farm_id}/dates` com Bearer;
+3. **Real** (`source=sentinel-cdse`): `dates` = exatamente as cenas STAC (desc),
+   `latest_date` no rodapé, pílulas reconstruídas do zero, `selectDateIndex(0/keep)`
+   (mais recente = `dates[0]`), e SÓ então `loadScene` → preload da janela;
+4. **Fallback** (qualquer outra coisa): `dates` = `DEMO_DATES` desc,
+   `calendarMeta.is_real=false`, rodapé "Calendário demonstrativo (datas de demonstração)
+   • N datas • <motivo>", cena demo carregada (procedural) — nunca parece real;
+5. "Mais recente" = `dates[0]` (real: cena válida mais recente do catálogo).
+
+### G4 — Contrato `/dates` (antes → depois)
+
+**Antes (fallback):** `{"dates": [13 fixas], "calendar": [], "source": "config", "status": "not_configured", ...}` — fixas pareciam a timeline.
+**Depois (real):** `source: "sentinel-cdse"`, `is_real: true`, `source_label: "Copernicus Sentinel-2 — catálogo STAC real"`, `dates` = só STAC, `latest_date` = `dates[0]`, `count`.
+**Depois (fallback):** `source: "config_fallback"`, `is_real: false`, `source_label: "Calendário demonstrativo (datas de demonstração)"`, `status`, `fallback_reason` (not_configured/no_scene/error/http), `dates` = demo desc.
+
+### G5 — Testes adicionados (PR #5e — correção)
+
+- `tests/test_3d_calendar_timeline.py` (novo, 2 testes VM Node): decisão pura
+  (A–D, F–G) e wiring real do `refreshRealTimeline` (E–H).
+- `tests/test_copernicus_service.py`: caso real conhecido (30/08, 27/08, 15/08,
+  31/07, 26/07, 18/07/2026 — mock); STAC sem cena → `no_scene` + demo; STAC erro →
+  `config_fallback` + motivo; `sem_cdse` → `config_fallback` + `is_real=false`;
+  público → demonstrativo; real → **datas do STAC disjuntas da config**.
+- `scripts/test_cdse_connection.py`: imprime o contrato `[3D-DATES]` (source/count/
+  latest/dates + se a lista fixa foi usada) — comando real local (sem rede na suíte):
+  `python scripts/test_cdse_connection.py --lat -22.7182 --lon -55.5421 --area 42.54 --demo`.
+
+**Status: PRONTO PARA NOVO PLAYTEST HUMANO.** Sem merge; branch `arena/01a083cd-simulador-talhao2`.

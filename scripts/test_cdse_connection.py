@@ -131,6 +131,16 @@ def main() -> int:
             print(f"  (provavelmente payload/geometria/datetime inválidos — "
                   f"verifique o MOTIVO acima)")
 
+    # Contrato exato consumido pelo frontend (item 9 do playtest — sem segredos):
+    # source real → timeline SÓ com estas datas; fallback → demo rotulada.
+    src = cds.CALENDAR_REAL_SOURCE if status == "ok" else cds.CALENDAR_FALLBACK_SOURCE
+    print("\n  [3D-DATES] CONTRATO DA TIMELINE (o que o frontend vai montar):")
+    print(f"  [3D-DATES] source={src}")
+    print(f"  [3D-DATES] count={len(calendar)}")
+    print(f"  [3D-DATES] latest={calendar[0]['date'] if calendar else '-'}")
+    print(f"  [3D-DATES] dates={','.join(c['date'] for c in calendar[:12])}")
+    print(f"  [3D-DATES] lista_fixa_config_usada={'NAO' if status == 'ok' else 'SIM - apenas como fallback'}")
+
     # ------------------------------------------------------------------ 3/4
     print(f"\n[3/4] PROCESS API — camada {args.layer.upper()} real do talhão…")
     target = args.date or end.isoformat()

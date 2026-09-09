@@ -15,7 +15,13 @@ from config import settings
 from database import Base, SessionLocal, engine, get_db
 from security import create_access_token, get_current_user, get_auth_context, hash_password, require_role, verify_password
 from services.analytics_service import get_farm_temporal_series
-from services.copernicus_service import cdse_dir, fetch_real_calendar, process_farm_layer
+from services.copernicus_service import (
+    CALENDAR_FALLBACK_SOURCE,
+    CALENDAR_REAL_SOURCE,
+    cdse_dir,
+    fetch_real_calendar,
+    process_farm_layer,
+)
 from services.dem_service import process_talhao_heightmap
 from services.pdf_service import generate_farm_pdf_report
 from services.satellite_service import generate_all_spectral_layers
@@ -603,11 +609,27 @@ def get_talhao_texture_png(
 # ---------------------------------------------------------------------------
 @app.get("/api/talhao/dates")
 def get_available_dates():
+    # Público/legado: APENAS calendário DEMONSTRATIVO (nunca apresentado como real).
     return {
         "dates": settings.sentinel_dates,
         "indices": settings.spectral_indices,
         "visual_layers": ["rgb", *settings.spectral_indices],
+        "source": "config_fallback",
+        "source_label": "Calendário demonstrativo (datas de demonstração)",
+        "is_real": False,
     }
+
+
+def calendar_fallback_reason(status: str | None, detail: dict | None = None) -> str:
+    """Motivo em pt-BR (seguro — nunca segredos) de quando o calendário NÃO é real."""
+    if status == "not_configured":
+        return "CDSE não configurado (credenciais ausentes ou CDSE_ENABLED=false)"
+    if status == "no_scene":
+        return "Sem cena Sentinel-2 válida na janela (política de nuvens)"
+    if status == "error":
+        stage = (detail or {}).get("stage") or "cdse"
+        return f"Erro ao consultar o catálogo Sentinel-2 ({stage})"
+    return "Catálogo Sentinel-2 real indisponível"
 
 
 @app.get("/api/talhao/{farm_id}/dates")
@@ -659,10 +681,16 @@ def get_farm_dates(
         logger.exception("CDSE: falha ao obter calendário real")
         calendar, status, detail = [], "error", None
     if calendar:
+        logger.info(
+            "[3D-DATES] source=%s count=%d latest=%s",
+            CALENDAR_REAL_SOURCE, len(calendar), calendar[0]["date"],
+        )
         return {
             "dates": [c["date"] for c in calendar],
             "calendar": calendar,
-            "source": "sentinel-cdse",
+            "source": CALENDAR_REAL_SOURCE,
+            "source_label": "Copernicus Sentinel-2 — catálogo STAC real",
+            "is_real": True,
             "status": status,
             "stac_detail": detail,
             "indices": settings.spectral_indices,
@@ -673,11 +701,21 @@ def get_farm_dates(
             "latest_date": calendar[0]["date"],
             "count": len(calendar),
         }
+    # Fallback EXPLÍCITO: datas de demonstração — a UI deve rotulá-las assim.
+    fallback_status = status or ("not_configured" if not calendar else "no_scene")
+    fallback_reason = calendar_fallback_reason(fallback_status, detail)
+    logger.warning(
+        "[3D-DATES] source=%s reason=%s count=0",
+        CALENDAR_FALLBACK_SOURCE, fallback_status,
+    )
     return {
-        "dates": settings.sentinel_dates,
+        "dates": sorted(settings.sentinel_dates, reverse=True),  # demo, desc p/ "Mais recente"
         "calendar": [],
-        "source": "config",
-        "status": status or ("not_configured" if not calendar else "no_scene"),
+        "source": CALENDAR_FALLBACK_SOURCE,
+        "source_label": "Calendário demonstrativo (datas de demonstração)",
+        "is_real": False,
+        "status": fallback_status,
+        "fallback_reason": fallback_reason,
         "stac_detail": detail,
         "indices": settings.spectral_indices,
         "visual_layers": ["rgb", *settings.spectral_indices],

@@ -57,6 +57,11 @@ logger = logging.getLogger("orion.copernicus")
 COLLECTION = "sentinel-2-l2a"
 PROVIDER = "Copernicus Data Space Ecosystem"
 PROCESSING_LEVEL = "L2A"
+#: Identificadores inequívocos da fonte do calendário (PR #5e — correção).
+#: `sentinel-cdse` = catálogo STAC real; `config_fallback` = datas de
+#: demonstração (NUNCA apresentadas como se fossem aquisições reais).
+CALENDAR_REAL_SOURCE = "sentinel-cdse"
+CALENDAR_FALLBACK_SOURCE = "config_fallback"
 #: Bandas usadas no Process API (nomes oficiais do Sentinel-2 L2A no CDSE).
 #: B05 e B11 são de 20 m — o Process API entrega na grade pedida (10 m).
 BANDS = ["B02", "B03", "B04", "B05", "B08", "B11"]
@@ -472,8 +477,27 @@ def fetch_real_calendar(
             }
             for s in usable[:limit]
         ]
+        # Log diagnóstico SEM segredos: fonte, contagem e última aquisição.
+        if calendar:
+            logger.info(
+                "[3D-DATES] source=%s stac_scenes=%d usable=%d count=%d latest=%s window=%s..%s",
+                CALENDAR_REAL_SOURCE, len(scenes), len(usable), len(calendar),
+                calendar[0]["date"], start.isoformat(), end.isoformat(),
+            )
+        else:
+            logger.warning(
+                "[3D-DATES] source=%s reason=%s stac_scenes=%d window=%s..%s",
+                CALENDAR_FALLBACK_SOURCE, "no_scene", len(scenes),
+                start.isoformat(), end.isoformat(),
+            )
         return calendar, ("ok" if calendar else "no_scene"), None
     except (CopernicusNotConfigured, CopernicusError) as exc:
+        stage = getattr(exc, "stage", None) or type(exc).__name__
+        logger.warning(
+            "[3D-DATES] source=%s reason=%s stage=%s",
+            CALENDAR_FALLBACK_SOURCE, "error", stage,
+        )
+        return [], "error", exc.to_detail() if isinstance(exc, CopernicusError) else None
         return [], "error", exc.to_detail() if isinstance(exc, CopernicusError) else None
 
 

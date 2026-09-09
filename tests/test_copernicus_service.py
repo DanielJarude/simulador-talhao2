@@ -1126,6 +1126,11 @@ class TestEndpointCdsE:
         assert r.status_code == 200
         d = r.json()
         assert d["source"] == "sentinel-cdse"
+        assert d["is_real"] is True
+        assert "STAC" in d["source_label"]
+        # Datas do catálogo STAC são DIFERENTES da lista fixa de configuração:
+        # a resposta NÃO pode conter nenhuma data da config (anti-falso-positivo).
+        assert set(d["dates"]).isdisjoint(set(cds.settings.sentinel_dates))
         assert d["dates"] == ["2025-03-24", "2025-03-20"]
         assert d["calendar"][0]["product_id"] == "d2"
         assert d["visual_layers"][0] == "rgb"
@@ -1182,6 +1187,42 @@ class TestEndpointCdsE:
         assert captured[-1]["end"].isoformat() == "2025-02-28"
         assert d2["latest_date"] == "2025-03-24"
 
+    def test_dates_caso_real_conhecido_janelas_2026(self, client, user_token, monkeypatch):
+        """Caso real já validado no projeto (lat -22.7182, lon -55.5421):
+        datas conhecidas do catálogo — mocks aqui (a rede fica no comando
+        `python scripts/test_cdse_connection.py --calendar`); NUNCA hardcode
+        na timeline, apenas na verificação do fluxo."""
+        body = {
+            "name": "Fazenda Real Conhecida", "city": "Marília", "total_area": 42.54,
+            "talhao_name": "A", "crop": "Soja",
+            "latitude": -22.7182, "longitude": -55.5421,
+        }
+        fid = client.post("/api/farms", json=body, headers=auth(user_token)).json()["id"]
+        monkeypatch.setattr(cds.settings, "cdse_client_id", "c")
+        monkeypatch.setattr(cds.settings, "cdse_client_secret", "s")
+        known = [
+            _scene("S2A_0830", "2026-08-30T10:00:00Z", 2.0),
+            _scene("S2B_0827", "2026-08-27T10:00:00Z", 5.0),
+            _scene("S2A_0815", "2026-08-15T10:00:00Z", 8.0),
+            _scene("S2B_0731", "2026-07-31T10:00:00Z", 4.0),
+            _scene("S2A_0726", "2026-07-26T10:00:00Z", 11.0),
+            _scene("S2B_0718", "2026-07-18T10:00:00Z", 6.0),
+        ]
+        monkeypatch.setattr(cds, "stac_search", lambda *a, **k: list(known))
+        r = client.get(
+            f"/api/talhao/{fid}/dates?period_days=60&limit=24", headers=auth(user_token)
+        )
+        d = r.json()
+        assert d["source"] == "sentinel-cdse"
+        assert d["is_real"] is True
+        assert d["count"] == 6
+        assert d["latest_date"] == "2026-08-30"
+        assert d["dates"] == [
+            "2026-08-30", "2026-08-27", "2026-08-15",
+            "2026-07-31", "2026-07-26", "2026-07-18",
+        ]
+        assert set(d["dates"]).isdisjoint(set(cds.settings.sentinel_dates))
+
     def test_dates_farm_sem_cdse_cai_na_config(self, client, user_token):
         body = {
             "name": "Fazenda Sem CDSE", "city": "Marília", "total_area": 30.0,
@@ -1192,9 +1233,59 @@ class TestEndpointCdsE:
         r = client.get(f"/api/talhao/{fid}/dates", headers=auth(user_token))
         assert r.status_code == 200
         d = r.json()
-        assert d["source"] == "config"
-        assert d["dates"] == cds.settings.sentinel_dates
+        # Fallback EXPLÍCITO — nunca confundível com dados reais.
+        assert d["source"] == "config_fallback"
+        assert d["is_real"] is False
+        assert "demonstrativo" in d["source_label"].lower()
+        assert "não configurado" in d["fallback_reason"].lower()
+        assert d["dates"] == sorted(cds.settings.sentinel_dates, reverse=True)
         assert d["status"] == "not_configured"
+        assert d["latest_date"] is None
+        assert d["count"] == 0
+
+    def test_dates_farm_stac_sem_cena_cai_fallback_explicito(
+        self, client, user_token, monkeypatch
+    ):
+        body = {
+            "name": "Fazenda Sem Cena", "city": "Marília", "total_area": 30.0,
+            "talhao_name": "A", "crop": "Soja",
+            "latitude": -22.25, "longitude": -49.10,
+        }
+        fid = client.post("/api/farms", json=body, headers=auth(user_token)).json()["id"]
+        monkeypatch.setattr(cds.settings, "cdse_client_id", "c")
+        monkeypatch.setattr(cds.settings, "cdse_client_secret", "s")
+        monkeypatch.setattr(cds, "stac_search", lambda *a, **k: [])
+        r = client.get(f"/api/talhao/{fid}/dates", headers=auth(user_token))
+        d = r.json()
+        assert d["source"] == "config_fallback"
+        assert d["is_real"] is False
+        assert d["status"] == "no_scene"
+        assert "Sem cena" in d["fallback_reason"]
+        assert set(d["dates"]).isdisjoint({"2026-08-30", "2026-08-27"})
+
+    def test_dates_farm_stac_erro_cai_fallback_explicito(
+        self, client, user_token, monkeypatch
+    ):
+        body = {
+            "name": "Fazenda Erro STAC", "city": "Marília", "total_area": 30.0,
+            "talhao_name": "A", "crop": "Soja",
+            "latitude": -22.25, "longitude": -49.10,
+        }
+        fid = client.post("/api/farms", json=body, headers=auth(user_token)).json()["id"]
+        monkeypatch.setattr(cds.settings, "cdse_client_id", "c")
+        monkeypatch.setattr(cds.settings, "cdse_client_secret", "s")
+
+        def boom(*a, **k):
+            raise cds.CopernicusError("STAC indisponível", status=500, stage="STAC_SEARCH")
+
+        monkeypatch.setattr(cds, "stac_search", boom)
+        r = client.get(f"/api/talhao/{fid}/dates", headers=auth(user_token))
+        d = r.json()
+        assert d["source"] == "config_fallback"
+        assert d["is_real"] is False
+        assert d["status"] == "error"
+        assert "Erro" in d["fallback_reason"]
+        assert d["stac_detail"]["stage"] == "STAC_SEARCH"
 
     def test_dates_publico_visual_layers(self, client):
         d = client.get("/api/talhao/dates").json()
@@ -1202,3 +1293,6 @@ class TestEndpointCdsE:
         # compatibilidade: campos antigos intactos
         assert d["indices"] == ["ndvi", "evi", "ndre", "ndmi"]
         assert len(d["dates"]) == 13
+        # Público é APENAS demonstrativo (nunca real)
+        assert d["source"] == "config_fallback"
+        assert d["is_real"] is False

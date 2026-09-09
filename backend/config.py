@@ -4,13 +4,24 @@ Configuração centralizada da API (padrão 12-factor).
 Todos os valores podem ser sobrescritos por variáveis de ambiente
 ou por um arquivo `.env` na pasta do backend (veja `.env.example`).
 """
+from pathlib import Path
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+#: Diretório do módulo de configuração (independe do CWD do processo).
+_BACKEND_DIR = Path(__file__).resolve().parent
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # O `.env` é resolvido contra a PASTA DO MÓDULO (backend/.env) e,
+        # como reforço, contra o CWD. Assim o servidor perde as credenciais
+        # CDSE se for iniciado de `backend/` OU da raiz do repositório.
+        # (Antes: `env_file=".env"` — relativo ao CWD → backend/.env era
+        # ignorado quando o processo subia da raiz, caindo silenciosamente
+        # no "not_configured" e no calendário fixo.)
+        env_file=[_BACKEND_DIR / ".env", ".env"],
         env_file_encoding="utf-8",
         extra="ignore",
     )

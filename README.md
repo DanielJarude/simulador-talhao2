@@ -261,17 +261,22 @@ polígono do talhão (KML ≥ 3 pts) → STAC search sentinel-2-l2a (intersects)
 **Camadas novas na API (mantendo compatibilidade):**
 - `GET /api/talhao/{id}/texture?layer=rgb|ndvi|evi|ndre|ndmi&date=YYYY-MM-DD` → `data_origin` (`sentinel`|`procedural`) + proveniência (`collection`, `product_id`, `acquisition_date`, `cloud_cover`, `processing_level`, `bands`, `valid_pixel_percentage`, `selection_reason`) quando real; `real_data_status` (`not_configured`|`no_scene`|`error`|`ok`) + `real_data_message` quando não.
 - `GET /api/talhao/{id}/texture.png?layer=...&date=YYYY-MM-DD` → PNG (real cacheado ou procedural).
-- `GET /api/talhao/{id}/dates` → calendário real (6–12 cenas úteis, `source: "sentinel-cdse"`) ou a grade oficial (`source: "config"`).
-- `GET /api/talhao/dates` → `visual_layers` agora inclui `rgb`.
+- `GET /api/talhao/{id}/dates?period_days=30..730&start=&end=&limit=` → **calendário real** com `source: "sentinel-cdse"`, `is_real: true`, `source_label`, `latest_date` (cena válida mais recente), `count` e `dates` = EXATAMENTE as cenas STAC (mais recente primeiro, filtro de nuvens); **fallback** apenas quando não há real: `source: "config_fallback"`, `is_real: false`, `source_label: "Calendário demonstrativo (datas de demonstração)"` e `fallback_reason` em pt-BR (nunca confundível com Sentinel real).
+- `GET /api/talhao/dates` → público/legado demonstração (`source: "config_fallback"`, `is_real: false`); `visual_layers` inclui `rgb`.
+- O `.env` do backend agora é resolvido contra a **pasta do módulo** (`backend/.env`) além do CWD — o servidor não perde mais as credenciais CDSE quando iniciado da raiz do repositório.
 
 **Validação de integração real (opcional, FORA da suíte):**
 ```
 python scripts/test_cdse_connection.py --lat -22.7182 --lon -55.5421 --area 42.54 --demo
 ```
-Sem rede/credenciais este script apenas informa o status — nunca imprime segredo/token.
+O script imprime o **contrato exato consumido pelo frontend**:
+`[3D-DATES] source=... count=... latest=... dates=...` (e confirma se a lista fixa de
+configuração foi usada ou não). Sem rede/credenciais apenas informa o status — nunca
+imprime segredo/token.
 
-**Sem credenciais** o app segue 100% funcional (texturas procedurais com badge
-`VISUALIZAÇÃO APROXIMADA` e mensagem **DADOS SATELITAIS REAIS NÃO CONFIGURADOS**).
+**Sem credenciais** o app segue 100% funcional, mas a timeline exibe o rótulo explícito
+**"Calendário demonstrativo (datas de demonstração)"** + motivo — nunca apresenta datas
+fixas como se fossem aquisições Sentinel reais.
 
 ## 🧊 Simulador 3D — pipeline (PR #4 ↔ PR #5d)
 
@@ -428,7 +433,7 @@ curl http://localhost:8000/api/weather/farm/1
 ## 🧪 Suíte de testes automatizados (pytest)
 
 A suíte versionada em `tests/` cobre as 4 frentes exigidas + ownership/migrações/paridade de
-schema, assets autenticados e o **pipeline 3D (PR #4 ↔ PR #5e)** — **257 testes** (1 skip por
+schema, assets autenticados e o **pipeline 3D (PR #4 ↔ PR #5e)** — **262 testes** (1 skip por
 dataset Sentinel-2 ausente fora do git):
 
 | Módulo | Testes | Abrangência |
@@ -443,6 +448,7 @@ dataset Sentinel-2 ausente fora do git):
 | `test_3d_player_state.py` | 1 | **PR #5d** — máquina de estados da timeline executada em VM Node: Play não avança durante loading, data só muda após aplicar, generationId descarta resposta antiga, Pause durante loading não retoma, troca manual invalida carga anterior, layer swap congela e retoma, falha → error+pause+retry, Real/What-If sincronizados, metadados da textura aplicada, status real/fallback e proveniência compacta + Detalhes |
 | `test_3d_load_scene_wiring.py` | 1 | **PR #5d ↔ #5e** — wiring real do `loadScene` em VM Node: commit só após o fetch, race de resposta atrasada, Pause, falha+retry, layer swap e, no PR #5e: cena pronta no cache aplica **sem nenhum fetch**, preload em background **não altera** a cena aplicada, Play avança para cena pré-carregada sem request e textura descartada da VRAM invalida a cena |
 | `test_3d_scene_cache_preload.py` | 1 | **PR #5e** — cache/preload/terreno puros em VM Node: chave `farmId|talhao|data|layer` (sem colisão), LRU com evicção, plano ≤ 12 → todas / > 12 → janela 5 + background, limites documentados, estados discreto da timeline, escala real metros→unidades, amostragem bilinear, DEM desloca vértices + normais, 1×/2×/3× só visual, fallback plano e `CAMERA_PRESET` |
+| `test_3d_calendar_timeline.py` | 2 | **PR #5e (correção)** — calendário STAC real × demonstração em VM Node: decisão pura (real só com `source=sentinel-cdse` + cenas; datas STAC diferentes da config; `latest_date`; `no_scene`/`not_configured`/HTTP 500/rede/401 → demo rotulada com motivo) e wiring do `refreshRealTimeline` (resposta real substitui completamente a timeline; fallback identificado "Calendário demonstrativo"; erro de endpoint nunca apresenta demo como real; 'Buscando datas Sentinel-2…' + seleção da mais recente) |
 | `test_ownership.py` | 32 | **Ownership** (usuário cria/ler/edita/exclui a própria farm; `owner_id` correto; payload `owner_id` ignorado), **admin global**, **privacidade** (GETs exigem token → 401; analytics/clima/textura/heightmap/PDF não expõem farm alheia → 404), **migração Alembic** (adiciona `owner_id`/`is_shared` + backfill seguro em SQLite legado) |
 | `test_schema_parity.py` | 3 | Paridade banco novo × legado migrado: colunas, tipos, nullable, defaults, PK, índices, FKs, `alembic_version`, idempotência, preservação de dados e enforcement SQLite |
 | `test_frontend_texture_urls.py` | 1 | Fluxo frontend de texture.png/heightmap.png relativos e absolutos: classificação, Bearer no fetch, respostas 401/403/404 e revogação do Blob URL após o TextureLoader |
