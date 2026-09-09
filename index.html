@@ -545,7 +545,20 @@
         btn.classList.toggle('active', btn.getAttribute('onclick').includes(layer));
       });
 
-      loadAnalyticsData();
+      if (layer === 'rgb') {
+        // RGB (true color) é VISUALIZAÇÃO: não há zonamento estatístico.
+        analyticsTimelineCache = [];
+        const d = (dates[currentIndex] || '').split('-').reverse().join('/');
+        document.getElementById('kpi-mean-index').innerText = 'RGB — true color';
+        document.getElementById('kpi-mean-date').innerText = `Passagem ${d}`;
+        document.getElementById('zone-selected-date-badge').innerText = `Data: ${d}`;
+        ['zone-stress-pct', 'zone-mid-pct', 'zone-good-pct', 'zone-dense-pct']
+          .forEach(id => { document.getElementById(id).innerText = '—'; });
+        ['zone-stress-ha', 'zone-mid-ha', 'zone-good-ha', 'zone-dense-ha']
+          .forEach(id => { document.getElementById(id).innerText = '— ha'; });
+      } else {
+        loadAnalyticsData();
+      }
       updateTextures();
     }
 
