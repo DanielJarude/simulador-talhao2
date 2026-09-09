@@ -79,19 +79,21 @@ cd backend
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 cd ..
 
-# 6. Sirva o frontend (porta 5501) — em outro terminal
-python -m http.server 5501
-# (ou Live Server do VS Code)
-
-# 7. Acesse
-#    http://localhost:5501/fazendas.html   → cadastro/propriedades
-#    http://localhost:5501/auth.html       → login (demo: admin@orion.com / 123456)
+# 6. Acesse (PR #4 — o frontend TAMBÉM é servido pela própria API)
+#    http://localhost:8000/                → frontend completo (mesma origem)
 #    http://localhost:8000/docs            → Swagger da API
+#    (opcional) frontend separado em :5501 — outro terminal:
+#      python -m http.server 5501
+#      http://localhost:5501/fazendas.html
+#      login (demo: admin@orion.com / 123456)
 ```
 
-> **Nota:** a URL base da API usada pelo frontend está em `app.js` (`API_URL`).
-> Ajuste-a se a API rodar em outra porta/host (o backend também monta URLs
-> de texturas a partir de `PUBLIC_BASE_URL` no `.env`).
+> **Nota (PR #4):** a URL base da API (`API_URL`, em `app.js`) é resolvida
+> automaticamente: página servida pelo próprio backend → URL **relativa**;
+> página em servidor estático local (`:5501`) → `http://localhost:8000/api`.
+> Em deploy/preview, defina `window.ORION_API_URL = "<base>/api"` antes de
+> carregar o `app.js` (ou monte `PUBLIC_BASE_URL` no `.env` do backend, que
+> continua sendo a fonte das URLs de textura/heightmap devolvidas pela API).
 
 ## 🔌 Endpoints principais
 
@@ -103,8 +105,8 @@ python -m http.server 5501
 | `POST` | `/api/farms` | 🔑 | Cria fazenda **vinculada ao usuário logado** (gera texturas espectrais) |
 | `PUT` | `/api/farms/{id}` | 🔑 | Atualiza a **própria** fazenda (ou qualquer uma, se `admin`) |
 | `DELETE` | `/api/farms/{id}` | 🔑 | Remove a **própria** fazenda (ou qualquer uma, se `admin`) |
-| `GET` | `/api/talhao/{farm_id}/texture?layer=ndvi` | 🔑 | URL da textura espectral (nativa para farm demo, dinâmica autenticada p/ demais) |
-| `GET` | `/api/talhao/{farm_id}/heightmap?size=256` | 🔑 | **Heightmap Copernicus DEM GL-30** (relevo p/ Three.js) |
+| `GET` | `/api/talhao/{farm_id}/texture?layer=ndvi&date=YYYY-MM-DD` | 🔑 | URL da textura (`texture_url` + `data_origin: sentinel\|procedural` — nativa p/ demo quando o dataset existe; fallback procedural autenticado em clone limpo) |
+| `GET` | `/api/talhao/{farm_id}/heightmap?size=256` | 🔑 | **Heightmap Copernicus DEM GL-30** (relevo p/ Three.js; `available=false` + `reason` quando a tile não existe) |
 | `GET` | `/api/talhao/dates` | — | Datas Sentinel-2 e índices disponíveis (catálogo — público) |
 | `GET` | `/api/analytics/farm/{farm_id}` | 🔑 | Série temporal + zoneamento + estimativa de safras (da fazenda acessível) |
 | `GET` | `/api/weather/farm/{farm_id}` | 🔑 | Clima NASA POWER (cache TTL de 60 min por padrão) |
@@ -214,6 +216,37 @@ O terreno 3D usa **relevo real** a partir do Copernicus DEM GL-30 em vez de um p
 
 **Como obter a tile:** baixe a tile `Copernicus_Dem_GLO30_<sN>_w<NNN>` correspondente à região (OpenTopography ou portal Copernicus) e coloque em `backend/data/dem/`. A API também tenta **baixar automaticamente** a tile dos espelhos públicos (best-effort, `DEM_DOWNLOAD_ENABLED`), cacheando o resultado localmente.
 
+## 🧊 Simulador 3D — pipeline (PR #4)
+
+O Split-View (CENÁRIO REAL × CENÁRIO SIMULADO) segue este fluxo, **sem depender de
+arquivos fora do Git**:
+
+```
+fazenda → /api/talhao/{id}/texture → texture_url (+ data_origin)
+        → fetch autenticado (Bearer) → Blob → TextureLoader → material.map
+fazenda → /api/talhao/{id}/heightmap → heightmap_url (ou available=false + reason)
+        → displacementMap (relevo Copernicus GL-30)
+        → sem tile → fallback explícito ("ELEVAÇÃO APROXIMADA", relevo via índice)
+what-if → /api/simulation/what-if → delta_ndvi
+        → textura simulada via canvas (pixel a pixel) no lado direito
+```
+
+- **Dado real vs aproximado**: a API devolve `data_origin` (`sentinel` = dataset
+  nativo presente na máquina; `procedural` = textura espectral gerada). O badge
+  do simulador mostra `SENTINEL-2 REAL` ou `VISUALIZAÇÃO APROXIMADA` — nunca um
+  terreno branco silencioso.
+- **Fallback visual**: se o load do asset falhar (rede/CORS/404), o 3D aplica uma
+  textura de fallback claramente marcada (`VISUALIZAÇÃO APROXIMADA`) + status de
+  erro; a malha, o relevo e os controles continuam funcionando.
+- **Geometria real do talhão**: o terreno usa o contorno KML (projeção alinhada à
+  rasterização) com contorno visível; sem KML, usa a elipse proporcional à área —
+  nunca um retângulo genérico.
+- **What-If visual**: N+/irrigação ⇒ mais verde; pragas ⇒ vermelho/castanho
+  (aplicado por pixel na textura do lado direito, com `displacementScale` e
+  valores financeiros atualizados em tempo real).
+- **Clone limpo**: sem `sentinel-21KXQ-*` e sem tiles DEM, o simulador funciona
+  em modo aproximado explícito; com os datasets presentes, volta ao dado real.
+
 ## 📊 Dados
 
 - **Sentinel-2**: 13 passagens em `sentinel-21KXQ-<data>/` (PNGs coloridos por índice).
@@ -253,7 +286,8 @@ curl http://localhost:8000/api/weather/farm/1
 ## 🧪 Suíte de testes automatizados (pytest)
 
 A suíte versionada em `tests/` cobre as 4 frentes exigidas + ownership/migrações/paridade de
-schema e assets autenticados — **165 testes** (1 skip por dataset Sentinel-2 ausente fora do git):
+schema, assets autenticados e o **pipeline 3D (PR #4)** — **184 testes** (1 skip por dataset
+Sentinel-2 ausente fora do git):
 
 | Módulo | Testes | Abrangência |
 |---|---|---|
@@ -262,6 +296,8 @@ schema e assets autenticados — **165 testes** (1 skip por dataset Sentinel-2 a
 | `test_farms_sim.py` | 28 | Contratos Pydantic (criação + resposta + What-If exatos a 9 campos), 422 parametrizados, 404, texturas dinâmicas em disco (rota autenticada), datas Sentinel-2, matemática da simulação (constantes por crop), analytics (série temporal, zoneamento, safras), laudo PDF |
 | `test_dem.py` | 17 | Nomenclatura SRTM/Copernicus, bounds (KML e por área), seleção de tile, endpoint de heightmap: recorte → normalização → PNG 256×256 servido por rota autenticada, `size`, 422, 404, indisponível com orientação |
 | `test_services.py` | 36 | Cache de clima (hit, por coordenadas, TTL, fallback em erro, fallback cacheado), regras de negócio do what-if, estimativa de safra, zoneamento espectral, paletas espectrais |
+| `test_3d_pipeline.py` | 15 | **PR #4** — pipeline 3D: demo sem dataset Sentinel (metadados/PNG/analytics com `data_origin`), fazenda dinâmica autenticada, owner/admin/401/404, assets fora do mount público, `PUBLIC_BASE_URL`, heightmap `available=false` + motivo, contrato What-If, frontend servido pelo backend e higiene (`.env` não exposto) |
+| `test_frontend_3d_pipeline.py` | 1 | **PR #4** — helpers do `index.html` executados em VM Node: classificação de erro HTTP, normalização de URL relativa/absoluta, token no fetch, atribuição real de textura ao material, pixel What-If, polígono KML → plano 3D e fallback de asset (material nunca sem `map`) |
 | `test_ownership.py` | 32 | **Ownership** (usuário cria/ler/edita/exclui a própria farm; `owner_id` correto; payload `owner_id` ignorado), **admin global**, **privacidade** (GETs exigem token → 401; analytics/clima/textura/heightmap/PDF não expõem farm alheia → 404), **migração Alembic** (adiciona `owner_id`/`is_shared` + backfill seguro em SQLite legado) |
 | `test_schema_parity.py` | 3 | Paridade banco novo × legado migrado: colunas, tipos, nullable, defaults, PK, índices, FKs, `alembic_version`, idempotência, preservação de dados e enforcement SQLite |
 | `test_frontend_texture_urls.py` | 1 | Fluxo frontend de texture.png/heightmap.png relativos e absolutos: classificação, Bearer no fetch, respostas 401/403/404 e revogação do Blob URL após o TextureLoader |

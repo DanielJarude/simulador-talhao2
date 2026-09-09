@@ -5,8 +5,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response, StreamingResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from sqlalchemy.orm import Session
 
 import models
@@ -156,7 +155,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.mount("/dynamic_talhoes", StaticFiles(directory=dynamic_path), name="dynamic_talhoes")
+# PR #4 — o mount público /dynamic_talhoes foi REMOVIDO: os PNGs por fazenda
+# são privados e só podem ser acessados pelas rotas autenticadas
+# (`/api/talhao/{id}/texture.png` e `/api/talhao/{id}/heightmap.png`).
+# O diretório continua sendo o cache físico usado pelos serviços.
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +174,22 @@ def _get_farm_or_404(db: Session, farm_id: int) -> models.Farm:
 def _resolve_talhao_id(farm: models.Farm) -> int:
     """ID real do 1º talhão da fazenda (corrige o bug multi-talhão)."""
     return farm.talhoes[0].id if farm.talhoes else farm.id
+
+
+def _sentinel_native_texture_path(layer: str, date: str) -> str:
+    """
+    Caminho físico de uma textura Sentinel-2 nativa de demonstração.
+
+    Os datasets `sentinel-21KXQ-*` NÃO são versionados (ficam fora do Git /
+    na máquina do desenvolvedor). Quando ausentes — como em qualquer clone
+    limpo — o pipeline 3D usa o fallback explícito (textura procedural
+    autenticada + `data_origin="procedural"`), nunca um asset 404 silencioso.
+    """
+    return os.path.join(
+        BASE_PROJECT_DIR,
+        f"sentinel-21KXQ-{date}",
+        f"{layer}_cloudless_min_max.png",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -430,17 +448,40 @@ def delete_farm(
 def get_talhao_texture(
     farm_id: int,
     layer: schemas.SpectralLayer = "ndvi",
+    date: str | None = Query(default=None, description="Passagem Sentinel-2 (YYYY-MM-DD)"),
     db: Session = Depends(get_db),
     user: models.User = Depends(get_current_user),  # exige Bearer token
 ):
     # Ownership: só dono | admin | farm compartilhada (PR #3 — privacidade).
     farm = _require_farm_access(db, farm_id, user)
+    request_date = date or (settings.sentinel_dates[0] if settings.sentinel_dates else "2025-04-07")
 
     if farm_id == 1:
-        return {
-            "type": "native",
-            "path_pattern": f"sentinel-21KXQ-{{date}}/{layer}_cloudless_min_max.png",
-        }
+        native_path = _sentinel_native_texture_path(layer, request_date)
+        if os.path.exists(native_path):
+            # Dataset Sentinel-2 nativo presente nesta máquina: é dado REAL.
+            return {
+                "type": "native",
+                "data_origin": "sentinel",
+                "date": request_date,
+                "texture_url": (
+                    f"sentinel-21KXQ-{request_date}/{layer}_cloudless_min_max.png"
+                ),
+                "path_pattern": (
+                    f"sentinel-21KXQ-{{date}}/{layer}_cloudless_min_max.png"
+                ),
+            }
+        # PR #4 — clone limpo não tem o dataset `sentinel-21KXQ-*`: nunca
+        # devolver uma URL de asset inexistente (404 → malha branca). O fluxo
+        # cai no MESMO pipeline das fazendas dinâmicas (textura procedural),
+        # servida por rota autenticada, com `data_origin` explícito para o
+        # frontend exibir "VISUALIZAÇÃO APROXIMADA".
+        logger.warning(
+            "Sentinel-2 nativo ausente para a farm demo (%s) — usando "
+            "visualização procedural aproximada. Coloque o dataset em "
+            "sentinel-21KXQ-* para voltar ao dado real.",
+            native_path,
+        )
 
     talhao_id = _resolve_talhao_id(farm)
     folder_name = f"farm_{farm.id}_talhao_{talhao_id}"
@@ -461,6 +502,8 @@ def get_talhao_texture(
     # servido por rota com checagem de ownership, não via StaticFiles solto).
     return {
         "type": "dynamic",
+        "data_origin": "procedural",
+        "date": request_date,
         "texture_url": (
             f"{settings.public_base_url}/api/talhao/{farm.id}/texture.png?layer={layer}"
         ),
@@ -689,3 +732,54 @@ def download_farm_report_pdf(
         media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+# ---------------------------------------------------------------------------
+# FRONTEND NA MESMA ORIGEM (PR #4 — clone limpo roda só com uvicorn)
+#
+# Permite abrir http://localhost:8000/ (ou o preview/deploy) sem um servidor
+# estático separado nem `http://localhost:8000` hardcoded: o frontend usa URL
+# relativa quando servido pelo próprio backend. As rotas `/api/*` têm
+# precedência (registradas acima); este catch-all só atende o restante e
+# serve APENAS o allowlist (páginas/JS do frontend + PNGs nativos
+# `sentinel-21KXQ-*` quando o dataset está presente na máquina — nunca
+# `.env`/diretórios internos do backend).
+# ---------------------------------------------------------------------------
+_FRONTEND_STATIC_FILES = {"index.html", "fazendas.html", "auth.html", "dashboard.html", "app.js"}
+_FRONTEND_DEFAULT_PAGE = "index.html"
+_FRONTEND_ROOT_REAL = os.path.realpath(BASE_PROJECT_DIR)
+
+
+@app.get("/", include_in_schema=False)
+def serve_frontend_root():
+    return serve_frontend(_FRONTEND_DEFAULT_PAGE)
+
+
+@app.get("/{frontend_path:path}", include_in_schema=False)
+def serve_frontend(frontend_path: str):
+    path = (frontend_path or _FRONTEND_DEFAULT_PAGE).lstrip("/")
+    if not path or path.endswith("/"):
+        path = f"{path}{_FRONTEND_DEFAULT_PAGE}"
+    # APIs/Rotas de dados desconhecidas continuam sendo erro JSON (e não HTML).
+    if path.startswith(("api/", "dynamic_talhoes/", "docs", "redoc", "openapi.json")):
+        raise HTTPException(status_code=404, detail="Recurso não encontrado.")
+
+    first_seg = path.split("/", 1)[0]
+    is_frontend_file = path in _FRONTEND_STATIC_FILES
+    is_sentinel_png = bool(first_seg.startswith("sentinel-21KXQ-")) and path.endswith(".png")
+    if not (is_frontend_file or is_sentinel_png):
+        raise HTTPException(status_code=404, detail="Recurso não encontrado.")
+
+    candidate = os.path.join(BASE_PROJECT_DIR, path)
+    real = os.path.realpath(candidate)
+    inside_root = real == _FRONTEND_ROOT_REAL or real.startswith(_FRONTEND_ROOT_REAL + os.sep)
+    if not inside_root or not os.path.isfile(real):
+        raise HTTPException(status_code=404, detail="Recurso não encontrado.")
+
+    if path.endswith(".png"):
+        media = "image/png"
+    elif path.endswith(".js"):
+        media = "application/javascript"
+    else:
+        media = "text/html; charset=utf-8"
+    return FileResponse(real, media_type=media)

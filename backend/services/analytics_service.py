@@ -128,23 +128,44 @@ def get_farm_temporal_series(
     for d in dates:
         if farm_id == 1:
             img_path = os.path.join(BASE_DIR, f"sentinel-21KXQ-{d}", f"{layer}_cloudless_min_max.png")
+            fallback_img_path = os.path.join(
+                BASE_DIR, "dynamic_talhoes", f"farm_{farm_id}_talhao_{talhao_id}", f"{layer}_cloudless_min_max.png"
+            )
         else:
             img_path = os.path.join(BASE_DIR, "dynamic_talhoes", f"farm_{farm_id}_talhao_{talhao_id}", f"{layer}_cloudless_min_max.png")
+            fallback_img_path = None
 
         stats = extract_layer_stats(img_path, total_area_ha)
-        
+
+        # PR #4 — diagnóstica a origem dos dados (o 3D/dashboard precisa saber
+        # se o valor é Sentinel real, textura procedural ou fallback numérico):
+        #   sentinel  → dataset nativo sentinel-21KXQ-* presente;
+        #   procedural→ textura espectrais geradas (fazenda dinâmica/demo);
+        #   fallback  → nenhum asset disponível (valor sintético explícito).
+        if stats:
+            data_origin = "sentinel" if farm_id == 1 else "procedural"
+        elif fallback_img_path:
+            stats = extract_layer_stats(fallback_img_path, total_area_ha)
+            data_origin = "procedural" if stats else None
+        else:
+            data_origin = None
+        if stats is None:
+            data_origin = "fallback"
+
         if stats:
             series_data.append({
                 "date": d,
                 "formatted_date": "/".join(d.split("-")[::-1]),
                 "mean": stats["mean_index"],
-                "zones": stats["zones"]
+                "zones": stats["zones"],
+                "data_origin": data_origin,
             })
         else:
             series_data.append({
                 "date": d,
                 "formatted_date": "/".join(d.split("-")[::-1]),
                 "mean": 0.68,
+                "data_origin": "fallback",
                 "zones": {
                     "stress": {"pct": 10.0, "ha": round(total_area_ha * 0.1, 2)},
                     "medium": {"pct": 25.0, "ha": round(total_area_ha * 0.25, 2)},

@@ -183,6 +183,29 @@
       border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.82rem;
     }
     #ui-panel-3d select { background: #21262d; border: 1px solid #30363d; }
+
+    /* ESTADOS DO SIMULADOR 3D (PR #4 — sem terreno branco silencioso) */
+    .status-3d {
+      position: absolute; bottom: 92px; left: 50%; transform: translateX(-50%);
+      z-index: 40; padding: 7px 16px; border-radius: 8px; font-size: 0.78rem;
+      font-weight: 700; letter-spacing: 0.03em; max-width: 92%;
+      background: rgba(13, 17, 23, 0.92); border: 1px solid #30363d; color: #8b949e;
+      text-align: center; display: none; backdrop-filter: blur(8px);
+    }
+    .status-3d.visible { display: block; }
+    .status-3d.loading { color: #58a6ff; border-color: #1f6feb; }
+    .status-3d.ok { color: #7ee787; border-color: #2ea043; }
+    .status-3d.warn { color: #e3b341; border-color: #d29922; background: rgba(38, 33, 23, 0.94); }
+    .status-3d.error { color: #ff7b72; border-color: #da3633; background: rgba(43, 24, 27, 0.94); }
+    #status-dem-3d { bottom: 122px; }
+    #data-source-badge {
+      position: absolute; top: 40px; left: 16px; z-index: 26;
+      padding: 4px 10px; border-radius: 6px; font-size: 0.72rem; font-weight: 700;
+      background: rgba(22, 27, 34, 0.92); border: 1px solid #30363d; color: #8b949e;
+    }
+    #data-source-badge.real { color: #7ee787; border-color: #2ea043; }
+    #data-source-badge.approx { color: #e3b341; border-color: #d29922; }
+    #data-source-badge.unavailable { color: #ff7b72; border-color: #da3633; }
   </style>
 </head>
 <body>
@@ -427,6 +450,11 @@
         </select>
       </div>
 
+      <!-- Estados visuais do pipeline 3D (PR #4): carregando / real / aproximado / erro -->
+      <div id="status-texture-3d" class="status-3d">CARREGANDO DADOS DO TERRENO...</div>
+      <div id="status-dem-3d" class="status-3d">CARREGANDO ELEVAÇÃO...</div>
+      <div id="data-source-badge" class="unavailable">DADOS: —</div>
+
       <div id="canvas-container"></div>
     </div>
 
@@ -576,6 +604,20 @@
         } catch (e) {
           console.warn("Polígono KML não pôde ser traçado:", e);
         }
+      }
+
+      // PR #4 — geometria do terreno passa a refletir o contorno real do talhão
+      // (KML) ou a forma proporcional à área; nunca mais um retângulo genérico
+      // com a textura "esticada" sem referência espacial.
+      try {
+        applyTalhaoGeometry(
+          activeFarm.kml_coordinates,
+          activeFarm.latitude,
+          activeFarm.longitude,
+          activeFarm.total_area
+        );
+      } catch (e) {
+        console.error('geometria: falha ao aplicar contorno do talhão', e);
       }
 
       renderDatePills();
@@ -950,8 +992,276 @@
     const meshSim = new THREE.Mesh(geo, matSim);
     sceneSim.add(meshSim);
 
+    // =====================================================================
+    // PIPELINE 3D (PR #4) — helpers puros + fallback visual + What-If visual.
+    // Regra de ouro: NUNCA deixar o material sem `map` (o padrão do
+    // MeshStandardMaterial é branco → terreno branco silencioso).
+    // =====================================================================
+
+    // ---------- Estados visuais ----------
+    function set3DStatus(kind, message, domId = 'status-texture-3d') {
+      const el = document.getElementById(domId);
+      if (!el) return;
+      if (!message) { el.className = 'status-3d'; el.classList.remove('visible'); return; }
+      el.className = `status-3d visible ${kind}`;
+      el.innerText = message;
+    }
+
+    function setDataSourceBadge(kind) {
+      const el = document.getElementById('data-source-badge');
+      if (!el) return;
+      el.className = kind;
+      if (kind === 'real') el.innerText = 'DADOS: SENTINEL-2 REAL';
+      else if (kind === 'approx') el.innerText = 'DADOS: VISUALIZAÇÃO APROXIMADA';
+      else el.innerText = 'DADOS: INDISPONÍVEL';
+    }
+
+    // [3D-PIPELINE-HELPERS-START]
+    function classifyAssetHttpError(status) {
+      if (status === 401) return 'auth';
+      if (status === 403) return 'permission';
+      if (status === 404) return 'not_found';
+      return 'http';
+    }
+
+    /**
+     * Normaliza uma URL de asset devolvida pela API:
+     * - API em outra origem (dev local :5501 → :8000): mantém a URL absoluta;
+     * - frontend servido pelo próprio backend (API_URL relativo): devolve só
+     *   pathname+search para o fetch ir para a MESMA origem do proxy/preview.
+     */
+    function normalizeAssetUrl(url) {
+      if (!url || typeof url !== 'string') return url;
+      try {
+        const parsed = new URL(url, window.location.href);
+        if (API_URL.startsWith('http')) return url;
+        return parsed.pathname + parsed.search;
+      } catch (e) {
+        console.warn(`texture: URL de asset inválida: ${url}`, e);
+        return url;
+      }
+    }
+
+    function resolveTextureUrl(payload, layer, dateStr) {
+      if (payload && typeof payload.texture_url === 'string' && payload.texture_url) {
+        return normalizeAssetUrl(payload.texture_url);
+      }
+      // Não há mais URL padrão para `sentinel-21KXQ-*` local: o backend
+      // sempre devolve uma URL utilizável (nativa OU procedural). Sem URL,
+      // o 3D deve cair no fallback explícito — nunca num 404 silencioso.
+      return null;
+    }
+
+    /** Atribui textura (cor) + displacement (relevo) a um material 3D. */
+    function applyTextureToMaterial(mat, mapTex, dispTex) {
+      if (!mat || !mapTex) return false;
+      mat.map = mapTex;
+      if (dispTex) mat.displacementMap = dispTex;
+      mat.needsUpdate = true;
+      return true;
+    }
+
+    /**
+     * Transformação de pixel do cenário SIMULADO (What-If): delta NDVI
+     * positivo → mais verde/brilho; negativo → mais vermelho/castanho
+     * (estresse de pragas/seca). Determinística e testável.
+     */
+    function computeSimPixel(r, g, b, delta) {
+      const k = Math.max(-0.5, Math.min(0.5, Number(delta) * 1.5));
+      const clamp255 = (v) => Math.max(0, Math.min(255, Math.round(v)));
+      return [
+        clamp255(r * (1.0 - 0.60 * k)),
+        clamp255(g * (1.0 + 0.50 * k)),
+        clamp255(b * (1.0 + 0.10 * k)),
+      ];
+    }
+
+    function parseKmlPolygon(kmlCoordinates) {
+      if (!kmlCoordinates) return null;
+      try {
+        const coords = (typeof kmlCoordinates === 'string') ? JSON.parse(kmlCoordinates) : kmlCoordinates;
+        if (!Array.isArray(coords) || coords.length < 3) return null;
+        const pts = coords.map((p) => {
+          const lat = Number(p && p[0]);
+          const lon = Number(p && p[1]);
+          return [lat, lon];
+        });
+        if (pts.some((p) => !Number.isFinite(p[0]) || !Number.isFinite(p[1]))) return null;
+        return pts;
+      } catch (e) {
+        console.warn('geometria: polígono KML inválido — usando forma aproximada', e);
+        return null;
+      }
+    }
+
+    /**
+     * Converte o contorno real do talhão (KML) para o plano 3D.
+     * Usa a MESMA projeção do rasterizador do backend (margem 12% dentro do
+     * canvas) para o contorno ficar alinhado com a textura. Sem KML, usa a
+     * elipse do fallback do gerador (mesma do rasterizador) — nunca um plano
+     * retangular genérico.
+     */
+    function talhaoWorldGeometry(kmlCoordinates, lat, lon, areaHa) {
+      const pts = parseKmlPolygon(kmlCoordinates);
+      if (pts) {
+        const lats = pts.map((p) => p[0]);
+        const lons = pts.map((p) => p[1]);
+        const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+        const minLon = Math.min(...lons), maxLon = Math.max(...lons);
+        const spanLatM = Math.max((maxLat - minLat) * 111320.0, 1);
+        const mPerLon = 111320.0 * Math.max(Math.cos((lat * Math.PI) / 180.0), 0.05);
+        const spanLonM = Math.max((maxLon - minLon) * mPerLon, 1);
+        const scale = 50.0 / Math.max(spanLatM, spanLonM);
+        const width = spanLonM * scale;
+        const height = spanLatM * scale;
+        const spanLat = Math.max(maxLat - minLat, 1e-12);
+        const spanLon = Math.max(maxLon - minLon, 1e-12);
+        const fx = (f) => 0.12 + f * 0.76;
+        const points = pts.map((p) => [
+          (fx((p[1] - minLon) / spanLon) - 0.5) * width,
+          (0.5 - fx((maxLat - p[0]) / spanLat)) * height,
+        ]);
+        return { points, width, height };
+      }
+      // Sem polígono: elipse idêntica à do backend (bbox 12%–88%).
+      const radius = 0.35;
+      const width = 50.0, height = 50.0;
+      const points = [];
+      for (let i = 0; i < 32; i++) {
+        const a = (i / 32) * Math.PI * 2.0;
+        points.push([Math.cos(a) * radius * width, Math.sin(a) * radius * height]);
+      }
+      return { points, width, height };
+    }
+
+    /** Textura de FALLBACK visual — NÃO finge ser Sentinel-2 real. */
+    function createFallbackTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 256;
+      canvas.height = 256;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
+      ctx.fillStyle = '#1b2430';
+      ctx.fillRect(0, 0, 256, 256);
+      // Faixas diagonais: padrão de "visualização aproximada" (não é dado real).
+      for (let x = -256; x < 512; x += 32) {
+        ctx.fillStyle = ((x / 32) % 2 === 0) ? 'rgba(60, 110, 62, 0.6)' : 'rgba(150, 120, 52, 0.55)';
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x + 32, 0);
+        ctx.lineTo(x + 32 - 256, 256);
+        ctx.lineTo(x - 256, 256);
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+      ctx.lineWidth = 3;
+      ctx.setLineDash([10, 8]);
+      ctx.strokeRect(5, 5, 246, 246);
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(0, 112, 256, 32);
+      ctx.fillStyle = '#f0d879';
+      ctx.font = 'bold 14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('VISUALIZAÇÃO APROXIMADA', 128, 133);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.generateMipmaps = true;
+      tex.minFilter = THREE.LinearMipmapLinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      return tex;
+    }
+
+    /** Textura do CENÁRIO SIMULADO: base (real/aproximada) + transformação. */
+    function buildSimulatedCanvasTexture(baseTex, delta) {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = 256;
+        canvas.height = 256;
+        const ctx = canvas.getContext('2d');
+        const img = baseTex && baseTex.image;
+        if (img && typeof img.width === 'number' && img.width > 0) {
+          ctx.drawImage(img, 0, 0, 256, 256);
+        } else {
+          ctx.fillStyle = '#1b2430';
+          ctx.fillRect(0, 0, 256, 256);
+        }
+        const imageData = ctx.getImageData(0, 0, 256, 256);
+        const px = imageData.data;
+        for (let i = 0; i < px.length; i += 4) {
+          const out = computeSimPixel(px[i], px[i + 1], px[i + 2], Number.isFinite(Number(delta)) ? Number(delta) : 0);
+          px[i] = out[0];
+          px[i + 1] = out[1];
+          px[i + 2] = out[2];
+        }
+        ctx.putImageData(imageData, 0, 0);
+        const tex = new THREE.CanvasTexture(canvas);
+        tex.generateMipmaps = true;
+        tex.minFilter = THREE.LinearMipmapLinearFilter;
+        tex.magFilter = THREE.LinearFilter;
+        return tex;
+      } catch (e) {
+        console.error('what-if: falha ao gerar textura simulada', e);
+        return null;
+      }
+    }
+
+    /**
+     * Carrega a textura (autenticada, via getCachedTexture) e aplica nos dois
+     * materiais. Em QUALQUER falha: aplica o fallback visual (nunca branco).
+     */
+    async function loadTextureOrFallback(key, url, matA, matB) {
+      try {
+        const tex = await getCachedTexture(key, url);
+        applyTextureToMaterial(matA, tex, heightTexture || tex);
+        applyTextureToMaterial(matB, tex, heightTexture || tex);
+        return { ok: true, texture: tex };
+      } catch (err) {
+        console.error(`texture: falha ao carregar '${url}' — aplicando visualização aproximada`, err);
+        try {
+          const fb = createFallbackTexture();
+          if (fb) {
+            applyTextureToMaterial(matA, fb, heightTexture || fb);
+            applyTextureToMaterial(matB, fb, heightTexture || fb);
+            return { ok: false, texture: fb };
+          }
+        } catch (e2) {
+          console.error('texture: falha ao gerar fallback visual', e2);
+        }
+        return { ok: false, texture: null };
+      }
+    }
+    // [3D-PIPELINE-HELPERS-END]
+
+    // ---------- Geometria real do talhão (contorno + proporção real) ----------
+    let talhaoOutlineReal = null;
+    let talhaoOutlineSim = null;
+
+    function applyTalhaoGeometry(kmlCoordinates, lat, lon, areaHa) {
+      const g = talhaoWorldGeometry(kmlCoordinates, lat, lon, areaHa);
+      const newGeo = new THREE.PlaneGeometry(g.width, g.height, 64, 64);
+      meshReal.geometry.dispose();
+      meshReal.geometry = newGeo;
+      meshSim.geometry = newGeo; // compartilha a geometria (mesmo recorte)
+
+      if (talhaoOutlineReal) { sceneReal.remove(talhaoOutlineReal); talhaoOutlineReal.geometry.dispose(); talhaoOutlineReal = null; }
+      if (talhaoOutlineSim) { sceneSim.remove(talhaoOutlineSim); talhaoOutlineSim.geometry.dispose(); talhaoOutlineSim = null; }
+
+      const pts = g.points.map((p) => new THREE.Vector3(p[0], p[1], 0.05));
+      const lineGeo = new THREE.BufferGeometry().setFromPoints(pts);
+      talhaoOutlineReal = new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: 0x58a6ff }));
+      talhaoOutlineSim = new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: 0xe3b341 }));
+      sceneReal.add(talhaoOutlineReal);
+      sceneSim.add(talhaoOutlineSim);
+    }
+
     let isPlaying = false, playInterval = null;
     let factorNitro = 0, factorWater = 0, factorPest = 0;
+    let baseTextureForSim = null;
+    let simTexture = null;
+    let simTextureActive = false;
+    let lastWhatIfDelta = null;
+    let whatIfTimer = null;
 
     // ---------- TOPOGRAFIA REAL (Copernicus DEM GL-30) ----------
     // heightTexture = heightmap do DEM (ou null → fallback p/ NDVI)
@@ -960,9 +1270,18 @@
     let terrainScale = 4.0;
 
     async function loadHeightmap() {
-      const info = await SatelliteService.getTalhaoHeightmap(activeFarm.id);
+      set3DStatus('loading', 'CARREGANDO ELEVAÇÃO (COPERNICUS DEM GL-30)...', 'status-dem-3d');
+      let info = null;
+      try {
+        info = await SatelliteService.getTalhaoHeightmap(activeFarm.id);
+      } catch (e) {
+        console.error('heightmap: falha ao consultar o endpoint', e);
+      }
       if (!info || !info.available || !info.heightmap_url) {
-        console.info("DEM GL-30: heightmap indisponível — usando NDVI como deslocamento.", info && info.reason);
+        // Fallback EXPLÍCITO: relevo continua via índice (ou plano), mas o
+        // usuário é informado — nada de falha silenciosa.
+        console.info('DEM GL-30: heightmap indisponível — usando NDVI como deslocamento.', info && info.reason);
+        set3DStatus('warn', 'ELEVAÇÃO APROXIMADA: TILE DEM GL-30 INDISPONÍVEL (RELEVO VIA ÍNDICE)', 'status-dem-3d');
         return;
       }
       try {
@@ -984,15 +1303,81 @@
         matSim.needsUpdate = true;
         calculateImpact(); // re-aplica a escala what-if no lado simulado
 
+        set3DStatus(
+          'ok',
+          `ELEVAÇÃO REAL ATIVA (${info.min_elevation_m}–${info.max_elevation_m} m, alívio ~${relief.toFixed(0)} m)`,
+          'status-dem-3d'
+        );
         console.info(`DEM GL-30: relevo real ativo (alívio ~${relief.toFixed(0)} m, ${info.min_elevation_m}–${info.max_elevation_m} m)`);
       } catch (e) {
-        console.warn("Falha ao aplicar heightmap DEM:", e);
+        console.error('heightmap: falha ao aplicar heightmap DEM', e);
+        set3DStatus('warn', 'ELEVAÇÃO APROXIMADA: FALHA AO APLICAR DEM', 'status-dem-3d');
       }
+    }
+
+    function localWhatIfDelta() {
+      return (factorNitro * 0.0015) + (factorWater * 0.002) - (factorPest * 0.004);
+    }
+
+    /**
+     * Cenário SIMULADO: recompõe a textura do lado direito com a variação
+     * What-If (pixel a pixel). O delta vem do endpoint do backend quando
+     * disponível; senão, do modelo local (mesmas constantes).
+     */
+    function renderSimulatedTexture() {
+      const base = baseTextureForSim || createFallbackTexture();
+      if (!base) {
+        console.error('what-if: sem base de textura para o cenário simulado');
+        simTextureActive = false;
+        return;
+      }
+      const delta = (typeof lastWhatIfDelta === 'number') ? lastWhatIfDelta : localWhatIfDelta();
+      const tex = buildSimulatedCanvasTexture(base, delta);
+      if (!tex) {
+        // Sem canvas: mantém o tint de cor antigo como fallback visual.
+        simTextureActive = false;
+        matSim.map = base;
+        matSim.displacementMap = heightTexture || base;
+        matSim.needsUpdate = true;
+        return;
+      }
+      if (simTexture) simTexture.dispose();
+      simTexture = tex;
+      matSim.map = tex;
+      matSim.displacementMap = heightTexture || base;
+      matSim.color.setRGB(1.0, 1.0, 1.0); // variação já codificada na textura
+      matSim.needsUpdate = true;
+      simTextureActive = true;
+    }
+
+    /** Consulta o What-If no backend (debounce) e refina a textura simulada. */
+    function scheduleWhatIfRefresh() {
+      if (whatIfTimer) clearTimeout(whatIfTimer);
+      whatIfTimer = setTimeout(async () => {
+        set3DStatus('loading', 'GERANDO CENÁRIO SIMULADO (WHAT-IF)...');
+        try {
+          const res = await SimulationService.calculateWhatIf(
+            factorNitro, factorWater, factorPest,
+            activeFarm.total_area || 42.54
+          );
+          if (res && typeof res.delta_ndvi === 'number') {
+            lastWhatIfDelta = res.delta_ndvi;
+            renderSimulatedTexture();
+            set3DStatus('ok', 'CENÁRIO SIMULADO ATUALIZADO (WHAT-IF)');
+            return;
+          }
+        } catch (e) {
+          console.error('what-if: falha ao consultar o backend — usando modelo local', e);
+        }
+        lastWhatIfDelta = null;
+        renderSimulatedTexture();
+        set3DStatus('ok', 'CENÁRIO SIMULADO ATUALIZADO (MODELO LOCAL)');
+      }, 300);
     }
 
     function calculateImpact() {
       const area = activeFarm.total_area || 42.54;
-      const deltaNDVI = (factorNitro * 0.0015) + (factorWater * 0.002) - (factorPest * 0.004);
+      const deltaNDVI = localWhatIfDelta();
       const deltaYield = (deltaNDVI * 45).toFixed(1);
       const totalFinance = (deltaYield * area * 125.0);
 
@@ -1006,10 +1391,14 @@
 
       matSim.displacementScale = Math.max(1.0, terrainScale + (deltaNDVI * 8.0));
 
-      if (deltaNDVI >= 0) {
-        matSim.color.setRGB(1.0 - (deltaNDVI * 0.5), 1.0 + (deltaNDVI * 0.8), 1.0 - (deltaNDVI * 0.5));
-      } else {
-        matSim.color.setRGB(1.0 + Math.abs(deltaNDVI), 1.0 - Math.abs(deltaNDVI * 1.5), 0.8);
+      // Com textura simulada ativa, a variação visual vem do canvas (map);
+      // o tint de cor só é usado como fallback quando não há canvas.
+      if (!simTextureActive) {
+        if (deltaNDVI >= 0) {
+          matSim.color.setRGB(1.0 - (deltaNDVI * 0.5), 1.0 + (deltaNDVI * 0.8), 1.0 - (deltaNDVI * 0.5));
+        } else {
+          matSim.color.setRGB(1.0 + Math.abs(deltaNDVI), 1.0 - Math.abs(deltaNDVI * 1.5), 0.8);
+        }
       }
     }
 
@@ -1029,7 +1418,11 @@
       document.getElementById('val-dash-w').innerText = `${w >= 0 ? '+' : ''}${w} mm`;
       document.getElementById('val-dash-p').innerText = `${p}%`;
 
+      // PR #4 — regenera a textura do cenário simulado a cada alteração de
+      // parâmetro (diferença visual compreensível real × simulado).
+      renderSimulatedTexture();
       calculateImpact();
+      scheduleWhatIfRefresh();
     }
 
     document.getElementById('slider-3d-n').addEventListener('input', e => syncWhatIfInputs(parseFloat(e.target.value), factorWater, factorPest));
@@ -1043,36 +1436,79 @@
       const dateStr = dates[currentIndex];
       document.getElementById('date-label').innerText = dateStr.split('-').reverse().join('/');
 
-      let textureUrl = `sentinel-21KXQ-${dateStr}/${currentLayer}_cloudless_min_max.png`;
+      // PR #4 — estados visíveis: carregando → real/aproximado → erro.
+      set3DStatus('loading', 'CARREGANDO SENTINEL-2...');
+
+      let textureUrl = null;
+      let dataOrigin = null;
 
       try {
-        const res = await fetch(`${API_URL}/talhao/${activeFarm.id}/texture?layer=${currentLayer}`, { headers: { ...authHeaders() } });
-        if (res.status === 401) { AuthService.logout(); }
-        else if (res.ok) {
+        const res = await fetch(
+          `${API_URL}/talhao/${activeFarm.id}/texture?layer=${currentLayer}&date=${dateStr}`,
+          { headers: { ...authHeaders() } }
+        );
+        if (res.status === 401) { AuthService.logout(); return; }
+        if (res.ok) {
           const data = await res.json();
-          if (data && data.texture_url) textureUrl = data.texture_url;
+          dataOrigin = data && (data.data_origin || (data.type === 'native' ? 'sentinel' : 'procedural'));
+          textureUrl = resolveTextureUrl(data, currentLayer, dateStr);
+        } else {
+          console.error(`texture: metadados HTTP ${res.status} para farm ${activeFarm.id}`);
         }
       } catch (e) {
-        console.warn("Usando textura padrão local.", e);
+        // Diagnóstico contextualizado — nunca catch silencioso.
+        console.error(`texture: falha ao consultar metadados (farm ${activeFarm.id})`, e);
+      }
+
+      if (!textureUrl) {
+        // O backend não devolveu URL utilizável (dataset nativo ausente na
+        // máquina atual, erro de rede, etc.): fallback explícito + aviso.
+        try {
+          const fb = createFallbackTexture();
+          if (fb) {
+            applyTextureToMaterial(matReal, fb, heightTexture || fb);
+            applyTextureToMaterial(matSim, fb, heightTexture || fb);
+            baseTextureForSim = fb;
+            set3DStatus('warn', 'DADO SENTINEL INDISPONÍVEL · MODO DE VISUALIZAÇÃO APROXIMADA');
+            setDataSourceBadge('approx');
+          } else {
+            set3DStatus('error', 'DADO SENTINEL INDISPONÍVEL');
+            setDataSourceBadge('unavailable');
+          }
+        } catch (e) {
+          console.error('texture: falha ao criar fallback visual', e);
+          set3DStatus('error', 'DADO SENTINEL INDISPONÍVEL');
+          setDataSourceBadge('unavailable');
+        }
+        renderSimulatedTexture();
+        calculateImpact();
+        updateZoneCards(currentIndex);
+        return;
       }
 
       // Cache LRU: evita realocar a mesma textura e o .dispose() na evicção
-      // corrige o vazamento de VRAM entre datas/camadas
+      // corrige o vazamento de VRAM entre datas/camadas. Falha de carregamento
+      // NUNCA deixa o material sem map (fallback + status).
       const key = `${activeFarm.id}|${currentLayer}|${textureUrl}`;
-      const tex = await getCachedTexture(key, textureUrl);
+      const result = await loadTextureOrFallback(key, textureUrl, matReal, matSim);
 
-      // NDVI = cor (map); DEM GL-30 = relevo (displacementMap).
-      // Sem heightmap disponível, o NDVI segue fazendo o deslocamento (fallback).
-      const disp = heightTexture || tex;
+      if (!result.ok || !result.texture) {
+        set3DStatus('warn', 'DADO SENTINEL INDISPONÍVEL · MODO DE VISUALIZAÇÃO APROXIMADA');
+        setDataSourceBadge('approx');
+      } else {
+        baseTextureForSim = result.texture;
+        if (dataOrigin === 'sentinel') {
+          set3DStatus('ok', 'CENÁRIO REAL: TEXTURA SENTINEL-2 APLICADA');
+          setDataSourceBadge('real');
+        } else {
+          set3DStatus('warn', 'MODO DE VISUALIZAÇÃO APROXIMADA (SEM SENTINEL-2 REAL)');
+          setDataSourceBadge('approx');
+        }
+      }
 
-      matReal.map = tex;
-      matReal.displacementMap = disp;
-      matReal.needsUpdate = true;
-
-      matSim.map = tex;
-      matSim.displacementMap = disp;
-      matSim.needsUpdate = true;
-
+      // NDVI = cor (map); DEM GL-30 = relevo (displacementMap). Sem heightmap
+      // disponível, o NDVI segue fazendo o deslocamento (fallback explícito).
+      renderSimulatedTexture();
       calculateImpact();
       updateZoneCards(currentIndex);
     }

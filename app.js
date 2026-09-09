@@ -1,6 +1,19 @@
 // app.js - Camada de Integração Front-end <-> Back-end FastAPI (Orion Agro)
 // As URLs usam base relativa a `API_URL` (única constante de ambiente do front).
-const API_URL = "http://localhost:8000/api";
+//
+// PR #4 — resolução da base da API:
+//   1. `window.ORION_API_URL` (se definido antes deste script) tem prioridade —
+//      permite deploy/preview sem editar arquivos;
+//   2. página servida pelo próprio backend (FastAPI, mesma origem) → URL
+//      RELATIVA (sem localhost hardcoded; funciona no preview/deploy);
+//   3. página servida por servidor estático separado (dev local, :5501) →
+//      `http://localhost:8000/api` (comportamento histórico preservado).
+const API_URL = (
+  window.ORION_API_URL ||
+  (["localhost", "127.0.0.1"].indexOf(window.location.hostname) >= 0
+    ? "http://localhost:8000/api"
+    : "/api")
+).replace(/\/+$/, "");
 
 // ---------------------------------------------------------------------------
 // Autenticação (JWT)
