@@ -95,6 +95,15 @@
     <a href="index.html" class="btn-action">🚀 Abrir Simulador 3D Side-by-Side</a>
   </div>
 
+  <!-- PR #7 — Esta página é uma VITRINE ESTÁTICA LEGADA: os números abaixo
+       (chuva, temperatura, série Sentinel) são DADOS DEMONSTRATIVOS
+       hardcodados, NEM NASA POWER real NEM Sentinel real. O clima real por
+       período fica no painel "Clima & Condições Agronômicas" em index.html
+       (GET /api/climate/farm/{id}, fonte NASA POWER, localização canônica). -->
+  <div style="background:rgba(217,119,6,0.12); border:1px solid #d97706; border-left:4px solid #d97706; color:#fbbf24; padding:10px 14px; border-radius:8px; margin-bottom:20px; font-size:0.85rem; font-weight:600;">
+    ⚠ DADOS DEMONSTRATIVOS — página estática legada. Os valores exibidos aqui são ilustrativos (hardcoded) e NÃO vêm da NASA POWER nem do Sentinel-2. Para clima real do talhão, use o painel "Clima &amp; Condições Agronômicas" no Simulador (index.html).
+  </div>
+
   <div class="main-layout">
     <!-- Coluna Esquerda: KPIs, Gráficos e Tabela -->
     <div>
@@ -107,7 +116,7 @@
         <div class="kpi-card" style="border-left: 4px solid #58a6ff;">
           <span>Chuva Acumulada</span>
           <strong>1.626,6 mm</strong>
-          <small>Ciclo Completo (NASA)</small>
+          <small style="color:#fbbf24;">DADOS DEMONSTRATIVOS</small>
         </div>
         <div class="kpi-card" style="border-left: 4px solid #d29922;">
           <span>Temperatura Média</span>

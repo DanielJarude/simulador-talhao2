@@ -87,6 +87,28 @@ class Settings(BaseSettings):
     #: TTL do cache in-memory das respostas da NASA POWER.
     nasa_weather_cache_minutes: int = Field(default=60, ge=1, le=1440)
 
+    # --- NASA POWER — serviço climático consolidado (PR #7) ---
+    #: Base da API (fixa por padrão; sobrescrever p/ mirror local em testes/suporte).
+    nasa_power_base_url: str = "https://power.larc.nasa.gov"
+    #: Defasagem NRT da fonte (dias): os ~3 dias mais recentes podem vir
+    #: incompletos; presets usam `hoje - NRT` como fim de período.
+    nasa_power_nrt_lag_days: int = Field(default=3, ge=0, le=30)
+    #: Máximo de dias por período de consulta (evita consultas pesadas).
+    nasa_power_max_period_days: int = Field(default=366, ge=7, le=366)
+    #: Início do catálogo Daily da NASA POWER.
+    nasa_power_catalog_start: str = "1981-01-01"
+    #: TTL (horas) do cache in-memory das séries diárias (PR #7).
+    nasa_climate_cache_hours: int = Field(default=6, ge=0, le=168)
+    #: Limite de entradas do cache raw (LRU por idade).
+    nasa_climate_cache_max_entries: int = Field(default=128, ge=8, le=4096)
+    #: Baseline histórico: quantos anos anteriores (mesma janela do calendário)
+    #: entram na referência. Não é climatologia oficial (exige 30 anos/WMO).
+    nasa_climate_baseline_years: int = Field(default=5, ge=1, le=10)
+    #: Chuva "relevante" para dias de chuva/sequência seca (mm/dia).
+    nasa_climate_rainy_day_threshold_mm: float = Field(default=1.0, ge=0.1, le=25.0)
+    #: Faixa (±%) em torno da referência histórica para "próxima da referência".
+    nasa_climate_baseline_band_pct: float = Field(default=20.0, ge=1.0, le=50.0)
+
     # --- Sentinel-2 (fonte única de dados para toda a stack) ---
     sentinel_dates: list[str] = [
         "2025-04-07", "2025-04-22", "2025-05-02", "2025-06-11",

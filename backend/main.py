@@ -2,7 +2,8 @@ import logging
 import os
 import secrets
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, timedelta
+from typing import Literal, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,6 +16,11 @@ from config import settings
 from database import Base, SessionLocal, engine, get_db
 from security import create_access_token, get_current_user, get_auth_context, hash_password, require_role, verify_password
 from services.analytics_service import get_farm_temporal_series
+from services.climate_service import (
+    ClimateRangeError,
+    ClimateSourceError,
+    build_climate_report,
+)
 from services.copernicus_service import (
     CALENDAR_FALLBACK_SOURCE,
     CALENDAR_REAL_SOURCE,
@@ -27,7 +33,7 @@ from services.pdf_service import generate_farm_pdf_report
 from services.satellite_service import generate_all_spectral_layers
 from services.simulation_service import calculate_what_if_impact
 from services.weather_service import fetch_live_nasa_weather
-from services.geolocation_service import (GeometryError, distance_km, location_matches, parse_geometry, representative_point, reverse_geocode)
+from services.geolocation_service import (GeometryError, distance_km, location_matches, parse_geometry, representative_point, reverse_geocode, validate_coordinates)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -828,6 +834,95 @@ def get_farm_live_weather(
 ):
     farm = _require_farm_access(db, farm_id, user)  # ownership (PR #3)
     return fetch_live_nasa_weather(farm.latitude, farm.longitude)
+
+
+# ---------------------------------------------------------------------------
+# CLIMA & CONDIÇÕES AGRONÔMICAS (PR #7 — serviço consolidado, NASA POWER real)
+#
+# Pipeline: ownership → localização canônica (PR #6) → validação de
+# coordenadas → período (preset 7d/15d/30d ou start/end) → cache → NASA
+# POWER → normalização (fill → null) → agregações → baseline histórico →
+# indicadores → interpretações conservadoras → confiança → resposta.
+#
+# O frontend NUNCA consulta a NASA POWER diretamente — sempre esta rota.
+# Falha da fonte → 503 explícito (NUNCA dado inventado); período inválido
+# → 422; sem dados na fonte → 200 com status="insufficient_data".
+# ---------------------------------------------------------------------------
+_CLIMATE_PRESETS = {"7d": 7, "15d": 15, "30d": 30}
+
+
+@app.get("/api/climate/farm/{farm_id}")
+def get_farm_climate(
+    farm_id: int,
+    preset: Optional[Literal["7d", "15d", "30d"]] = Query(
+        default=None, description="Janela padrão (7/15/30 dias). Sem preset → 30d."
+    ),
+    start: Optional[date] = Query(default=None, description="Início do período personalizado (YYYY-MM-DD)."),
+    end: Optional[date] = Query(default=None, description="Fim do período personalizado (YYYY-MM-DD)."),
+    baseline_years: Optional[int] = Query(
+        default=None, ge=1, le=10,
+        description="Anos anteriores na referência histórica (padrão do settings; máx. 10).",
+    ),
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),  # exige Bearer token
+):
+    # 1. Ownership (PR #3) — farm_id do frontend NUNCA é confiado sem checagem.
+    farm = _require_farm_access(db, farm_id, user)
+
+    # 2. Localização canônica (PR #6) — a única fonte geográfica do serviço.
+    try:
+        lat, lon = validate_coordinates(farm.latitude, farm.longitude)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Localização da fazenda inválida: {exc}",
+        ) from exc
+
+    # 3. Período: start/end têm precedência sobre o preset.
+    if start is not None or end is not None:
+        if start is None or end is None:
+            raise HTTPException(
+                status_code=422,
+                detail="Informe start E end juntos (ou use o parâmetro preset).",
+            )
+        period_start, period_end = start, end
+        preset_label = None
+    else:
+        p = preset or "30d"
+        period_end = date.today() - timedelta(days=settings.nasa_power_nrt_lag_days)
+        period_start = period_end - timedelta(days=_CLIMATE_PRESETS[p] - 1)
+        preset_label = p
+
+    try:
+        # 4–9. cache → NASA POWER → normalização → agregações → baseline →
+        #       indicadores → interpretações → confiança (dentro do serviço).
+        report = build_climate_report(
+            lat, lon, period_start, period_end,
+            baseline_years=baseline_years,
+        )
+    except ClimateRangeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ClimateSourceError as exc:
+        # 10. Estado explícito de indisponibilidade (Fase 9) — sem dado fake.
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "status": "unavailable",
+                "message": "Dados climáticos temporariamente indisponíveis.",
+                "error_code": exc.code,
+                "hint": "A fonte NASA POWER não respondeu (timeout/erro). Tente novamente em instantes.",
+            },
+        ) from exc
+
+    report["period"]["preset"] = preset_label
+    report["farm"] = {
+        "id": farm.id,
+        "name": farm.name,
+        "city": farm.city,
+        "location_status": farm.location_status,
+        "location_source": farm.location_source,
+    }
+    return report
 
 
 # ---------------------------------------------------------------------------
