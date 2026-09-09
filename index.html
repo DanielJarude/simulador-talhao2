@@ -182,17 +182,83 @@
     }
 
     #ui-panel-3d {
-      position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
-      background: rgba(22, 27, 34, 0.96); backdrop-filter: blur(14px);
-      padding: 10px 18px; border-radius: 12px; display: flex; gap: 14px;
-      align-items: center; width: 85%; max-width: 780px; z-index: 35;
-      border: 1px solid #38404a; box-shadow: 0 8px 28px rgba(0,0,0,0.85);
+      display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+      justify-content: center;
     }
     #ui-panel-3d button, #ui-panel-3d select {
       background: #238636; color: white; border: none; padding: 7px 14px;
       border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.82rem;
     }
     #ui-panel-3d select { background: #21262d; border: 1px solid #30363d; }
+    #ui-panel-3d #btn-reset-camera {
+      background: #21262d; border: 1px solid #30363d; color: #8b949e;
+      font-size: 0.74rem; padding: 6px 10px;
+    }
+    #ui-panel-3d #btn-reset-camera:hover { color: #58a6ff; border-color: #58a6ff; }
+
+    /* =====================================================================
+       PR #5f — PAINEL DA TIMELINE SENTINEL-2 (datas clicáveis abaixo do 3D)
+       ===================================================================== */
+    #timeline-panel {
+      position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
+      background: rgba(22, 27, 34, 0.96); backdrop-filter: blur(14px);
+      padding: 10px 14px; border-radius: 12px; width: 94%; max-width: 940px;
+      z-index: 35; border: 1px solid #38404a; box-shadow: 0 8px 28px rgba(0,0,0,0.85);
+      display: flex; flex-direction: column; gap: 7px;
+    }
+    #timeline-title-row {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    }
+    #timeline-title {
+      font-size: 0.72rem; font-weight: 800; letter-spacing: 0.08em;
+      color: #58a6ff; white-space: nowrap;
+    }
+    #timeline-period-row, #timeline-scenes-row {
+      display: flex; align-items: center; gap: 8px; flex-wrap: nowrap;
+    }
+    .tl-label { font-size: 0.68rem; color: #8b949e; font-weight: 700; white-space: nowrap; }
+    #timeline-scenes-row { gap: 6px; }
+    #scene-timeline {
+      flex: 1; display: flex; gap: 6px; overflow-x: auto; padding: 2px;
+      scrollbar-width: thin; scroll-behavior: smooth; min-width: 0;
+    }
+    #scene-timeline::-webkit-scrollbar { height: 6px; }
+    #scene-timeline::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+    .tl-arrow {
+      background: #21262d; border: 1px solid #30363d; color: #8b949e;
+      border-radius: 6px; width: 26px; height: 34px; cursor: pointer;
+      font-size: 1rem; font-weight: 800; flex-shrink: 0; line-height: 1;
+    }
+    .tl-arrow:hover { color: #58a6ff; border-color: #58a6ff; }
+    /* Botão de CENA (uma aquisição Sentinel-2 real por botão) */
+    .scene-chip {
+      background: #0d1117; border: 1px solid #30363d; color: #8b949e;
+      border-radius: 7px; padding: 4px 9px; cursor: pointer; white-space: nowrap;
+      display: flex; flex-direction: column; align-items: center; gap: 1px;
+      font-family: inherit; flex-shrink: 0; transition: 0.15s;
+    }
+    .scene-chip .chip-day { font-size: 0.72rem; font-weight: 800; color: #c9d1d9; line-height: 1.1; }
+    .scene-chip .chip-year { font-size: 0.6rem; font-weight: 600; color: #6e7681; line-height: 1.1; }
+    .scene-chip:hover { border-color: #58a6ff; }
+    .scene-chip:hover .chip-day { color: #58a6ff; }
+    .scene-chip.active {
+      background: #1f6feb; border-color: #388bfd; box-shadow: 0 0 10px rgba(31,111,235,0.45);
+    }
+    .scene-chip.active .chip-day { color: #fff; }
+    .scene-chip.active .chip-year { color: #cae1ff; }
+    .scene-chip .state-dot {
+      width: 5px; height: 5px; border-radius: 50%; background: #30363d; margin-top: 2px;
+    }
+    .scene-chip.loading .state-dot { background: #58a6ff; box-shadow: 0 0 5px rgba(88,166,255,0.9); }
+    .scene-chip.ready .state-dot { background: #7ee787; }
+    .scene-chip.applied .state-dot { background: #f0f6fc; }
+    .scene-chip.error .state-dot { background: #ff7b72; }
+    .chip-badge {
+      display: none; font-size: 0.52rem; font-weight: 800; letter-spacing: 0.06em;
+      color: #fff; background: rgba(255,255,255,0.18); border-radius: 3px;
+      padding: 0 4px; margin-top: 1px;
+    }
+    .scene-chip.applied .chip-badge { display: inline-block; }
 
     /* =====================================================================
        UX SIMULADOR 3D (PR #5d): hierarquia = terreno > Real×What-If >
@@ -236,7 +302,8 @@
     /* Metadados COMPACTOS (bottom-left): 1 linha resumo + botão Detalhes.
        O painel expandido é um drawer que sobe — nunca fica fixo sobre o terreno. */
     #metadata-panel {
-      position: absolute; bottom: 84px; left: 16px; z-index: 34; max-width: 400px;
+      /* PR #5f: acima da timeline inferior (nunca sobrepõe os chips). */
+      position: absolute; bottom: 168px; left: 16px; z-index: 34; max-width: 400px;
       background: rgba(22, 27, 34, 0.93); border: 1px solid #30363d;
       border-radius: 8px; padding: 6px 10px; backdrop-filter: blur(10px);
     }
@@ -313,7 +380,8 @@
 
     /* Erro compacto (não bloqueia a cena) */
     #error-toast {
-      position: absolute; bottom: 84px; left: 50%; transform: translateX(-50%);
+      /* PR #5f: acima da timeline; nunca cobre os chips/data aplicada. */
+      position: absolute; bottom: 168px; left: 50%; transform: translateX(-50%);
       z-index: 45; display: none; align-items: center; gap: 10px;
       padding: 8px 14px; border-radius: 8px; max-width: 92%;
       background: rgba(43, 24, 27, 0.95); border: 1px solid #da3633;
@@ -566,38 +634,49 @@
         </div>
       </div>
 
-      <div id="ui-panel-3d">
-        <button id="play-btn">▶ Play</button>
-        <span id="load-indicator"><span class="spinner"></span><span id="load-indicator-text">Carregando…</span></span>
-        <input type="range" id="timeline-slider" min="0" max="12" value="0" step="1" style="flex:1;">
-        <span id="date-label" style="font-size:0.8rem; font-weight:bold; width:80px; text-align:right;">07/04/2025</span>
-        <!-- Pausa entre cenas do Play (configurável; transições visuais apenas). -->
-        <select id="play-interval" title="Pausa entre cenas do Play">
-          <option value="1000">1 s</option>
-          <option value="1600" selected>1,6 s</option>
-          <option value="3000">3 s</option>
-          <option value="5000">5 s</option>
-        </select>
-        <select id="layer-select">
-          <option value="rgb">RGB</option>
-          <option value="ndvi">NDVI</option>
-          <option value="evi">EVI</option>
-          <option value="ndre">NDRE</option>
-          <option value="ndmi">NDMI</option>
-        </select>
-      </div>
-      <!-- PR #5e — calendário REAL (STAC): "Mais recente", períodos e
-           progresso discreto do pré-carregamento. Nunca bloqueia exploração. -->
-      <div id="timeline-controls">
-        <button id="btn-latest" type="button" title="Selecionar a aquisição válida mais recente do catálogo">⇥ Mais recente</button>
-        <span id="period-pills"></span>
-        <span id="custom-period-row" hidden>
-          <input type="date" id="custom-start">
-          <input type="date" id="custom-end">
-          <button id="custom-apply" type="button">Aplicar</button>
-        </span>
-        <span id="preload-status" hidden></span>
-        <span id="timeline-meta"></span>
+      <!-- PR #5f — TIMELINE SENTINEL-2 abaixo do 3D: períodos, "Mais recente"
+           e UM BOTÃO POR CENA STAC REAL (scroll horizontal + setas). -->
+      <div id="timeline-panel">
+        <div id="timeline-title-row">
+          <span id="timeline-title">🛰️ TIMELINE SENTINEL-2</span>
+          <span id="load-indicator"><span class="spinner"></span><span id="load-indicator-text">Carregando…</span></span>
+          <span id="preload-status" hidden></span>
+          <span id="timeline-meta"></span>
+        </div>
+        <div id="timeline-period-row">
+          <span class="tl-label">Período:</span>
+          <span id="period-pills"></span>
+          <span id="custom-period-row" hidden>
+            <input type="date" id="custom-start">
+            <input type="date" id="custom-end">
+            <button id="custom-apply" type="button">Aplicar</button>
+          </span>
+        </div>
+        <div id="timeline-scenes-row">
+          <button id="btn-latest" type="button" title="Selecionar a aquisição válida mais recente do catálogo">⇥ Mais recente</button>
+          <button id="tl-prev" class="tl-arrow" type="button" title="Cenas anteriores" aria-label="Cenas anteriores">‹</button>
+          <div id="scene-timeline" aria-label="Cenas Sentinel-2 reais disponíveis"></div>
+          <button id="tl-next" class="tl-arrow" type="button" title="Cenas seguintes" aria-label="Cenas seguintes">›</button>
+        </div>
+        <div id="ui-panel-3d">
+          <button id="play-btn">▶ Play</button>
+          <span id="date-label" style="font-size:0.78rem; font-weight:bold; min-width:76px; text-align:center;">—</span>
+          <select id="play-interval" title="Pausa entre cenas do Play">
+            <option value="1000">1 s</option>
+            <option value="1600" selected>1,6 s</option>
+            <option value="3000">3 s</option>
+            <option value="5000">5 s</option>
+          </select>
+          <select id="layer-select">
+            <option value="rgb">RGB</option>
+            <option value="ndvi">NDVI</option>
+            <option value="evi">EVI</option>
+            <option value="ndre">NDRE</option>
+            <option value="ndmi">NDMI</option>
+          </select>
+          <button id="btn-reset-camera" type="button" title="Reenquadrar o talhão na vista oblíqua padrão">⟲ Resetar visão</button>
+          <input type="range" id="timeline-slider" min="0" max="12" value="0" step="1" style="display:none;">
+        </div>
       </div>
 
       <!-- METADADOS COMPACTOS (PR #5d): 1 linha + Detalhes retrátil.
@@ -715,6 +794,52 @@
     // [3D-CALENDAR-HELPERS-END]
     // =====================================================================
 
+    // =====================================================================
+    // [3D-TIMELINE-HELPERS-START] — BOTÕES DE DATA (1 por cena real; puros).
+    // =====================================================================
+    const SCENE_MONTHS_SHORT = ['JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ'];
+
+    /** Tooltip por cena: data completa + nuvens do catálogo (se houver). */
+    function sceneChipTitle(dateStr, scene) {
+      const cc = scene && (typeof scene.cloud_cover === 'number')
+        ? `${scene.cloud_cover.toFixed(1).replace('.', ',')}%` : '—';
+      return `${formatSceneDate(dateStr)}\nNuvens: ${cc}`;
+    }
+
+    /**
+     * Gera EXATAMENTE um botão por data da API (ordem preservada — desc):
+     *   {date, day:'30', month:'AGO', year:'2026', label:'30 AGO',
+     *    subLabel:'2026', title:'30/08/2026\nNuvens: 9,8%', cloud}
+     * NUNCA insere datas artificiais/fixas: entrada = saída.
+     */
+    function buildSceneChips(datesList, calendar) {
+      const byDate = new Map();
+      (Array.isArray(calendar) ? calendar : []).forEach(sc => {
+        if (sc && sc.date) byDate.set(sc.date, sc);
+      });
+      return (Array.isArray(datesList) ? datesList : []).map((dateStr, idx) => {
+        const parts = String(dateStr).split('-');
+        const day = parts.length === 3 ? String(Number(parts[2])).padStart(2, '0') : '';
+        const monthIdx = parts.length === 3 ? (Number(parts[1]) - 1) : -1;
+        const month = (monthIdx >= 0 && monthIdx < 12) ? SCENE_MONTHS_SHORT[monthIdx] : '';
+        const year = parts.length === 3 ? parts[0] : String(dateStr);
+        const scene = byDate.get(dateStr) || null;
+        return {
+          idx,
+          date: dateStr,
+          day,
+          month,
+          year,
+          label: day && month ? `${day} ${month}` : String(dateStr),
+          subLabel: year,
+          title: sceneChipTitle(dateStr, scene),
+          cloud: scene && (typeof scene.cloud_cover === 'number') ? scene.cloud_cover : null,
+        };
+      });
+    }
+    // [3D-TIMELINE-HELPERS-END]
+    // =====================================================================
+
     // Datas de DEMONSTRAÇÃO: usadas SOMENTE quando o calendário STAC real não
     // está disponível (fallback explícito). A timeline NUNCA nasce com elas:
     // `dates` começa VAZIO e é preenchido pela API.
@@ -728,24 +853,65 @@
     let calendarMeta = null;
     let currentPeriod = 60;    // 30/60/90/180/365 | 'custom'
 
+    // =====================================================================
+    // [3D-TIMELINE-DOM-START] — render dos chips 3D / pílulas (min. DOM).
+    // =====================================================================
     function renderDatePills() {
+      // (a) Dashboard (legado): pílulas simples dd/mm/aaaa.
       const container = document.getElementById('dashboard-dates-bar');
-      if (!container) return;
-      container.innerHTML = '';
-      dates.forEach((d, idx) => {
-        const formatted = d.split('-').reverse().join('/');
+      if (container) {
+        container.innerHTML = '';
+        dates.forEach((d, idx) => {
+          const formatted = d.split('-').reverse().join('/');
+          const btn = document.createElement('button');
+          btn.className = `date-pill ${idx === currentIndex ? 'active' : ''} available`;
+          btn.id = `date-pill-${idx}`;
+          btn.innerText = formatted;
+          const dot = document.createElement('span');
+          dot.className = 'state-dot';
+          btn.appendChild(dot);
+          btn.onclick = () => selectDateIndex(idx);
+          container.appendChild(btn);
+        });
+      }
+      // (b) TIMELINE 3D (PR #5f): UM botão por cena real, clicável, rolável.
+      const scroller = document.getElementById('scene-timeline');
+      if (!scroller) return;
+      scroller.innerHTML = '';
+      const calendar = (calendarMeta && Array.isArray(calendarMeta.calendar)) ? calendarMeta.calendar : [];
+      const chips = buildSceneChips(dates, calendar);
+      // Destaque "aplicada" vem do player (nunca de índice obsoleto); a classe
+      // `active` é confirmada no COMMIT via updateTimelineUI.
+      const appliedIdx = (player && player.appliedLayer === currentLayer && player.appliedIndex >= 0)
+        ? player.appliedIndex : -1;
+      chips.forEach(chip => {
         const btn = document.createElement('button');
-        btn.className = `date-pill ${idx === currentIndex ? 'active' : ''} available`;
-        btn.id = `date-pill-${idx}`;
-        btn.innerText = formatted;
-        // Ponto discreto de estado (PR #5e): disponível/pronta/aplicada/erro.
+        btn.className = `scene-chip ${chip.idx === appliedIdx ? 'active' : ''} available`;
+        btn.id = `scene-chip-${chip.idx}`;
+        btn.type = 'button';
+        btn.title = chip.title;
+        const dayLine = document.createElement('span');
+        dayLine.className = 'chip-day';
+        dayLine.innerText = chip.label;
+        const yearLine = document.createElement('span');
+        yearLine.className = 'chip-year';
+        yearLine.innerText = chip.subLabel;
+        const badge = document.createElement('span');
+        badge.className = 'chip-badge';
+        badge.innerText = 'ATUAL';
         const dot = document.createElement('span');
         dot.className = 'state-dot';
+        btn.appendChild(dayLine);
+        btn.appendChild(yearLine);
+        btn.appendChild(badge);
         btn.appendChild(dot);
-        btn.onclick = () => selectDateIndex(idx);
-        container.appendChild(btn);
+        btn.onclick = () => selectDateIndex(chip.idx);
+        scroller.appendChild(btn);
       });
+      updateTimelinePillStates(); // estados prontos/cacheados logo após o render
     }
+    // [3D-TIMELINE-DOM-END]
+    // =====================================================================
 
     /**
      * Seleção MANUAL de data (pílula do dashboard / slider):
@@ -916,6 +1082,8 @@
       if (meta) meta.innerText = label;
       const pills = document.getElementById('dashboard-dates-bar');
       if (pills) pills.innerHTML = '';
+      const scroller = document.getElementById('scene-timeline');
+      if (scroller) scroller.innerHTML = '';
       const latest = document.getElementById('btn-latest');
       if (latest) latest.disabled = true;
       const slider = document.getElementById('timeline-slider');
@@ -981,6 +1149,8 @@
         fallback_reason: decision.fallback_reason,
         latest_date: decision.latest,
         count: decision.count || dates.length,
+        // Metadados por cena (nuvens/produto) p/ tooltip dos botões (PR #5f).
+        calendar: (data && Array.isArray(data.calendar)) ? data.calendar : [],
       };
       // Chaves antigas saem da timeline (nunca reaproveitar cache de demo).
       preloadStates.clear();
@@ -1254,17 +1424,65 @@
     // «var» para ficar visível ao harness Node (VM); no navegador continua local.
     var CAMERA_PRESET = {
       fov: 45,
-      position: [26, 58, 66],           // visão oblíqua inicial (relevo visível)
+      // PR #5f: a posição INICIAL vem do enquadramento (fitCameraToTerrain);
+      // estes valores são o fallback (talhão 50×50) e as regras geométricas.
+      elevationDeg: 42,                 // ~35–55° acima do plano (nunca rasante)
+      azimuthDeg: 35,                   // diagonal: largura + profundidade visíveis
+      fitMargin: 1.25,                  // folga p/ talhão inteiro no quadro
+      position: [26, 58, 66],
       target: [0, 0, 0],
-      minDistance: 14,
-      maxDistance: 240,
-      minPolarAngle: 0.10,              // permite quase top-down
-      maxPolarAngle: Math.PI * 0.46,    // nunca abaixo do horizonte
+      minDistance: 10,
+      maxDistance: 400,
+      minPolarAngle: Math.PI * 0.05,    // permite quase top-down
+      maxPolarAngle: Math.PI * 0.44,    // nunca abaixo do horizonte (~79° máx)
       rotate: true, zoom: true, pan: true,
       rotateSpeed: 0.85, zoomSpeed: 1.0, panSpeed: 0.75,
     };
     /** Regras do terreno expostas para teste (const não viram global em VM). */
-    var DEM_RULES = { steps: DEM_EXAGGERATION_STEPS, default: DEM_EXAGGERATION_DEFAULT };
+    var DEM_RULES = {
+      steps: DEM_EXAGGERATION_STEPS,
+      default: DEM_EXAGGERATION_DEFAULT,
+      camera: CAMERA_PRESET,
+    };
+
+    /**
+     * ENQUADRAMENTO automático (PR #5f) — matemática PURA testável:
+     * dado o tamanho máximo do talhão (`extent`, unidades do mundo) e o
+     * aspect do viewport, devolve posição/target/distância para uma vista
+     * oblíqua ELEVADA (35–55°) com o talhão inteiro no quadro.
+     *  - target = centro do terreno;
+     *  - distância cresce com o extent (pequeno E grande enquadram);
+     *  - nunca abaixo do plano (elevação > 0 e polar ≤ 0.44π).
+     */
+    function computeCameraFit(extent, aspect, options = {}) {
+      const fovDeg = Number(options.fov) || CAMERA_PRESET.fov;
+      const elevDeg = Math.max(35, Math.min(55, Number(options.elevationDeg) || CAMERA_PRESET.elevationDeg));
+      const azimRaw = Number(options.azimuthDeg);
+      const azimDeg = Number.isFinite(azimRaw) ? azimRaw : CAMERA_PRESET.azimuthDeg;
+      const margin = Number(options.fitMargin) > 1 ? Number(options.fitMargin) : CAMERA_PRESET.fitMargin;
+      const e = Math.max(Number(extent) || 50, 1);
+      const a = Math.max(Number(aspect) || 1, 0.2);
+      const vHalf = (fovDeg * Math.PI) / 360;                    // metade do fov vertical
+      const hHalf = Math.atan(Math.tan(vHalf) * a);              // metade do fov horizontal
+      const halfFov = Math.min(vHalf, hHalf);
+      // Distância p/ o raio `e/2` caber no fov mais estreito + folga.
+      const distance = ((e / 2) * margin) / Math.tan(halfFov);
+      const elev = (elevDeg * Math.PI) / 180;
+      const azim = (Number.isFinite(azimDeg) ? azimDeg : 0) * (Math.PI / 180);
+      const cx = Math.cos(azim) * Math.cos(elev);
+      const cy = Math.sin(elev);
+      const cz = Math.sin(azim) * Math.cos(elev);
+      return {
+        distance,
+        target: [0, 0, 0],
+        position: [cx * distance, cy * distance, cz * distance],
+        elevationDeg: elevDeg,
+        azimuthDeg: Number.isFinite(azimDeg) ? azimDeg : 0,
+        // Limites de zoom proporcionais à fazenda (não fixos).
+        minDistance: Math.max(e * 0.18, 4),
+        maxDistance: Math.max(e * 6, distance * 4),
+      };
+    }
 
     /**
      * Converte o alívio real (metros) para unidades do mundo 3D:
@@ -1370,20 +1588,39 @@
     controls.zoomSpeed = CAMERA_SETTINGS.zoomSpeed;
     controls.panSpeed = CAMERA_SETTINGS.panSpeed;
 
+    // PR #5f — iluminação que REVELA o relevo: ambiente suave + hemisférica
+    // (céu/chão) + direcional LATERAL/diagonal (sombra nas encostas), sem
+    // escurecer a textura Sentinel. Grid discreto abaixo do terreno.
     [sceneReal, sceneSim].forEach(sc => {
-      sc.add(new THREE.AmbientLight(0xffffff, 0.45));
-      // Luz direcional baixa (ângulo rasante) para o RELEVO ganhar sombra
-      // e profundidade — essencial para o terreno 3D real não "achatar".
-      const dl = new THREE.DirectionalLight(0xffffff, 1.05);
-      dl.position.set(-45, 55, 70);
+      sc.add(new THREE.AmbientLight(0xffffff, 0.28));                    // base suave
+      const hemi = new THREE.HemisphereLight(0xcfe3ff, 0x1b2430, 0.55);  // céu × solo
+      sc.add(hemi);
+      const dl = new THREE.DirectionalLight(0xffffff, 0.95);
+      dl.position.set(-0.55, 1.0, 0.6).normalize().multiplyScalar(90);   // diagonal: revela encosta
       sc.add(dl);
-      const fill = new THREE.DirectionalLight(0x9cc7ff, 0.35);
-      fill.position.set(60, 40, -50);
+      const fill = new THREE.DirectionalLight(0x9cc7ff, 0.28);
+      fill.position.set(70, 45, -60);
       sc.add(fill);
-      const grid = new THREE.GridHelper(80, 20, 0x1f6feb, 0x161b22);
-      grid.position.y = -0.15; // grade horizontal sob o terreno (XZ, Y up)
-      sc.add(grid);
     });
+    // Grade discreta: acompanha o tamanho do terreno e fica ABAIXO dele.
+    let groundGridReal = null, groundGridSim = null;
+    function updateGroundGrid(size) {
+      const s = Math.max(Number(size) || 60, 20);
+      const mk = () => {
+        const g = new THREE.GridHelper(s, 20, 0x2b3a52, 0x1b2436);
+        g.position.y = -0.06;
+        const mats = Array.isArray(g.material) ? g.material : [g.material];
+        mats.forEach(m => { m.transparent = true; m.opacity = 0.16; m.depthWrite = false; });
+        return g;
+      };
+      if (groundGridReal) { sceneReal.remove(groundGridReal); groundGridReal.geometry.dispose(); }
+      if (groundGridSim) { sceneSim.remove(groundGridSim); groundGridSim.geometry.dispose(); }
+      groundGridReal = mk();
+      groundGridSim = mk();
+      sceneReal.add(groundGridReal);
+      sceneSim.add(groundGridSim);
+    }
+    updateGroundGrid(70);
 
     // Subdivisão do terreno: 96×96 (≈9 m por quad em talhão de ~900 m) —
     // suficiente para o DEM COPERNICUS_30 (30 m) sem custo de VRAM relevante.
@@ -1543,6 +1780,39 @@
     meshSimFade.visible = false;
     meshSimFade.renderOrder = 1;
     sceneSim.add(meshSimFade);
+
+    // =====================================================================
+    // PR #5f — ENQUADRAMENTO AUTOMÁTICO: o talhão é a estrela da cena.
+    // BoundingBox real (geometria + DEM) → centro + extensão → vista oblíqua
+    // elevada (42°) com distância proporcional. Funciona p/ talhões pequenos
+    // E grandes; nunca mais "faixa no horizonte".
+    // =====================================================================
+    function fitCameraToTerrain() {
+      if (!meshReal || !meshReal.geometry) return null;
+      const box = new THREE.Box3().setFromObject(meshReal);
+      const size = new THREE.Vector3();
+      const center = new THREE.Vector3();
+      box.getSize(size);
+      box.getCenter(center);
+      // Extensão dominante do talhão (largura/profundidade; relevo conta menos).
+      const extent = Math.max(size.x, size.z, Math.max(size.y, 1));
+      const w = container.clientWidth || window.innerWidth;
+      const h = container.clientHeight || (window.innerHeight - 56);
+      const aspect = Math.max((w / 2) / Math.max(h, 1), 0.2);
+      const fit = computeCameraFit(extent, aspect, CAMERA_PRESET);
+      camera.position.set(
+        fit.position[0] + center.x,
+        fit.position[1] + center.y,
+        fit.position[2] + center.z
+      );
+      controls.target.set(fit.target[0] + center.x, fit.target[1] + center.y, fit.target[2] + center.z);
+      controls.minDistance = fit.minDistance;
+      controls.maxDistance = fit.maxDistance;
+      controls.update();
+      updateGroundGrid(Math.max(size.x, size.z) * 1.4);
+      console.info(`[3D-CAM] fit: extent=${extent.toFixed(1)}u distance=${fit.distance.toFixed(1)}u elev=${fit.elevationDeg}°`);
+      return { extent, distance: fit.distance, elevationDeg: fit.elevationDeg, center: center.toArray() };
+    }
 
     // =====================================================================
     // PIPELINE 3D (PR #4) — helpers puros + fallback visual + What-If visual.
@@ -2170,6 +2440,8 @@
       talhaoOutlineSim.position.y = 0.05 + demExaggeration * demReliefWorld;
       sceneReal.add(talhaoOutlineReal);
       sceneSim.add(talhaoOutlineSim);
+      // PR #5f — reenquadra a câmera à nova extensão (talhão inteiro visível).
+      fitCameraToTerrain();
     }
 
     // ---------- PLAYER DA TIMELINE (PR #5d — PRIMEIRO funcionalidades) ----------
@@ -2293,6 +2565,7 @@
         bakeDemGeometry();
         updateElevationUI();
         setDemLine('warn', 'DEM: indisponível • Elevação aproximada');
+        fitCameraToTerrain();
         return;
       }
       try {
@@ -2326,6 +2599,8 @@
           `DEM: ${sourceLabel} • ${info.min_elevation_m}–${info.max_elevation_m} m • alívio ~${relief.toFixed(0)} m`
         );
         console.info(`DEM ${sourceLabel}: relevo real ativo (alívio ~${relief.toFixed(0)} m, ${info.min_elevation_m}–${info.max_elevation_m} m)`);
+        // PR #5f — o relevo muda o bounding box; reenquadra (mantém ângulo).
+        fitCameraToTerrain();
       } catch (e) {
         console.error('heightmap: falha ao aplicar heightmap DEM', e);
         demGrid = null;
@@ -2467,37 +2742,44 @@
 
     function updateTimelineUI(index) {
       const dateStr = dates[index] || '';
-      document.getElementById('timeline-slider').value = index;
-      document.getElementById('date-label').innerText = formatSceneDate(dateStr);
+      const slider = document.getElementById('timeline-slider');
+      if (slider) slider.value = index;
+      const dateLabel = document.getElementById('date-label');
+      if (dateLabel) dateLabel.innerText = formatSceneDate(dateStr);
+      // Destaque da cena APLICADA: só muda no COMMIT (quem chama aqui).
       document.querySelectorAll('.date-pill').forEach(el => {
         const idx = parseInt((el.id || '').replace('date-pill-', ''), 10);
         el.classList.toggle('active', idx === index);
+      });
+      document.querySelectorAll('.scene-chip').forEach(el => {
+        const idx = parseInt((el.id || '').replace('scene-chip-', ''), 10);
+        el.classList.toggle('active', idx === index);
+        if (idx === index && typeof el.scrollIntoView === 'function') {
+          try { el.scrollIntoView({ inline: 'center', block: 'nearest' }); } catch (e) { /* noop */ }
+        }
       });
       updateTimelinePillStates();
     }
 
     /** Estados discretos da timeline: disponível/carregando/pronta/aplicada/erro. */
+    // [3D-TIMELINE-STATES-START]
     function updateTimelinePillStates() {
-      const container = document.getElementById('dashboard-dates-bar');
-      if (!container || typeof container.querySelectorAll !== 'function') return;
-      container.querySelectorAll('.date-pill').forEach(el => {
-        const idx = parseInt((el.id || '').replace('date-pill-', ''), 10);
-        const dateStr = dates[idx];
-        if (!dateStr) return;
-        const key = sceneCacheKey(activeFarm.id, activeTalhaoId(), dateStr, currentLayer);
-        const state = timelineSceneState(player, sceneCache, preloadStates, key, idx, currentLayer);
-        el.classList.remove('available', 'loading', 'ready', 'applied', 'error');
-        el.classList.add(state);
-      });
-      for (let i = 0; i < dates.length; i++) {
-        const key = sceneCacheKey(activeFarm.id, activeTalhaoId(), dates[i], currentLayer);
-        if (!preloadStates.has(key)) {
-          // datas sem estado de preload permanecem "disponível" (nunca parecem)
-          // selecionáveis como se fossem outra data: a pílula só é "active"
-          // quando o player aplica (updateTimelineUI).
-        }
-      }
+      const applyStates = (root, idPrefix) => {
+        if (!root || typeof root.querySelectorAll !== 'function') return;
+        root.querySelectorAll('[id^="' + idPrefix + '"]').forEach(el => {
+          const idx = parseInt((el.id || '').replace(idPrefix, ''), 10);
+          const dateStr = dates[idx];
+          if (!dateStr) return;
+          const key = sceneCacheKey(activeFarm.id, activeTalhaoId(), dateStr, currentLayer);
+          const state = timelineSceneState(player, sceneCache, preloadStates, key, idx, currentLayer);
+          el.classList.remove('available', 'loading', 'ready', 'applied', 'error');
+          el.classList.add(state);
+        });
+      };
+      applyStates(document.getElementById('dashboard-dates-bar'), 'date-pill-');
+      applyStates(document.getElementById('scene-timeline'), 'scene-chip-');
     }
+    // [3D-TIMELINE-STATES-END]
 
     // =====================================================================
     // PR #5e — PREPARAÇÃO × REPRODUÇÃO: cache de cenas + fila de preload.
@@ -2892,8 +3174,9 @@
       setSpectralLayer(e.target.value);
     });
 
-    // ---------- PR #5e — calendário REAL: períodos + personalizado ----------
+    // ---------- PR #5e/5f — calendário REAL: períodos + personalizado ----------
     const PERIOD_OPTIONS = [30, 60, 90, 180, 365];
+    const PERIOD_LABELS = { 30: '30d', 60: '60d', 90: '90d', 180: '6m', 365: '1a' };
 
     function renderPeriodPills() {
       const holder = document.getElementById('period-pills');
@@ -2903,7 +3186,7 @@
         const btn = document.createElement('button');
         btn.className = `period-pill ${currentPeriod === p ? 'active' : ''}`;
         btn.type = 'button';
-        btn.innerText = `${p} dias`;
+        btn.innerText = PERIOD_LABELS[p] || `${p} dias`;
         btn.onclick = () => applyPeriod(p);
         holder.appendChild(btn);
       });
@@ -2957,6 +3240,21 @@
         PLAY_INTERVAL_MS = (ms >= 500 && ms <= 15000) ? ms : 1600;
       });
     }
+
+    // PR #5f — Resetar visão: reenquadra o talhão (data/layer/relevo intactos).
+    const resetCamBtn = document.getElementById('btn-reset-camera');
+    if (resetCamBtn) resetCamBtn.addEventListener('click', () => fitCameraToTerrain());
+
+    // PR #5f — setas da timeline: rolam a faixa de cenas (5, 10, 20+ cenas).
+    function scrollSceneTimeline(dir) {
+      const scroller = document.getElementById('scene-timeline');
+      if (!scroller) return;
+      scroller.scrollBy({ left: dir * 240, behavior: 'smooth' });
+    }
+    const tlPrev = document.getElementById('tl-prev');
+    const tlNext = document.getElementById('tl-next');
+    if (tlPrev) tlPrev.addEventListener('click', () => scrollSceneTimeline(-1));
+    if (tlNext) tlNext.addEventListener('click', () => scrollSceneTimeline(1));
 
     document.getElementById('play-btn').addEventListener('click', () => {
       hideErrorToast();

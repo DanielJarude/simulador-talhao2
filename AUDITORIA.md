@@ -1110,3 +1110,66 @@ DEM OK). O requisito "timeline = cenas reais do STAC" não estava funcionando na
   `python scripts/test_cdse_connection.py --lat -22.7182 --lon -55.5421 --area 42.54 --demo`.
 
 **Status: PRONTO PARA NOVO PLAYTEST HUMANO.** Sem merge; branch `arena/01a083cd-simulador-talhao2`.
+
+## Anexo H — Câmera 3D enquadrada + timeline de cenas reais clicável (PR #5f, 09/09/2026)
+
+### H1 — Causa raiz (playtest humano)
+
+1. **Terreno não parecia 3D.** Câmera fixa `position=[26,58,66]` / `target=[0,0,0]`
+   (nunca reenquadrada): com a malha proporcional ao talhão real (alongada) a
+   profundidade ficava pequena, a grade `GridHelper(80,20)` competia com o relevo
+   e a cena nascia "rasante" — faixa fina no horizonte + muito espaço preto.
+   Não havia `fitCameraToTerrain` nem botão de reset.
+2. **Datas reais não eram clicáveis no 3D.** Só havia `#timeline-slider`
+   (max=12) + `#date-label` dentro do painel; `renderDatePills()` desenhava
+   apenas em `#dashboard-dates-bar` (dashboard). Sem botão por cena STAC.
+
+### H2 — Correções (frontend `index.html` apenas; backend intocado)
+
+| Item | Antes | Depois |
+|------|-------|--------|
+| Câmera inicial | fixa `[26,58,66]`→`[0,0,0]` | `fitCameraToTerrain()`: `Box3` da malha → centro (target) + maior extensão → distancia por `computeCameraFit` (fov 45°, **elevação 42°, clamp 35–55°**, azimute 35° = diagonal) |
+| Reenquadramento | nenhum | após `applyTalhaoGeometry` (contorno real) **e** após o DEM (`loadHeightmap`) |
+| Limites | `minDistance 14/maxDistance 240` fixos | proporcionais à extensão: `max(e*0.18,4)` / `max(e*6, dist*4)` |
+| Abaixo do plano | `maxPolarAngle=0.46π` | `0.44π` (~79°) + elev > 0 — nunca rasante nem sob o terreno |
+| Botão Reset | inexistente | **"⟲ Resetar visão"** → `fitCameraToTerrain()` (data/layer/exagero intactos) |
+| Grade | `GridHelper(80,20)` y=-0.15, opaca | `updateGroundGrid(size)` acompanha o talhão, y=-0.06, **opacidade 0.16**, `depthWrite=false` |
+| Iluminação | ambient 0.45 + dir frontal 1.05 | ambient 0.28 + **hemisférica** (céu×solo) 0.55 + dir **diagonal** 0.95 + fill 0.28 (relevo com sombra, textura Sentinel não escurecida) |
+| Timeline 3D | slider 0–12 + label | **`#scene-timeline`**: 1 botão por cena STAC ("30 AGO"/"2026", tooltip data completa + nuvens, scroll + setas ‹ ›), barra única com Play/Pause, velocidade, camada e Reset |
+| Destaque "aplicada" | não existia | classe `active`/`applied` + badge "ATUAL" **só no COMMIT** (`updateTimelineUI`); preload → `ready` (nunca seleção) |
+| Estados | — | `available/loading/ready/applied/error` via `updateTimelinePillStates` (ponto discreto + className) |
+| Exagero/relevo | — | **inalterado** (§ contrato #5e): 1×/2×/3× só visual; números reais (592–615 m) intactos; Real×What-If compartilham malha/câmera/target |
+
+### H3 — Contrato mantido (NÃO REGREDIR)
+
+- Timeline real construída **exclusivamente** de `GET /api/talhao/{farm_id}/dates`
+  quando `source=sentinel-cdse`/`is_real=true`; `dates` continua iniciando vazio e
+  os chips **só** nascem da resposta da API (nenhuma data fixa reintroduzida);
+- "Mais recente" = `dates[0]` (catálogo desc) — nunca hoje/hardcoded;
+- `calendarMeta.calendar` (já devolvido pelo backend) agora alimenta o **tooltip**
+  com nuvens por cena; cache/preload/race protection/proveniência inalterados;
+- `sceneCacheKey`/LRU/plano de preload/`timelineSceneState` não mudaram de contrato.
+
+### H4 — Testes adicionados (PR #5f)
+
+- `tests/test_3d_camera_chips.py` (novo, 3 testes VM Node — marcadores novos
+  `[3D-TIMELINE-HELPERS]`, `[3D-TIMELINE-DOM]`, `[3D-TIMELINE-STATES]`):
+  - câmera: fit puro (elev 35–55°, target centro, |pos|=distância, polar≤0.44π,
+    diagonal, distância ∝ bbox, aspect, clamp, **reset determinístico**,
+    casos-limite finitos);
+  - chips: 1 botão por data STAC (ordem desc), nenhuma fixa/intermediária,
+    tooltip data+nuvens (vírgula pt-BR), vazio→vazio, 24 cenas;
+  - DOM real: render + estados (aplicada só comitada; preload `ready` não move
+    seleção; clique → `selectDateIndex`; período reconstrói sem sobras;
+    loading/error; `applied` prevalece sobre `error` na cena comitada).
+- Regressões cobertas pelos testes #5d/#5e existentes (Play só após commit,
+  cache sem refetch, What-If sincronizado) — todos verdes.
+
+### H5 — Qualidade
+
+- `pytest tests/ -q` → **265 passed, 1 skipped, 24 warnings** (antes 262 → +3);
+- `node --check` do JS inline extraído → OK;
+- Backend, credenciais, STAC CDSE, DEM, NASA POWER, cadastro/auth/analytics,
+  PostgreSQL, Docker e demais páginas: **NÃO alterados**.
+
+**Status: PRONTO PARA NOVO PLAYTEST HUMANO.** Sem merge; branch `arena/01a083cd-simulador-talhao2`.
