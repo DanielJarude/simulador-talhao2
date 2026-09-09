@@ -91,6 +91,16 @@
     }
     .date-pill:hover { border-color: #58a6ff; color: #58a6ff; }
     .date-pill.active { background: #1f6feb; border-color: #388bfd; color: #ffffff; box-shadow: 0 0 10px rgba(31, 111, 235, 0.4); }
+    /* Estados discretos da timeline (PR #5e): disponível / carregando /
+       pronta / aplicada / erro — representados por um ponto minúsculo. */
+    .date-pill .state-dot {
+      display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+      margin-left: 5px; background: #30363d; vertical-align: 1px;
+    }
+    .date-pill.loading .state-dot { background: #58a6ff; box-shadow: 0 0 5px rgba(88,166,255,0.8); }
+    .date-pill.ready .state-dot { background: #7ee787; }
+    .date-pill.applied .state-dot { background: #f0f6fc; }
+    .date-pill.error .state-dot { background: #ff7b72; }
 
     .kpi-grid {
       display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -142,47 +152,291 @@
       box-shadow: 0 8px 24px rgba(0,0,0,0.6); max-width: 300px;
     }
 
-    /* 3D SPLIT VIEW */
-    #screen-3d { background: #0d1117; position: relative; width: 100%; height: 100%; }
-    #canvas-container { width: 100%; height: 100%; position: absolute; top: 0; left: 0; }
-    
+    /* =====================================================================
+       PR #5h — SIMULADOR 3D EM 3 ZONAS (terreno em primeiro plano):
+         A) HEADER/navegação (top-nav, fora daqui);
+         B) viewport 3D (Real × What-If) — flex:1, ocupa ~70-78% da altura;
+         C) timeline/controles — faixa PRÓPRIA abaixo do 3D (nunca flutua
+            sobre o terreno), 2 linhas, ~20% da altura.
+       Regras: uma fonte visual por função; cores neutras (o NDVI já tem cor);
+       informativos no canto inferior esquerdo, pequenos, translúcidos.
+       ===================================================================== */
+    #screen-3d {
+      background: #0d1117; position: relative; width: 100%; height: 100%;
+      overflow: hidden;
+    }
+    /* Flex só com a tela ATIVA — `display:none` da base .screen-view continua
+       valendo quando a aba 3D não está aberta (troca de abas intacta). */
+    #screen-3d.active { display: flex; flex-direction: column; }
+    #viewport-3d {
+      position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden;
+      background: #0d1117;
+    }
+    #canvas-container {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    }
+
     .view-label {
-      position: absolute; top: 14px; z-index: 25;
-      padding: 6px 12px; border-radius: 6px; font-weight: 700; font-size: 0.75rem;
-      backdrop-filter: blur(8px);
+      position: absolute; top: 10px; z-index: 25;
+      padding: 4px 10px; border-radius: 6px; font-weight: 700;
+      backdrop-filter: blur(8px); display: flex; flex-direction: column; gap: 1px;
+      min-width: 150px; max-width: 250px;
     }
-    #label-left { left: 16px; background: rgba(33, 38, 45, 0.9); border-left: 4px solid #58a6ff; color: #58a6ff; }
-    #label-right { left: calc(50% + 12px); background: rgba(33, 38, 45, 0.9); border-left: 4px solid #d29922; color: #e3b341; }
-    .divider-line { position: absolute; top: 0; left: 50%; width: 2px; height: 100%; background: #30363d; z-index: 20; }
+    #label-left { left: 12px; background: rgba(22, 27, 34, 0.78); border-left: 3px solid #3d6fa8; color: #9fc2e8; }
+    #label-right { left: calc(50% + 10px); background: rgba(22, 27, 34, 0.78); border-left: 3px solid #8a6d1f; color: #cdb56a; }
+    .scenario-title { font-size: 0.64rem; font-weight: 800; letter-spacing: 0.05em; opacity: 0.9; }
+    .scenario-sub { font-size: 0.62rem; font-weight: 600; opacity: 0.85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #label-left .scenario-sub.real { color: #6fbf85; }
+    #label-left .scenario-sub.approx { color: #b8934a; }
+    #label-left .scenario-sub.no-config { color: #c07a3a; }
+    #label-right .scenario-sub { color: #cdb56a; }
+    .divider-line {
+      position: absolute; top: 0; left: 50%; width: 1px; height: 100%;
+      background: rgba(48, 54, 61, 0.6); z-index: 20;
+    }
 
+    /* ---- Painel WHAT-IF compacto e RECOLHÍVEL (PR #5h) ---- */
     #whatif-panel-3d {
-      position: absolute; top: 14px; right: 16px; z-index: 30;
-      background: rgba(22, 27, 34, 0.94); backdrop-filter: blur(12px);
-      padding: 14px; border-radius: 10px; width: 270px;
-      border: 1px solid #30363d; box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+      position: absolute; top: 10px; right: 12px; z-index: 30; width: 232px;
+      background: rgba(22, 27, 34, 0.88); backdrop-filter: blur(10px);
+      border: 1px solid #30363d; border-radius: 10px; overflow: hidden;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.5);
     }
-    #whatif-panel-3d h4 { margin: 0 0 8px 0; color: #e3b341; font-size: 0.9rem; }
-    .param-group { margin-bottom: 10px; }
-    .param-group label { font-size: 0.75rem; color: #8b949e; display: flex; justify-content: space-between; }
-    .param-group input[type=range] { width: 100%; margin-top: 3px; accent-color: #d29922; }
-
+    #whatif-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 7px 10px; background: rgba(13, 17, 23, 0.6);
+      border-bottom: 1px solid #21262d;
+    }
+    .whatif-title { font-size: 0.72rem; font-weight: 800; color: #cdb56a; letter-spacing: 0.04em; }
+    #whatif-toggle {
+      background: #21262d; color: #8b949e; border: 1px solid #30363d;
+      border-radius: 5px; width: 22px; height: 22px; font-size: 0.9rem;
+      line-height: 1; cursor: pointer; font-weight: 800;
+    }
+    #whatif-toggle:hover { color: #cdb56a; border-color: #8a6d1f; }
+    #whatif-body { padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 7px; }
+    .param-group label {
+      font-size: 0.66rem; color: #8b949e; display: flex; justify-content: space-between;
+      align-items: baseline; margin-bottom: 1px;
+    }
+    .param-group label strong { color: #c9d1d9; font-size: 0.66rem; }
+    .param-group input[type=range] { width: 100%; height: 12px; accent-color: #b8934a; margin: 0; }
     .sim-result-box {
-      background: rgba(13, 17, 23, 0.8); padding: 8px 10px; border-radius: 6px;
-      border: 1px solid #21262d; font-size: 0.78rem; line-height: 1.35;
+      background: rgba(13, 17, 23, 0.55); padding: 6px 8px; border-radius: 6px;
+      border: 1px solid #21262d; font-size: 0.66rem; line-height: 1.45; color: #8b949e;
+      display: flex; flex-direction: column; gap: 1px;
+    }
+    .sim-result-box strong { color: #c9d1d9; }
+    /* Aba lateral quando recolhido: [⚡ What-If] */
+    #whatif-tab {
+      position: absolute; top: 10px; right: 12px; z-index: 30;
+      background: rgba(22, 27, 34, 0.92); border: 1px solid #8a6d1f; color: #cdb56a;
+      border-radius: 8px; padding: 6px 12px; font-size: 0.72rem; font-weight: 800;
+      cursor: pointer; backdrop-filter: blur(8px);
+    }
+    #whatif-tab:hover { background: #21262d; }
+
+    /* ---- Proveniência/DEM: card compacto (canto inferior ESQUERDO) ---- */
+    #metadata-panel {
+      position: absolute; bottom: 10px; left: 12px; z-index: 34;
+      max-width: 320px; /* ≲ 25% da largura */
+      background: rgba(13, 17, 23, 0.72); border: 1px solid rgba(48, 54, 61, 0.8);
+      border-radius: 8px; padding: 5px 8px; backdrop-filter: blur(8px);
+    }
+    #metadata-summary {
+      display: flex; align-items: center; gap: 6px; font-size: 0.66rem;
+      font-weight: 700; color: #c9d1d9; white-space: nowrap; overflow: hidden;
+    }
+    #metadata-summary.real { color: #a9c9b2; }
+    #metadata-summary.approx { color: #b8934a; }
+    #metadata-summary.no-config { color: #c07a3a; }
+    #prov-toggle {
+      background: #21262d; color: #9fc2e8; border: 1px solid #30363d;
+      border-radius: 5px; padding: 1px 7px; font-size: 0.62rem; font-weight: 700;
+      cursor: pointer; flex-shrink: 0;
+    }
+    #prov-toggle:hover { border-color: #3d6fa8; }
+    #prov-details {
+      display: none; margin-top: 4px; padding-top: 4px;
+      border-top: 1px dashed rgba(48, 54, 61, 0.8);
+      max-height: 150px; overflow-y: auto;
+    }
+    #prov-details.open { display: block; }
+    #prov-details pre {
+      margin: 0; font-family: inherit; font-size: 0.62rem; line-height: 1.5;
+      color: #8b949e; white-space: pre-wrap;
+    }
+    #dem-line {
+      margin-top: 4px; padding-top: 4px; border-top: 1px dashed rgba(48, 54, 61, 0.8);
+      font-size: 0.62rem; font-weight: 600; color: #8b949e;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    #dem-line.ok { color: #6fbf85; }
+    #dem-line.warn { color: #b8934a; }
+
+    /* Dica discreta de navegação (nunca tutorial permanente) */
+    #camera-hint {
+      position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%);
+      z-index: 24; font-size: 0.6rem; color: #6e7681; opacity: 0.65;
+      white-space: nowrap; pointer-events: none;
     }
 
-    #ui-panel-3d {
-      position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
-      background: rgba(22, 27, 34, 0.96); backdrop-filter: blur(14px);
-      padding: 10px 18px; border-radius: 12px; display: flex; gap: 14px;
-      align-items: center; width: 85%; max-width: 780px; z-index: 35;
-      border: 1px solid #38404a; box-shadow: 0 8px 28px rgba(0,0,0,0.85);
+    /* ---- Barra inferior: TIMELINE + CONTROLES (faixa própria, 2 linhas) ---- */
+    #timeline-panel {
+      flex: 0 0 clamp(120px, 21vh, 152px); min-height: 0;
+      background: #161b22; border-top: 1px solid #30363d;
+      padding: 6px 14px 8px; display: flex; flex-direction: column; gap: 5px;
+      overflow: hidden;
     }
-    #ui-panel-3d button, #ui-panel-3d select {
-      background: #238636; color: white; border: none; padding: 7px 14px;
-      border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.82rem;
+    .timeline-row {
+      display: flex; align-items: center; gap: 8px; min-height: 0;
+      white-space: nowrap; overflow: hidden;
     }
-    #ui-panel-3d select { background: #21262d; border: 1px solid #30363d; }
+    .tl-label { font-size: 0.62rem; color: #8b949e; font-weight: 700; white-space: nowrap; }
+    #timeline-title {
+      font-size: 0.64rem; font-weight: 800; letter-spacing: 0.07em;
+      color: #9fc2e8; white-space: nowrap;
+    }
+    #scene-timeline {
+      flex: 1 1 auto; display: flex; gap: 5px; overflow-x: auto; padding: 2px;
+      scrollbar-width: thin; scroll-behavior: smooth; min-width: 0;
+    }
+    #scene-timeline::-webkit-scrollbar { height: 5px; }
+    #scene-timeline::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+    .scene-chip {
+      background: #0d1117; border: 1px solid #30363d; color: #8b949e;
+      border-radius: 6px; padding: 3px 8px; cursor: pointer; white-space: nowrap;
+      display: flex; flex-direction: column; align-items: center; gap: 0;
+      font-family: inherit; flex-shrink: 0; transition: 0.15s;
+    }
+    .scene-chip .chip-day { font-size: 0.68rem; font-weight: 800; color: #c9d1d9; line-height: 1.1; }
+    .scene-chip .chip-year { font-size: 0.55rem; font-weight: 600; color: #6e7681; line-height: 1.15; }
+    .scene-chip:hover { border-color: #3d6fa8; }
+    .scene-chip:hover .chip-day { color: #9fc2e8; }
+    .scene-chip.active {
+      background: #1f6feb; border-color: #388bfd; box-shadow: 0 0 8px rgba(31,111,235,0.4);
+    }
+    .scene-chip.active .chip-day { color: #fff; }
+    .scene-chip.active .chip-year { color: #cae1ff; }
+    .scene-chip .state-dot {
+      width: 4px; height: 4px; border-radius: 50%; background: #30363d; margin-top: 1px;
+    }
+    .scene-chip.loading .state-dot { background: #58a6ff; box-shadow: 0 0 5px rgba(88,166,255,0.9); }
+    .scene-chip.ready .state-dot { background: #6fbf85; }
+    .scene-chip.applied .state-dot { background: #f0f6fc; }
+    .scene-chip.error .state-dot { background: #ff7b72; }
+    .chip-badge {
+      display: none; font-size: 0.5rem; font-weight: 800; letter-spacing: 0.06em;
+      color: #fff; background: rgba(255,255,255,0.16); border-radius: 3px;
+      padding: 0 4px; margin-top: 1px;
+    }
+    .scene-chip.applied .chip-badge { display: inline-block; }
+    .tl-arrow {
+      background: #21262d; border: 1px solid #30363d; color: #8b949e;
+      border-radius: 5px; width: 24px; height: 30px; cursor: pointer;
+      font-size: 0.95rem; font-weight: 800; flex-shrink: 0; line-height: 1;
+    }
+    .tl-arrow:hover { color: #9fc2e8; border-color: #3d6fa8; }
+    #btn-latest {
+      background: #21262d; border: 1px solid #30363d; color: #a9c9b2;
+      padding: 3px 8px; border-radius: 6px; font-size: 0.62rem; font-weight: 700;
+      cursor: pointer; flex-shrink: 0;
+    }
+    #btn-latest:hover { border-color: #6fbf85; }
+    .period-pill {
+      background: #0d1117; border: 1px solid #30363d; color: #8b949e;
+      padding: 2px 8px; border-radius: 5px; font-size: 0.62rem; font-weight: 700;
+      cursor: pointer; white-space: nowrap; transition: 0.15s;
+    }
+    .period-pill:hover { border-color: #3d6fa8; color: #9fc2e8; }
+    .period-pill.active { background: #1f6feb; border-color: #388bfd; color: #fff; }
+    #period-pills { display: inline-flex; gap: 3px; overflow-x: auto; min-width: 0; scrollbar-width: none; }
+    #period-pills::-webkit-scrollbar { display: none; }
+    #custom-period-row { display: inline-flex; gap: 4px; align-items: center; flex-shrink: 0; }
+    #custom-period-row input[type="date"] {
+      background: #0d1117; border: 1px solid #30363d; color: #c9d1d9;
+      border-radius: 4px; padding: 1px 5px; font-size: 0.62rem; color-scheme: dark;
+    }
+    #custom-apply {
+      background: #21262d; border: 1px solid #30363d; color: #9fc2e8;
+      border-radius: 4px; padding: 1px 7px; font-size: 0.62rem; font-weight: 700; cursor: pointer;
+    }
+    #load-indicator {
+      display: none; align-items: center; font-size: 0.62rem; font-weight: 600;
+      color: #9fc2e8; white-space: nowrap; flex-shrink: 0;
+    }
+    #load-indicator.visible { display: inline-flex; }
+    #preload-status { font-size: 0.62rem; font-weight: 700; color: #9fc2e8; white-space: nowrap; flex-shrink: 0; }
+    #preload-status.done { color: #6fbf85; }
+    #timeline-meta { font-size: 0.6rem; color: #6e7681; white-space: nowrap; flex-shrink: 1; overflow: hidden; text-overflow: ellipsis; }
+
+    /* Linha 2 — controles: Play · data · intervalo · camada · Relevo · Reset */
+    .controls-row button, .controls-row select {
+      background: #21262d; color: #c9d1d9; border: 1px solid #30363d;
+      border-radius: 6px; padding: 4px 10px; font-size: 0.66rem; font-weight: 700;
+      cursor: pointer; flex-shrink: 0;
+    }
+    .controls-row button:hover { border-color: #3d6fa8; color: #9fc2e8; }
+    #play-btn { background: #238636; border-color: #2ea043; color: #fff; min-width: 84px; }
+    #play-btn:hover { background: #2ea043; color: #fff; }
+    .exag-row { display: inline-flex; gap: 4px; align-items: center; }
+    .exag-btn {
+      background: #21262d; border: 1px solid #30363d; color: #c9d1d9;
+      border-radius: 4px; padding: 3px 8px; font-size: 0.64rem; font-weight: 800;
+      cursor: pointer; transition: 0.15s;
+    }
+    .exag-btn:hover { border-color: #3d6fa8; color: #9fc2e8; }
+    .exag-btn.active { background: #1f6feb; border-color: #388bfd; color: #fff; }
+
+    /* Spinner (herdado do load) */
+    .spinner {
+      display: inline-block; width: 12px; height: 12px; border-radius: 50%;
+      border: 2px solid rgba(88, 166, 255, 0.35); border-top-color: #58a6ff;
+      animation: spin 0.8s linear infinite; vertical-align: -2px; margin-right: 5px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Overlay discreto de carregamento da cena REAL (nunca cobre o centro) */
+    #overlay-loading-real {
+      position: absolute; top: 44px; left: 12px; z-index: 36; display: none;
+      align-items: center; gap: 6px; padding: 4px 9px; border-radius: 6px;
+      font-size: 0.62rem; font-weight: 700; color: #9fc2e8;
+      background: rgba(22, 27, 34, 0.85); border: 1px solid #1f6feb;
+      backdrop-filter: blur(8px); pointer-events: none;
+    }
+    #overlay-loading-real.visible { display: inline-flex; }
+
+    /* Erro compacto e LOCAL (nunca transforma a tela em erro) */
+    #error-toast {
+      position: absolute; bottom: 34px; left: 50%; transform: translateX(-50%);
+      z-index: 45; display: none; align-items: center; gap: 8px;
+      padding: 6px 12px; border-radius: 8px; max-width: 82%;
+      background: rgba(43, 24, 27, 0.9); border: 1px solid #da3633;
+      color: #ff9a92; font-size: 0.66rem; font-weight: 700; white-space: nowrap;
+    }
+    #error-toast.visible { display: inline-flex; }
+    #error-toast button {
+      background: #da3633; color: #fff; border: none; border-radius: 5px;
+      padding: 3px 9px; font-size: 0.62rem; font-weight: 700; cursor: pointer;
+    }
+
+    /* ---- RESPONSIVIDADE (PR #5h): 1920×1080 · 1600×900 · 1366×768 ---- */
+    @media (max-height: 800px) {
+      #timeline-panel { flex-basis: 112px; padding: 4px 10px 6px; gap: 3px; }
+      .scene-chip { padding: 2px 6px; }
+      .scene-chip .chip-day { font-size: 0.62rem; }
+      .controls-row button, .controls-row select { padding: 3px 8px; font-size: 0.62rem; }
+      #whatif-panel-3d { width: 208px; }
+      #camera-hint { display: none; } /* dica só quando há espaço */
+    }
+    @media (max-width: 1500px) {
+      #whatif-panel-3d { width: 206px; }
+      #timeline-meta { display: none; } /* secundário: só em telas largas */
+    }
+    @media (max-width: 1100px) {
+      #label-right { left: calc(50% + 8px); }
+      #whatif-body { padding: 6px 8px 8px; }
+    }
   </style>
 </head>
 <body>
@@ -220,6 +474,7 @@
           <div class="timeline-header">
             <h4>🛰️ Passagens do Satélite Sentinel-2</h4>
             <div class="layer-pill-group">
+              <button class="layer-pill" onclick="setSpectralLayer('rgb')">RGB (True Color)</button>
               <button class="layer-pill active" onclick="setSpectralLayer('ndvi')">NDVI (Biomassa)</button>
               <button class="layer-pill" onclick="setSpectralLayer('evi')">EVI (Vigor Denso)</button>
               <button class="layer-pill" onclick="setSpectralLayer('ndre')">NDRE (Nitrogênio/Clorofila)</button>
@@ -387,47 +642,129 @@
       <div id="map"></div>
     </div>
 
-    <!-- TELA 3: SIMULADOR 3D -->
+    <!-- TELA 3: SIMULADOR 3D — 3 ZONAS (PR #5h):
+         viewport dominante (Real × What-If) + faixa própria de timeline
+         ABAIXO do 3D (nunca flutua sobre o terreno). -->
     <div id="screen-3d" class="screen-view">
-      <div id="label-left" class="view-label">🛰️ CENÁRIO REAL (SENTINEL-2)</div>
-      <div id="label-right" class="view-label">🧪 CENÁRIO SIMULADO (WHAT-IF)</div>
-      <div class="divider-line"></div>
+      <div id="viewport-3d">
+        <div id="label-left" class="view-label">
+          <span class="scenario-title">OBSERVAÇÃO REAL</span>
+          <span class="scenario-sub" id="status-real">carregando…</span>
+        </div>
+        <div id="label-right" class="view-label">
+          <span class="scenario-title">PROJEÇÃO WHAT-IF</span>
+          <span class="scenario-sub" id="status-sim">Projeção What-If</span>
+        </div>
+        <div class="divider-line"></div>
 
-      <div id="whatif-panel-3d">
-        <h4>⚡ Parâmetros What-If</h4>
-        <div class="param-group">
-          <label><span>Adubação Nitrogenada (N)</span><strong id="val-3d-n">+0 kg/ha</strong></label>
-          <input type="range" id="slider-3d-n" min="-50" max="150" step="10" value="0">
+        <!-- Overlay discreto do carregamento da cena real (fora do centro) -->
+        <div id="overlay-loading-real"><span class="spinner"></span><span id="overlay-loading-text">Carregando…</span></div>
+
+        <!-- WHAT-IF compacto: recolhível; recolhido preserva os valores -->
+        <div id="whatif-panel-3d">
+          <div id="whatif-header">
+            <span class="whatif-title">⚡ What-If</span>
+            <button id="whatif-toggle" type="button" title="Recolher/Expandir" aria-expanded="true">−</button>
+          </div>
+          <div id="whatif-body">
+            <div class="param-group">
+              <label><span>Adubação (N)</span><strong id="val-3d-n">+0 kg/ha</strong></label>
+              <input type="range" id="slider-3d-n" min="-50" max="150" step="10" value="0">
+            </div>
+            <div class="param-group">
+              <label><span>Irrigação</span><strong id="val-3d-w">+0 mm</strong></label>
+              <input type="range" id="slider-3d-w" min="-30" max="60" step="5" value="0">
+            </div>
+            <div class="param-group">
+              <label><span>Pragas</span><strong id="val-3d-p">0%</strong></label>
+              <input type="range" id="slider-3d-p" min="0" max="60" step="5" value="0">
+            </div>
+            <div class="sim-result-box">
+              <span>Vigor: <strong id="sim-3d-ndvi">NDVI +0.00</strong></span>
+              <span>Produtividade: <strong id="sim-3d-yield">+0.0 sc/ha</strong></span>
+              <span>Impacto: <strong id="sim-3d-finance">R$ 0,00</strong></span>
+            </div>
+          </div>
         </div>
-        <div class="param-group">
-          <label><span>Lâmina de Irrigação</span><strong id="val-3d-w">+0 mm</strong></label>
-          <input type="range" id="slider-3d-w" min="-30" max="60" step="5" value="0">
-        </div>
-        <div class="param-group">
-          <label><span>Pressão de Pragas</span><strong id="val-3d-p">0%</strong></label>
-          <input type="range" id="slider-3d-p" min="0" max="60" step="5" value="0">
+        <!-- Aba lateral única quando o painel está recolhido -->
+        <button id="whatif-tab" type="button" style="display:none;">⚡ What-If</button>
+
+        <!-- METADADOS COMPACTOS (canto inferior esquerdo, ≤ ~25% da largura):
+             1 linha + [Detalhes] (modal em drawer); resumo padrão. -->
+        <div id="metadata-panel">
+          <div id="metadata-summary">
+            <span id="prov-summary">aguardando dados…</span>
+            <button id="prov-toggle" type="button">Detalhes</button>
+          </div>
+          <div id="prov-details">
+            <pre id="prov-lines">—</pre>
+          </div>
+          <div id="dem-line" class="dem-line">DEM: consultando…</div>
         </div>
 
-        <div class="sim-result-box">
-          • Vigor: <strong id="sim-3d-ndvi" style="color:#7ee787;">NDVI +0.00</strong><br>
-          • Ganho: <strong id="sim-3d-yield" style="color:#58a6ff;">+0.0 sc/ha</strong><br>
-          • Financeiro: <strong id="sim-3d-finance" style="color:#f0f6fc;">R$ 0,00</strong>
+        <!-- Dica mínima de navegação (não tutorial) -->
+        <div id="camera-hint">Arraste para orbitar · Scroll para zoom</div>
+
+        <!-- Erro compacto de cena (local, com retry manual) -->
+        <div id="error-toast">
+          <span id="error-text">Não foi possível carregar a cena.</span>
+          <button id="error-retry" type="button">Tentar novamente</button>
         </div>
+
+        <div id="canvas-container"></div>
       </div>
 
-      <div id="ui-panel-3d">
-        <button id="play-btn">▶ Play</button>
-        <input type="range" id="timeline-slider" min="0" max="12" value="0" step="1" style="flex:1;">
-        <span id="date-label" style="font-size:0.8rem; font-weight:bold; width:80px;">07/04/2025</span>
-        <select id="layer-select">
-          <option value="ndvi">NDVI</option>
-          <option value="evi">EVI</option>
-          <option value="ndre">NDRE</option>
-          <option value="ndmi">NDMI</option>
-        </select>
+      <!-- TIMELINE SENTINEL-2 — faixa PRÓPRIA abaixo do viewport (PR #5h):
+           1ª linha: título/estado · Período [30d][60d][90d][6m][1a] · cenas;
+           2ª linha: ▶ Play · 1,6s · NDVI · Relevo 1×2×3×5× · Resetar.
+           Semântica cronológica e identidade por data PRESERVADAS. -->
+      <div id="timeline-panel">
+        <div class="timeline-row">
+          <span id="timeline-title">TIMELINE SENTINEL-2</span>
+          <span id="timeline-meta"></span>
+          <span id="load-indicator"><span class="spinner"></span><span id="load-indicator-text">Carregando…</span></span>
+          <span id="preload-status" hidden></span>
+        </div>
+        <!-- Linha 1 (conteúdo): Período + cenas (mais antiga → mais recente) -->
+        <div class="timeline-row">
+          <span class="tl-label">Período:</span>
+          <span id="period-pills"></span>
+          <span id="custom-period-row" hidden>
+            <input type="date" id="custom-start">
+            <input type="date" id="custom-end">
+            <button id="custom-apply" type="button">Aplicar</button>
+          </span>
+          <button id="btn-latest" type="button" title="Selecionar a aquisição válida mais recente do catálogo">⇥ Mais recente</button>
+          <button id="tl-prev" class="tl-arrow" type="button" title="Cenas anteriores" aria-label="Cenas anteriores">‹</button>
+          <div id="scene-timeline" aria-label="Cenas Sentinel-2 reais disponíveis"></div>
+          <button id="tl-next" class="tl-arrow" type="button" title="Cenas seguintes" aria-label="Cenas seguintes">›</button>
+        </div>
+        <div class="timeline-row controls-row">
+          <button id="play-btn" type="button">▶ Play</button>
+          <select id="play-interval" title="Pausa entre cenas do Play">
+            <option value="1000">1 s</option>
+            <option value="1600" selected>1,6 s</option>
+            <option value="3000">3 s</option>
+            <option value="5000">5 s</option>
+          </select>
+          <select id="layer-select" title="Camada espectral">
+            <option value="rgb">RGB</option>
+            <option value="ndvi">NDVI</option>
+            <option value="evi">EVI</option>
+            <option value="ndre">NDRE</option>
+            <option value="ndmi">NDMI</option>
+          </select>
+          <span class="tl-label">Relevo</span>
+          <span class="exag-row">
+            <button class="exag-btn" type="button" data-exag="1">1×</button>
+            <button class="exag-btn active" type="button" data-exag="2">2×</button>
+            <button class="exag-btn" type="button" data-exag="3">3×</button>
+            <button class="exag-btn" type="button" data-exag="5">5×</button>
+          </span>
+          <button id="btn-reset-camera" type="button" title="Reenquadrar o talhão na vista oblíqua padrão">⟲ Resetar</button>
+          <input type="range" id="timeline-slider" min="0" max="12" value="0" step="1" style="display:none;">
+        </div>
       </div>
-
-      <div id="canvas-container"></div>
     </div>
 
   </main>
@@ -455,40 +792,243 @@
     let isFetchingFarm = false;
     let analyticsTimelineCache = [];
 
-    const dates = [
+    // =====================================================================
+    // [3D-CALENDAR-HELPERS-START] — decisão PURA: STAC real × demonstração.
+    // NUNCA existe "data real" além das devolvidas pelo endpoint (CDSE/STAC).
+    // =====================================================================
+    const CALENDAR_REAL_SOURCE = 'sentinel-cdse';
+    const CALENDAR_FALLBACK_SOURCE = 'config_fallback';
+
+    /** Motivo legível (pt-BR) de quando o calendário NÃO é real. */
+    function buildCalendarFallbackReason(data, httpStatus, networkError) {
+      if (networkError) {
+        const name = (networkError && networkError.name) || 'Erro';
+        return `Falha de rede ao consultar o catálogo (${name})`;
+      }
+      if (httpStatus === 401) return 'Sessão não autenticada — faça login para ver as passagens reais';
+      if (httpStatus) return `Erro HTTP ${httpStatus} ao consultar o catálogo Sentinel-2`;
+      if (!data) return 'Resposta vazia do servidor de catálogo';
+      if (data.status === 'not_configured') return 'CDSE não configurado (credenciais ausentes ou CDSE_ENABLED=false)';
+      if (data.status === 'no_scene') return 'Sem cena Sentinel-2 válida na janela (política de nuvens)';
+      if (data.status === 'error') return 'Erro ao consultar o catálogo Sentinel-2 (CDSE)';
+      return 'Catálogo Sentinel-2 real indisponível';
+    }
+
+    /**
+     * Classifica a resposta do endpoint /dates:
+     *  - `kind: 'real'` → data.source === 'sentinel-cdse' E há cenas: a
+     *    timeline é EXATAMENTE as datas STAC (mais recente primeiro);
+     *  - `kind: 'demo'` → qualquer outro caso: datas de demonstração com
+     *    rótulo e motivo explícitos (nunca apresentadas como reais).
+     */
+    function classifyCalendarResponse(data, demoDates, httpStatus, networkError) {
+      const demo = (Array.isArray(demoDates) ? demoDates.slice() : [])
+        .sort().reverse(); // desc: "Mais recente" ≡ dates[0] também na demo
+      if (data && data.source === CALENDAR_REAL_SOURCE &&
+          Array.isArray(data.dates) && data.dates.length > 0) {
+        const realDates = data.dates.slice();
+        return {
+          kind: 'real',
+          source: CALENDAR_REAL_SOURCE,
+          dates: realDates,
+          count: (typeof data.count === 'number') ? data.count : realDates.length,
+          latest: data.latest_date || realDates[0],
+          source_label: data.source_label || 'Copernicus Sentinel-2 — catálogo STAC real',
+          status: data.status || 'ok',
+          fallback_reason: null,
+        };
+      }
+      return {
+        kind: 'demo',
+        source: CALENDAR_FALLBACK_SOURCE,
+        dates: demo,
+        count: demo.length,
+        latest: null,
+        source_label: 'Calendário demonstrativo (datas de demonstração)',
+        status: (data && data.status) || (httpStatus ? 'http_error' : 'network_error'),
+        fallback_reason: buildCalendarFallbackReason(data, httpStatus, networkError),
+      };
+    }
+    // [3D-CALENDAR-HELPERS-END]
+    // =====================================================================
+
+    // =====================================================================
+    // [3D-TIMELINE-HELPERS-START] — BOTÕES DE DATA (1 por cena real; puros).
+    // =====================================================================
+    const SCENE_MONTHS_SHORT = ['JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ'];
+
+    /** Tooltip por cena: data completa + nuvens do catálogo (se houver). */
+    function sceneChipTitle(dateStr, scene) {
+      const cc = scene && (typeof scene.cloud_cover === 'number')
+        ? `${scene.cloud_cover.toFixed(1).replace('.', ',')}%` : '—';
+      return `${formatSceneDate(dateStr)}\nNuvens: ${cc}`;
+    }
+
+    /**
+     * ORDEM VISUAL da timeline — PR #5f (correção do sentido cronológico):
+     * esquerda = mais ANTIGA, direita = mais RECENTE.
+     * A API continua DESC internamente (`dates[0]` = mais recente, usado por
+     * latest_date/cache/preload/consulta); ESTA função devolve uma CÓPIA ASC
+     * usada SOMENTE para renderizar os botões. `dates` nunca é mutado aqui.
+     */
+    function timelineOrderDates(datesList) {
+      if (!Array.isArray(datesList)) return [];
+      return datesList.slice().sort(); // ISO 'AAAA-MM-DD' ordena cronologicamente
+    }
+
+    /**
+     * Índice (no array INTERNO `dates`, DESC da API) da cena MAIS RECENTE:
+     *  1. usa `latest_date` retornado pelo endpoint (fonte de verdade);
+     *  2. sem `latest_date`/não encontrado → contrato explícito: a API entrega
+     *     DESC, logo `dates[0]` é a mais recente (NUNCA depende da ordem visual).
+     * Retorna -1 quando o calendário está vazio.
+     */
+    function latestSceneIndex(datesList, latestDate) {
+      const list = Array.isArray(datesList) ? datesList : [];
+      if (list.length === 0) return -1;
+      if (latestDate) {
+        const idx = list.indexOf(String(latestDate));
+        if (idx >= 0) return idx;
+      }
+      return 0;
+    }
+
+    /**
+     * Gera EXATAMENTE um botão por data da API, em ORDEM CRONOLÓGICA (antiga
+     * → recente) para a UI:
+     *   {idx, visualIdx, date, day:'18', month:'JUL', year:'2026',
+     *    label:'18 JUL', subLabel:'2026', title:'18/07/2026\nNuvens: —', cloud}
+     * `idx` é o índice da cena no array INTERNO (`dates`, DESC da API) — a
+     * identidade por DATA (não por posição visual) usada por cache/load/estados.
+     * NUNCA insere datas artificiais/fixas: entrada = saída, sem perdas/duplicatas.
+     */
+    function buildSceneChips(datesList, calendar) {
+      const apiDates = Array.isArray(datesList) ? datesList.slice() : [];
+      const apiIndex = new Map(apiDates.map((d, i) => [String(d), i]));
+      const byDate = new Map();
+      (Array.isArray(calendar) ? calendar : []).forEach(sc => {
+        if (sc && sc.date) byDate.set(String(sc.date), sc);
+      });
+      return timelineOrderDates(apiDates).map((dateStr, visualIdx) => {
+        const parts = String(dateStr).split('-');
+        const day = parts.length === 3 ? String(Number(parts[2])).padStart(2, '0') : '';
+        const monthIdx = parts.length === 3 ? (Number(parts[1]) - 1) : -1;
+        const month = (monthIdx >= 0 && monthIdx < 12) ? SCENE_MONTHS_SHORT[monthIdx] : '';
+        const year = parts.length === 3 ? parts[0] : String(dateStr);
+        const scene = byDate.get(String(dateStr)) || null;
+        return {
+          idx: apiIndex.get(String(dateStr)),   // identidade: índice no array interno
+          visualIdx,                             // posição na timeline visual (asc)
+          date: dateStr,
+          day,
+          month,
+          year,
+          label: day && month ? `${day} ${month}` : String(dateStr),
+          subLabel: year,
+          title: sceneChipTitle(dateStr, scene),
+          cloud: scene && (typeof scene.cloud_cover === 'number') ? scene.cloud_cover : null,
+        };
+      });
+    }
+    // [3D-TIMELINE-HELPERS-END]
+    // =====================================================================
+
+    // Datas de DEMONSTRAÇÃO: usadas SOMENTE quando o calendário STAC real não
+    // está disponível (fallback explícito). A timeline NUNCA nasce com elas:
+    // `dates` começa VAZIO e é preenchido pela API.
+    const DEMO_DATES = [
       "2025-04-07", "2025-04-22", "2025-05-02", "2025-06-11",
       "2025-10-04", "2025-10-11", "2025-11-18", "2025-11-20",
       "2025-12-10", "2025-12-18", "2026-01-27", "2026-02-11", "2026-03-08"
     ];
+    let dates = [];              // fonte da verdade da timeline (SEMPRE da API)
+    // PR #5e — metadados do calendário (fonte/label/is_real/status/motivo).
+    let calendarMeta = null;
+    let currentPeriod = 60;    // 30/60/90/180/365 | 'custom'
 
+    // =====================================================================
+    // [3D-TIMELINE-DOM-START] — render dos chips 3D / pílulas (min. DOM).
+    // =====================================================================
     function renderDatePills() {
+      // (a) Dashboard (legado): pílulas dd/mm/aaaa — também em ordem
+      //     cronológica (antiga → recente); id continua o índice INTERNO.
       const container = document.getElementById('dashboard-dates-bar');
-      if (!container) return;
-      container.innerHTML = '';
-      dates.forEach((d, idx) => {
-        const formatted = d.split('-').reverse().join('/');
+      if (container) {
+        container.innerHTML = '';
+        timelineOrderDates(dates).forEach(d => {
+          const idx = dates.indexOf(d);
+          if (idx < 0) return;
+          const btn = document.createElement('button');
+          btn.className = `date-pill ${idx === currentIndex ? 'active' : ''} available`;
+          btn.id = `date-pill-${idx}`;
+          btn.innerText = formatSceneDate(d);
+          const dot = document.createElement('span');
+          dot.className = 'state-dot';
+          btn.appendChild(dot);
+          btn.onclick = () => selectDateIndex(idx);
+          container.appendChild(btn);
+        });
+      }
+      // (b) TIMELINE 3D (PR #5f): UM botão por cena real, clicável, rolável,
+      //     em ordem cronológica (esquerda = mais antiga → direita = mais
+      //     recente). `chip.idx` = identidade da cena no array interno (API desc).
+      const scroller = document.getElementById('scene-timeline');
+      if (!scroller) return;
+      scroller.innerHTML = '';
+      const calendar = (calendarMeta && Array.isArray(calendarMeta.calendar)) ? calendarMeta.calendar : [];
+      const chips = buildSceneChips(dates, calendar);
+      // Destaque "aplicada" vem do player (nunca de índice obsoleto); a classe
+      // `active` é confirmada no COMMIT via updateTimelineUI.
+      const appliedIdx = (player && player.appliedLayer === currentLayer && player.appliedIndex >= 0)
+        ? player.appliedIndex : -1;
+      chips.forEach(chip => {
         const btn = document.createElement('button');
-        btn.className = `date-pill ${idx === currentIndex ? 'active' : ''}`;
-        btn.id = `date-pill-${idx}`;
-        btn.innerText = formatted;
-        btn.onclick = () => selectDateIndex(idx);
-        container.appendChild(btn);
+        btn.className = `scene-chip ${chip.idx === appliedIdx ? 'active' : ''} available`;
+        btn.id = `scene-chip-${chip.idx}`;
+        btn.type = 'button';
+        btn.title = chip.title;
+        const dayLine = document.createElement('span');
+        dayLine.className = 'chip-day';
+        dayLine.innerText = chip.label;
+        const yearLine = document.createElement('span');
+        yearLine.className = 'chip-year';
+        yearLine.innerText = chip.subLabel;
+        // PR #5h: chip azul ÚNICO = data aplicada (sem badge extra simultâneo);
+        // o ano fica na 2ª linha do próprio chip e o ponto indica o estado.
+        const dot = document.createElement('span');
+        dot.className = 'state-dot';
+        btn.appendChild(dayLine);
+        btn.appendChild(yearLine);
+        btn.appendChild(dot);
+        btn.onclick = () => selectDateIndex(chip.idx);
+        scroller.appendChild(btn);
       });
+      updateTimelinePillStates(); // estados prontos/cacheados logo após o render
     }
+    // [3D-TIMELINE-DOM-END]
+    // =====================================================================
 
+    /**
+     * Seleção MANUAL de data (pílula do dashboard / slider):
+     * - cancela/invalida qualquer carregamento anterior;
+     * - carrega APENAS a data escolhida;
+     * - a timeline (currentIndex) só muda quando a cena está APLICADA.
+     */
     function selectDateIndex(idx) {
-      currentIndex = idx;
-      document.getElementById('timeline-slider').value = idx;
-      
-      document.querySelectorAll('.date-pill').forEach(el => el.classList.remove('active'));
-      const activePill = document.getElementById(`date-pill-${idx}`);
-      if (activePill) activePill.classList.add('active');
-
-      updateZoneCards(currentIndex);
-      updateTextures();
+      const safe = Math.max(0, Math.min(Number(idx) || 0, dates.length - 1));
+      hideErrorToast();
+      loadScene(safe, currentLayer, { fromUser: true });
     }
 
+    /**
+     * Troca de layer (RGB/NDVI/EVI/NDRE/NDMI):
+     * - congela a timeline (não avança enquanto carrega);
+     * - carrega na data JÁ APLICADA;
+     * - retoma o Play somente após aplicar (se já estava ativo).
+     */
     function setSpectralLayer(layer) {
+      if (!layer || layer === currentLayer) return;
+      if (typeof player === 'undefined' || !player) player = createTimelineMachine(currentIndex, dates.length);
       currentLayer = layer;
       document.getElementById('layer-select').value = layer;
 
@@ -496,8 +1036,27 @@
         btn.classList.toggle('active', btn.getAttribute('onclick').includes(layer));
       });
 
-      loadAnalyticsData();
-      updateTextures();
+      if (layer === 'rgb') {
+        // RGB (true color) é VISUALIZAÇÃO: não há zonamento estatístico.
+        analyticsTimelineCache = [];
+        const d = (dates[player.appliedIndex] || '').split('-').reverse().join('/');
+        document.getElementById('kpi-mean-index').innerText = 'RGB — true color';
+        document.getElementById('kpi-mean-date').innerText = `Passagem ${d}`;
+        document.getElementById('zone-selected-date-badge').innerText = `Data: ${d}`;
+        ['zone-stress-pct', 'zone-mid-pct', 'zone-good-pct', 'zone-dense-pct']
+          .forEach(id => { document.getElementById(id).innerText = '—'; });
+        ['zone-stress-ha', 'zone-mid-ha', 'zone-good-ha', 'zone-dense-ha']
+          .forEach(id => { document.getElementById(id).innerText = '— ha'; });
+      } else {
+        loadAnalyticsData();
+      }
+      hideErrorToast();
+      // Congela avanço automático durante a troca (preserva intenção de Play).
+      playerBeginLayerSwap(player, layer);
+      loadScene(player.appliedIndex, layer, { layerSwap: true });
+      // PR #5e — PRELOAD DA NOVA LAYER em background: a cena atual da nova
+      // layer é carregada primeiro (acima); as demais entram na fila depois.
+      schedulePreloadForTimeline(layer);
     }
 
     function downloadPDFReport() {
@@ -578,12 +1137,171 @@
         }
       }
 
-      renderDatePills();
+      // PR #4 — geometria do terreno passa a refletir o contorno real do talhão
+      // (KML) ou a forma proporcional à área; nunca mais um retângulo genérico
+      // com a textura "esticada" sem referência espacial.
+      try {
+        applyTalhaoGeometry(
+          activeFarm.kml_coordinates,
+          activeFarm.latitude,
+          activeFarm.longitude,
+          activeFarm.total_area
+        );
+      } catch (e) {
+        console.error('geometria: falha ao aplicar contorno do talhão', e);
+      }
+
+      // PR #5e (correção): a timeline só é montada DEPOIS da resposta da API
+      // — nenhuma pílula fixa é renderizada antes. `refreshRealTimeline`
+      // reconstrói as datas (STAC real OU demo rotulada) e só então carrega
+      // a cena inicial e inicia o preload.
+      renderPeriodPills();
       loadAnalyticsData();
-      updateTextures();
       loadLiveWeather();
-      loadHeightmap(); // Copernicus DEM GL-30 (fire-and-forget; fallback p/ NDVI)
+      loadHeightmap(); // Copernicus DEM GL-30 (fire-and-forget; falha → aproximado)
+      await refreshRealTimeline(currentPeriod); // STAC real como fonte principal
     }
+
+    /**
+     * PR #4b — timeline temporal com passagens REAIS do Sentinel-2 (CDSE).
+     * Sem CDSE configurado / sem cenas, mantém a grade oficial (fallback
+     * explícito) e comunica via console — nunca inventa data real.
+     */
+    // =====================================================================
+    // [3D-CALENDAR-WIRING-START] — timeline SEMPRE reconstruída da API.
+    // Nenhuma pílula fixa é reaproveitada; datas reais = STAC, único caminho.
+    // =====================================================================
+    /** Estado visível enquanto o catálogo é consultado (nunca demos na tela). */
+    function setTimelineBusy(label) {
+      const meta = document.getElementById('timeline-meta');
+      if (meta) meta.innerText = label;
+      const pills = document.getElementById('dashboard-dates-bar');
+      if (pills) pills.innerHTML = '';
+      const scroller = document.getElementById('scene-timeline');
+      if (scroller) scroller.innerHTML = '';
+      const latest = document.getElementById('btn-latest');
+      if (latest) latest.disabled = true;
+      const slider = document.getElementById('timeline-slider');
+      if (slider) slider.disabled = true;
+      const dateLabel = document.getElementById('date-label');
+      if (dateLabel) dateLabel.innerText = '—';
+    }
+
+    /** Habilita/desabilita os controles de timeline conforme o calendário. */
+    function setTimelineControls(enabled, maxIndex) {
+      const slider = document.getElementById('timeline-slider');
+      if (slider) {
+        slider.max = String(Math.max(0, Number(maxIndex) || 0));
+        slider.disabled = !enabled;
+      }
+      const latest = document.getElementById('btn-latest');
+      if (latest) latest.disabled = !enabled;
+    }
+
+    /**
+     * PR #5e (correção) — calendário REAL como ÚNICA fonte da timeline.
+     * `period` ∈ {30,60,90,180,365} usa janela de dias; 'custom' usa
+     * start/end explícitos. A consulta é SÓ metadados STAC (o processamento
+     * da cena continua sob demanda, no clique/Play).
+     * SEMPRE: limpa a timeline → "Buscando datas Sentinel-2…" → API →
+     * STAC real (reconstrói pílulas + seleciona mais recente + preload) OU
+     * fallback explícito "Calendário demonstrativo" com o motivo real.
+     */
+    async function refreshRealTimeline(period = 60, customStart = null, customEnd = null) {
+      setTimelineBusy('Buscando datas Sentinel-2…');
+      let data = null;
+      let httpStatus = null;
+      let networkError = null;
+      try {
+        const params = new URLSearchParams();
+        if (customStart && customEnd && period === 'custom') {
+          params.set('start', customStart);
+          params.set('end', customEnd);
+          params.set('limit', '60');
+        } else {
+          params.set('period_days', String(Math.min(730, Math.max(30, Number(period) || 60))));
+          params.set('limit', String(calendarLimitForPeriod(Number(period) || 60)));
+        }
+        const res = await fetch(
+          `${API_URL}/talhao/${activeFarm.id || 1}/dates?${params.toString()}`,
+          { headers: { ...authHeaders() } }
+        );
+        if (res.status === 401) { AuthService.logout(); httpStatus = 401; }
+        else if (!res.ok) { httpStatus = res.status; }
+        else data = await res.json();
+      } catch (err) {
+        networkError = err;
+      }
+
+      const decision = classifyCalendarResponse(data, DEMO_DATES, httpStatus, networkError);
+      const appliedDate = (player && player.appliedMeta && player.appliedMeta.date) || null;
+      dates = decision.dates;
+      calendarMeta = {
+        source: decision.source,
+        source_label: decision.source_label,
+        is_real: decision.kind === 'real',
+        status: decision.status,
+        fallback_reason: decision.fallback_reason,
+        latest_date: decision.latest,
+        count: decision.count || dates.length,
+        // Metadados por cena (nuvens/produto) p/ tooltip dos botões (PR #5f).
+        calendar: (data && Array.isArray(data.calendar)) ? data.calendar : [],
+      };
+      // Chaves antigas saem da timeline (nunca reaproveitar cache de demo).
+      preloadStates.clear();
+      preloadQueue.length = 0;
+      preloadQueuedKeys.clear();
+      // PR #5f: início explícito pela cena MAIS RECENTE via latest_date (ou,
+      // no contrato da API, dates[0] — DESC). Nunca depende da ordem visual.
+      const startIdx = latestSceneIndex(dates, decision.latest);
+      player = createTimelineMachine(startIdx, dates.length);
+      setTimelineControls(dates.length > 0, dates.length - 1);
+      renderDatePills();          // reconstrói do zero (nunca pílulas antigas)
+      renderTimelineMeta();
+
+      if (decision.kind === 'real') {
+        console.info(`[3D-DATES] source=${decision.source} count=${decision.count} latest=${decision.latest}`);
+        // Preserva a data APLICADA se ainda existir na janela; senão a mais
+        // recente (índice 0). Só DEPOIS disso a cena carrega e o preload entra.
+        const keepIdx = appliedDate ? dates.indexOf(appliedDate) : -1;
+        selectDateIndex(keepIdx >= 0 ? keepIdx : startIdx);
+      } else {
+        console.warn(`[3D-DATES] source=${decision.source} reason=${decision.fallback_reason}`);
+        // Fallback explícito: datas de demonstração ROTULADAS e a cena demo
+        // carregada (procedural) — nunca apresentadas como Sentinel real.
+        updateTimelineUI(0);
+        updateTextures();
+      }
+    }
+
+    /** Limite de cenas por janela (calendário ainda leve, metadados apenas). */
+    function calendarLimitForPeriod(periodDays) {
+      if (periodDays >= 365) return 80;
+      if (periodDays >= 180) return 60;
+      if (periodDays >= 90) return 40;
+      if (periodDays >= 60) return 24;
+      return 12;
+    }
+
+    /** Rodapé: "Última aquisição disponível: …" (real) ou rótulo demo + motivo. */
+    function renderTimelineMeta() {
+      const el = document.getElementById('timeline-meta');
+      if (!el) return;
+      if (calendarMeta && calendarMeta.is_real) {
+        const latest = calendarMeta.latest_date || dates[0] || '';
+        el.innerText = latest
+          ? `Última aquisição disponível: ${formatSceneDate(latest)} • ${calendarMeta.count || dates.length} cenas`
+          : `${dates.length} cenas reais`;
+      } else if (calendarMeta && (calendarMeta.source === CALENDAR_FALLBACK_SOURCE || calendarMeta.source === 'config')) {
+        el.innerText =
+          `${calendarMeta.source_label || 'Calendário demonstrativo'} • ${dates.length} datas • ` +
+          `${calendarMeta.fallback_reason || 'dados reais indisponíveis'}`;
+      } else {
+        el.innerText = '';
+      }
+    }
+    // [3D-CALENDAR-WIRING-END]
+    // =====================================================================
 
     async function loadAnalyticsData() {
       try {
@@ -791,6 +1509,441 @@
       }
     }
 
+    // [3D-TERRAIN-HELPERS-START] — TERRAIN 3D REAL (DEM) — helpers PUROS.
+    // O DEM (Copernicus COPERNICUS_30/90) é normalizado 0–1 pelo backend;
+    // aqui ele desloca os VÉRTICES da malha (eixo local Z → mundo Y) e
+    // recalcula as normais — o terreno é GEOMETRIA, não truque de câmera.
+    // PR #5g: escala HORIZONTAL × VERTICAL explícita, altitude RELATIVA,
+    // lateral (skirt) + base, hillshade multiplicativo e estatísticas [3D-DEM].
+    // =====================================================================
+    const DEM_EXAGGERATION_STEPS = [1, 2, 3, 5];  // 5× = opção visual extra
+    const DEM_EXAGGERATION_DEFAULT = 2;           // default NÃO muda (2×)
+
+    /** Configuração da câmera 3D (oblíqua aérea, órbita/zoom/limites). */
+    // «var» para ficar visível ao harness Node (VM); no navegador continua local.
+    var CAMERA_PRESET = {
+      fov: 45,
+      // PR #5f/#5g: a posição INICIAL vem do enquadramento (fitCameraToTerrain);
+      // estes valores são o fallback (talhão 50×50) e as regras geométricas.
+      elevationDeg: 42,                 // 35–50° (playtest aprovado): SUPERFÍCIE + LATERAL
+      azimuthDeg: 35,                   // diagonal: largura + profundidade visíveis
+      fitMargin: 1.3,                   // folga p/ talhão inteiro no quadro
+      position: [26, 58, 66],
+      target: [0, 0, 0],
+      minDistance: 10,
+      maxDistance: 400,
+      minPolarAngle: Math.PI * 0.05,    // permite quase top-down
+      maxPolarAngle: Math.PI * 0.44,    // nunca abaixo do horizonte (~79° máx)
+      rotate: true, zoom: true, pan: true,
+      rotateSpeed: 0.85, zoomSpeed: 1.0, panSpeed: 0.75,
+    };
+    /**
+     * Regras de ESCALA e VOLUME (PR #5g) — sem magic numbers:
+     *  - `planeUnits` (50) = lado maior da malha em unidades de mundo;
+     *  - `worldUnitsPerMeterHorizontal` = planeUnits / spanMetros (dinâmico);
+     *  - em 1× o eixo VERTICAL usa a MESMA conversão (proporção topográfica
+     *    real: 23 m de relevo em 900 m de fazenda ≈ 2,6% da extensão);
+     *  - exagero multiplica SOMENTE a diferença relativa de altitude;
+     *  - base (espessura do bloco) = `baseDepthRatio` × extensão (mínimo fixo).
+     * Valores REAIS exibidos (592–615 m, alívio ~23 m) NUNCA são alterados.
+     */
+    var TERRAIN_SCALE = {
+      planeUnits: 50,
+      exagOptions: DEM_EXAGGERATION_STEPS,
+      defaultExag: DEM_EXAGGERATION_DEFAULT,
+      baseDepthRatio: 0.08,             // espessura da base = 8% da extensão
+      baseDepthMin: 1.0,                // piso em unidades de mundo
+      hillshadeStrength: 1.0,           // 0 = hillshade desligado
+    };
+    /** Regras do terreno expostas para teste (const não viram global em VM). */
+    var DEM_RULES = {
+      steps: DEM_EXAGGERATION_STEPS,
+      default: DEM_EXAGGERATION_DEFAULT,
+      camera: CAMERA_PRESET,
+      scale: TERRAIN_SCALE,
+    };
+
+    /** Unidades de mundo por METRO HORIZONTAL (plano de `planeUnits` = span). */
+    function terrainWorldUnitsPerMeter(spanMeters, planeUnits = 50) {
+      const span = Math.max(Number(spanMeters) || 1, 1);
+      return planeUnits / span;
+    }
+
+    /**
+     * ALTURA RELATIVA em unidades de mundo: `sample01` ∈ [0,1] é a altura
+     * normalizada do DEM (0 = elevação mínima, 1 = máxima) — a base fica em 0,
+     * NUNCA em Y=592. `reliefWorld` = alívio em unidades (1×); `exag` ∈ 1|2|3|5
+     * multiplica SOMENTE a diferença relativa. Finito p/ qualquer entrada.
+     */
+    function terrainRelativeY(sample01, reliefWorld, exag) {
+      const s = Math.max(0, Math.min(1, Number(sample01) || 0));
+      const relief = Math.max(Number(reliefWorld) || 0, 0);
+      const e = Math.max(1, Number(exag) || 1);
+      return s * relief * e;
+    }
+
+    /** Amplitude VERTICAL esperada em unidades de mundo (metas por exagero). */
+    function terrainAmplitudeWorld(reliefMeters, spanMeters, planeUnits = 50, exag = 1) {
+      const relief = Math.max(Number(reliefMeters) || 0, 0);
+      return terrainRelativeY(1, demReliefWorldUnits(relief, spanMeters, planeUnits), exag);
+    }
+
+    /** Espessura da base (proporcional à cena; nunca um valor absurdo). */
+    function terrainBaseDepthWorld(extent) {
+      const e = Math.max(Number(extent) || 1, 1);
+      return Math.max(e * TERRAIN_SCALE.baseDepthRatio, TERRAIN_SCALE.baseDepthMin);
+    }
+
+    /**
+     * Converte as posições LOCAIS da PlaneGeometry (x, y, z=altura) para o
+     * MUNDO (x, y=altura, z=-y) — mesma rotação aplicada aos meshes.
+     * Retorna Float32Array novo (nunca muta a malha).
+     */
+    function terrainWorldPositionsFromLocal(arr) {
+      const n = Math.floor((arr ? arr.length : 0) / 3);
+      const out = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) {
+        const j = i * 3;
+        out[j] = arr[j];        // x
+        out[j + 1] = arr[j + 2]; // y mundo = ALTURA (relativa, 0 = mín)
+        out[j + 2] = -arr[j + 1]; // z mundo
+      }
+      return out;
+    }
+
+    /** Estatísticas XY Z do terreno já em coordenadas de MUNDO. */
+    function terrainWorldStats(world) {
+      if (!world || world.length < 3) return null;
+      let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+      let minY = Infinity, maxY = -Infinity;
+      for (let i = 0; i < world.length; i += 3) {
+        const x = world[i], y = world[i + 1], z = world[i + 2];
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+      }
+      return {
+        minX, maxX, minZ, maxZ, minY, maxY,
+        extent: Math.max(maxX - minX, maxZ - minZ, 1e-9),
+        amplitudeY: maxY - minY,
+      };
+    }
+
+    /**
+     * LATERAL DO BLOCO (skirt) + BASE inferior — geometria PURA:
+     * para cada vértice da borda da malha é duplicado um vértice em `baseY`,
+     * formando paredes verticais que fecham o contorno; a base é fechada com
+     * 2 triângulos. Tudo em coordenadas de MUNDO (x, y=altura, z).
+     * Retorna { positions, indices, vertexCount, triangleCount } p/ BufferGeometry.
+     */
+    function buildTerrainSkirtGeometryData(world, cols, rows, baseY) {
+      const positions = [];
+      const indices = [];
+      const push = (x, y, z) => {
+        positions.push(x, y, z);
+        return positions.length / 3 - 1;
+      };
+      const idx = (ix, iy) => (iy * cols + ix) * 3;
+      // Arestas: bottom (iy=0), top (iy=rows-1), left (ix=0, 1..rows-2), right
+      const edges = [];
+      for (let ix = 0; ix < cols - 1; ix++) {        // borda inferior (v=0)
+        edges.push([idx(ix, 0), idx(ix + 1, 0)]);
+      }
+      for (let ix = 0; ix < cols - 1; ix++) {        // borda superior (v=1)
+        edges.push([idx(ix + 1, rows - 1), idx(ix, rows - 1)]);
+      }
+      for (let iy = 0; iy < rows - 1; iy++) {        // esquerda (u=0)
+        edges.push([idx(0, iy + 1), idx(0, iy)]);
+      }
+      for (let iy = 0; iy < rows - 1; iy++) {        // direita (u=1)
+        edges.push([idx(cols - 1, iy), idx(cols - 1, iy + 1)]);
+      }
+      edges.forEach(([a, b]) => {
+        const ax = world[a], ay = world[a + 1], az = world[a + 2];
+        const bx = world[b], by = world[b + 1], bz = world[b + 2];
+        const t0 = push(ax, ay, az);                 // topo (acompanha o DEM)
+        const b0 = push(ax, baseY, az);              // base
+        const t1 = push(bx, by, bz);
+        const b1 = push(bx, baseY, bz);
+        indices.push(t0, b0, b1);                    // face 1 (parede)
+        indices.push(t0, b1, t1);                    // face 2 (parede)
+      });
+      // Base inferior (2 triângulos ligando os 4 cantos em baseY)
+      const s = terrainWorldStats(world);
+      const c0 = push(s.minX, baseY, s.minZ);
+      const c1 = push(s.maxX, baseY, s.minZ);
+      const c2 = push(s.maxX, baseY, s.maxZ);
+      const c3 = push(s.minX, baseY, s.maxZ);
+      indices.push(c0, c2, c1, c0, c3, c2);
+      return {
+        positions: new Float32Array(positions),
+        indices: new Uint32Array(indices),
+        vertexCount: positions.length / 3,
+        triangleCount: indices.length / 3,
+      };
+    }
+
+    /** Ponto dentro de polígono 2D (ray casting) — máscara do contorno. */
+    function pointInPolygon(x, y, poly) {
+      if (!poly || poly.length < 3) return false;
+      let inside = false;
+      for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+        const xi = poly[i][0], yi = poly[i][1];
+        const xj = poly[j][0], yj = poly[j][1];
+        const intersect = ((yi > y) !== (yj > y)) &&
+          (x < ((xj - xi) * (y - yi)) / (yj - yi) + xi);
+        if (intersect) inside = !inside;
+      }
+      return inside;
+    }
+
+    /**
+     * Remove da malha os triângulos FORA do polígono real do talhão (KML):
+     * a superfície passa a ser o CONTORNO do talhão (grade 97×97 preservada,
+     * textura/UV intactos) — nunca um retângulo com máscara pintada.
+     */
+    function maskPlaneGeometryToPolygon(geometry, outlineLocal) {
+      const idx = geometry && geometry.index;
+      const pos = geometry && geometry.attributes && geometry.attributes.position;
+      if (!idx || !pos || !outlineLocal || outlineLocal.length < 3) return false;
+      const src = idx.array;
+      const arr = pos.array;
+      const keep = [];
+      for (let t = 0; t < src.length; t += 3) {
+        const a = src[t] * 3, b = src[t + 1] * 3, c = src[t + 2] * 3;
+        const cx = (arr[a] + arr[b] + arr[c]) / 3;
+        const cy = (arr[a + 1] + arr[b + 1] + arr[c + 1]) / 3;
+        if (pointInPolygon(cx, cy, outlineLocal)) {
+          keep.push(src[t], src[t + 1], src[t + 2]);
+        }
+      }
+      geometry.setIndex(keep);
+      return true;
+    }
+
+    /**
+     * Amostra bilinear a altura do RELEVO já aplicado (coordenadas de mundo)
+     * em qualquer (x, z) — usada para as paredes acompanharem a topografia.
+     */
+    function terrainGridSampleWorld(world, cols, rows, x, z, stats) {
+      if (!world || !cols || !rows || !stats) return 0;
+      const u = Math.max(0, Math.min(1, (Number(x) - stats.minX) / Math.max(stats.maxX - stats.minX, 1e-9)));
+      const v = Math.max(0, Math.min(1, (Number(z) - stats.minZ) / Math.max(stats.maxZ - stats.minZ, 1e-9)));
+      const gx = u * (cols - 1), gy = v * (rows - 1);
+      const x0 = Math.floor(gx), y0 = Math.floor(gy);
+      const x1 = Math.min(x0 + 1, cols - 1), y1 = Math.min(y0 + 1, rows - 1);
+      const fx = gx - x0, fy = gy - y0;
+      const at = (cx, cy) => world[(cy * cols + cx) * 3 + 1];
+      const top = at(x0, y0) * (1 - fx) + at(x1, y0) * fx;
+      const bottom = at(x0, y1) * (1 - fx) + at(x1, y1) * fx;
+      return top * (1 - fy) + bottom * fy;
+    }
+
+    /**
+     * PAREDES DO CONTORNO REAL (PR #5g): para CADA aresta do polígono do
+     * talhão (coordenadas de MUNDO [x,z]), um quadrilátero vertical do topo
+     * (altura do DEM na aresta) até `baseY`. O bloco é o talhão, não a caixa.
+     */
+    function buildPolygonSkirtGeometryData(outlineWorld, heightFn, baseY) {
+      const positions = [];
+      const indices = [];
+      const push = (x, y, z) => {
+        positions.push(x, y, z);
+        return positions.length / 3 - 1;
+      };
+      for (let i = 0; i < outlineWorld.length; i++) {
+        const p0 = outlineWorld[i];
+        const p1 = outlineWorld[(i + 1) % outlineWorld.length];
+        const x0 = p0[0], z0 = p0[1];
+        const x1 = p1[0], z1 = p1[1];
+        const y0 = heightFn(x0, z0);
+        const y1 = heightFn(x1, z1);
+        const t0 = push(x0, y0, z0);
+        const b0 = push(x0, baseY, z0);
+        const t1 = push(x1, y1, z1);
+        const b1 = push(x1, baseY, z1);
+        indices.push(t0, b0, b1, t0, b1, t1);
+      }
+      return {
+        positions: new Float32Array(positions),
+        indices: new Uint32Array(indices),
+        vertexCount: positions.length / 3,
+        triangleCount: indices.length / 3,
+      };
+    }
+
+    /**
+     * HILLSHADE multiplicativo subtil por vértice (PR #5g): calcula a normal
+     * do relevo pelo gradiente e aplica lambert contra a luz direcional.
+     * Plano (normal ↑) → fator ≈ 1.0 (cores Sentinel PRESERVADAS); encostas
+     * voltadas à luz até ~1.18, opostas até ~0.82. O valor é usado como
+     * `vertexColors` — o material multiplica a textura por este fator.
+     */
+    function terrainHillshadeColors(world, cols, rows, strength = TERRAIN_SCALE.hillshadeStrength) {
+      const n = cols * rows;
+      const colors = new Float32Array(n * 3);
+      const L = [-0.55, 1.0, 0.6];                    // mesma direção da luz diag.
+      const ll = Math.hypot(L[0], L[1], L[2]) || 1;
+      const Lx = L[0] / ll, Ly = L[1] / ll, Lz = L[2] / ll;
+      const flatLambert = Ly;                         // normal (0,1,0) · L
+      const k = Math.max(0, Number(strength) || 0);
+      for (let iy = 0; iy < rows; iy++) {
+        for (let ix = 0; ix < cols; ix++) {
+          const i = (iy * cols + ix) * 3;
+          const xm = Math.max(0, ix - 1), xp = Math.min(cols - 1, ix + 1);
+          const ym = Math.max(0, iy - 1), yp = Math.min(rows - 1, iy + 1);
+          const dhdx = (world[(iy * cols + xp) * 3 + 1] - world[(iy * cols + xm) * 3 + 1])
+            / Math.max(xp - xm, 1);
+          const dhdz = (world[(yp * cols + ix) * 3 + 1] - world[(ym * cols + ix) * 3 + 1])
+            / Math.max(yp - ym, 1);
+          let nx = -dhdx, ny = 1, nz = -dhdz;
+          const nl = Math.hypot(nx, ny, nz) || 1;
+          nx /= nl; ny /= nl; nz /= nl;
+          const lam = Math.max(0, nx * Lx + ny * Ly + nz * Lz);
+          const rel = flatLambert > 1e-6 ? lam / flatLambert : 1;
+          const shade = Math.max(0.8, Math.min(1.2, 1 + (rel - 1) * k));
+          colors[i] = shade;
+          colors[i + 1] = shade;
+          colors[i + 2] = shade;
+        }
+      }
+      return colors;
+    }
+
+    /**
+     * ENQUADRAMENTO automático (PR #5f) — matemática PURA testável:
+     * dado o tamanho máximo do talhão (`extent`, unidades do mundo) e o
+     * aspect do viewport, devolve posição/target/distância para uma vista
+     * oblíqua ELEVADA (35–55°) com o talhão inteiro no quadro.
+     *  - target = centro do terreno;
+     *  - distância cresce com o extent (pequeno E grande enquadram);
+     *  - nunca abaixo do plano (elevação > 0 e polar ≤ 0.44π).
+     */
+    function computeCameraFit(extent, aspect, options = {}) {
+      const fovDeg = Number(options.fov) || CAMERA_PRESET.fov;
+      const elevDeg = Math.max(35, Math.min(55, Number(options.elevationDeg) || CAMERA_PRESET.elevationDeg));
+      const azimRaw = Number(options.azimuthDeg);
+      const azimDeg = Number.isFinite(azimRaw) ? azimRaw : CAMERA_PRESET.azimuthDeg;
+      const margin = Number(options.fitMargin) > 1 ? Number(options.fitMargin) : CAMERA_PRESET.fitMargin;
+      const e = Math.max(Number(extent) || 50, 1);
+      const a = Math.max(Number(aspect) || 1, 0.2);
+      const vHalf = (fovDeg * Math.PI) / 360;                    // metade do fov vertical
+      const hHalf = Math.atan(Math.tan(vHalf) * a);              // metade do fov horizontal
+      const halfFov = Math.min(vHalf, hHalf);
+      // Distância p/ o raio `e/2` caber no fov mais estreito + folga.
+      const distance = ((e / 2) * margin) / Math.tan(halfFov);
+      const elev = (elevDeg * Math.PI) / 180;
+      const azim = (Number.isFinite(azimDeg) ? azimDeg : 0) * (Math.PI / 180);
+      const cx = Math.cos(azim) * Math.cos(elev);
+      const cy = Math.sin(elev);
+      const cz = Math.sin(azim) * Math.cos(elev);
+      return {
+        distance,
+        target: [0, 0, 0],
+        position: [cx * distance, cy * distance, cz * distance],
+        elevationDeg: elevDeg,
+        azimuthDeg: Number.isFinite(azimDeg) ? azimDeg : 0,
+        // Limites de zoom proporcionais à fazenda (não fixos).
+        minDistance: Math.max(e * 0.18, 4),
+        maxDistance: Math.max(e * 6, distance * 4),
+      };
+    }
+
+    /**
+     * Converte o alívio real (metros) para unidades do mundo 3D:
+     * o plano tem `planeUnits` unidades representando `spanMeters` no campo.
+     * Ex.: talhão de 900 m → 1 unidade ≈ 18 m; alívio 45 m ≈ 2,5 unidades.
+     * NUNCA inventa elevação: se o DEM falhou, o chão fica plano e o rótulo
+     * diz "elevação aproximada".
+     */
+    function demReliefWorldUnits(reliefMeters, spanMeters, planeUnits = 50) {
+      const span = Math.max(Number(spanMeters) || 1, 1);
+      const relief = Math.max(Number(reliefMeters) || 0, 0);
+      return relief / (span / planeUnits);
+    }
+
+    /** Amostra bilinear do grid do heightmap (0–255 → 0–1) em (u,v) ∈ [0,1]. */
+    function demGridSample(grid, cols, u, v) {
+      if (!grid || cols < 2) return 0;
+      const rows = Math.floor(grid.length / cols);
+      const x = Math.max(0, Math.min(1, Number(u) || 0)) * (cols - 1);
+      const y = Math.max(0, Math.min(1, Number(v) || 0)) * (rows - 1);
+      const x0 = Math.floor(x), y0 = Math.floor(y);
+      const x1 = Math.min(x0 + 1, cols - 1), y1 = Math.min(y0 + 1, rows - 1);
+      const fx = x - x0, fy = y - y0;
+      const g = (cx, cy) => grid[cy * cols + cx] === undefined ? 0 : grid[cy * cols + cx];
+      const top = g(x0, y0) * (1 - fx) + g(x1, y0) * fx;
+      const bottom = g(x0, y1) * (1 - fx) + g(x1, y1) * fx;
+      return (top * (1 - fy) + bottom * fy) / 255.0;
+    }
+
+    /**
+     * Aplica o DEM à malha: `sampleFn(u, v)` → 0–1 (altura normalizada do
+     * heightmap, 0 = elevação MÍNIMA), `reliefWorld` = alívio em unidades de
+     * mundo na escala 1×, `exaggeration` = 1|2|3|5 (APENAS visual — as
+     * elevações reais em metros continuam as do DEM original).
+     * PR #5g: usa ALTURA RELATIVA (`terrainRelativeY`, mín = 0) e grava em
+     * `geometry.userData` as coordenadas de MUNDO, estatísticas (min/max Y,
+     * amplitude, extent), dados da lateral/base (skirt) e cores de hillshade.
+     * Recalcula normais para o relevo ganhar sombreamento real no render.
+     */
+    function applyDemToGeometry(geometry, sampleFn, reliefWorld, exaggeration) {
+      const pos = geometry.attributes.position;
+      if (!pos || !pos.array) return false;
+      const segments = (geometry.parameters && geometry.parameters.widthSegments) || 64;
+      const cols = segments + 1;
+      const rows = (geometry.parameters && geometry.parameters.heightSegments || segments) + 1;
+      const arr = pos.array;
+      const exag = Math.max(1, Number(exaggeration) || 1);
+      // 1) Desloca a ALTURA RELATIVA (0 = elevação mínima) — eixo local Z.
+      for (let iy = 0; iy < rows; iy++) {
+        const v = iy / (rows - 1);
+        for (let ix = 0; ix < cols; ix++) {
+          const u = ix / (cols - 1);
+          const i = (iy * cols + ix) * 3;
+          arr[i + 2] = terrainRelativeY(sampleFn(u, v), reliefWorld, exag);
+        }
+      }
+      pos.needsUpdate = true;
+      if (typeof geometry.computeVertexNormals === 'function') geometry.computeVertexNormals();
+      // 2) Estatísticas/pipeline do VOLUME em coordenadas de MUNDO.
+      const world = terrainWorldPositionsFromLocal(arr);
+      const stats = terrainWorldStats(world);
+      geometry.userData = geometry.userData || {};
+      geometry.userData.terrain = {
+        worldPositions: world,
+        worldStats: stats,
+        cols, rows,
+        reliefWorld, exag, baseY: stats ? stats.minY - terrainBaseDepthWorld(stats.extent) : 0,
+        hillshade: null,
+      };
+      return true;
+    }
+
+    /** Zera o relevo (DEM indisponível) e recalcula normais — chão plano. */
+    function flattenDemGeometry(geometry) {
+      const pos = geometry.attributes.position;
+      if (!pos || !pos.array) return false;
+      const arr = pos.array;
+      for (let i = 2; i < arr.length; i += 3) arr[i] = 0;
+      pos.needsUpdate = true;
+      if (typeof geometry.computeVertexNormals === 'function') geometry.computeVertexNormals();
+      // PR #5g: mesmo SEM DEM o volume existe (base) — estatísticas válidas.
+      const world = terrainWorldPositionsFromLocal(arr);
+      const stats = terrainWorldStats(world);
+      geometry.userData = geometry.userData || {};
+      geometry.userData.terrain = {
+        worldPositions: world,
+        worldStats: stats,
+        cols: (geometry.parameters && geometry.parameters.widthSegments || 64) + 1,
+        rows: (geometry.parameters && geometry.parameters.heightSegments || 64) + 1,
+        reliefWorld: 0, exag: 1,
+        baseY: stats ? stats.minY - terrainBaseDepthWorld(stats.extent) : 0,
+        hillshade: null,
+      };
+      return true;
+    }
+    // [3D-TERRAIN-HELPERS-END]
     // 3. Three.js - Simulador 3D Split-View
     const container = document.getElementById('canvas-container');
     const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -805,28 +1958,104 @@
     const sceneSim = new THREE.Scene();
     sceneSim.background = new THREE.Color(0x0d1117);
 
-    const camera = new THREE.PerspectiveCamera(45, (window.innerWidth / 2) / (window.innerHeight - 56), 0.1, 1000);
-    camera.position.set(0, -60, 52);
+    // PR #5e — câmera com PERSPECTIVA REAL + OrbitControls melhorado:
+    // visão oblíqua aérea inicial, órbita/rotação, zoom com limite e
+    // inclinação limitada (nunca abaixo do horizonte). O terreno agora fica
+    // no plano XZ (Y para cima) com deslocamento do DEM em Y — não é mais
+    // um "pôster" vertical inclinado pela câmera. A configuração é a mesma
+    // constante testável de [3D-TERRAIN-HELPERS] (CAMERA_PRESET).
+    const CAMERA_SETTINGS = CAMERA_PRESET;
+    const camera = new THREE.PerspectiveCamera(CAMERA_SETTINGS.fov, (window.innerWidth / 2) / (window.innerHeight - 56), 0.1, 1000);
+    camera.position.set(...CAMERA_SETTINGS.position);
     const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.target.set(...CAMERA_SETTINGS.target);
     controls.enableDamping = true;
+    controls.enableRotate = CAMERA_SETTINGS.rotate;
+    controls.enableZoom = CAMERA_SETTINGS.zoom;
+    controls.enablePan = CAMERA_SETTINGS.pan;
+    controls.minDistance = CAMERA_SETTINGS.minDistance;
+    controls.maxDistance = CAMERA_SETTINGS.maxDistance;
+    controls.minPolarAngle = CAMERA_SETTINGS.minPolarAngle;
+    controls.maxPolarAngle = CAMERA_SETTINGS.maxPolarAngle;
+    controls.rotateSpeed = CAMERA_SETTINGS.rotateSpeed;
+    controls.zoomSpeed = CAMERA_SETTINGS.zoomSpeed;
+    controls.panSpeed = CAMERA_SETTINGS.panSpeed;
 
+    // PR #5f/#5g — iluminação que REVELA o relevo: ambiente suave + hemisférica
+    // (céu/chão) + direcional LATERAL/diagonal (sombra nas encostas), sem
+    // escurecer a textura Sentinel. Sombras SUAVES (PCFSoft, 1 luz, 1024² ≈
+    // 4 MB/float) — custo pequeno; se o device for fraco, desligue em
+    // ?debug3d=1 (ver helpers de debug). Grid discreto ABAIXO do bloco.
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     [sceneReal, sceneSim].forEach(sc => {
-      sc.add(new THREE.AmbientLight(0xffffff, 0.8));
-      const dl = new THREE.DirectionalLight(0xffffff, 0.9);
-      dl.position.set(40, 50, 60);
+      sc.add(new THREE.AmbientLight(0xffffff, 0.28));                    // base suave
+      const hemi = new THREE.HemisphereLight(0xcfe3ff, 0x1b2430, 0.55);  // céu × solo
+      sc.add(hemi);
+      const dl = new THREE.DirectionalLight(0xffffff, 0.95);
+      dl.position.set(-0.55, 1.0, 0.6).normalize().multiplyScalar(90);   // diagonal: revela encosta
+      // Sombra suave do bloco (orçamento: 1 casca 1024², nada de PCF grande).
+      dl.castShadow = true;
+      dl.shadow.mapSize.set(1024, 1024);
+      dl.shadow.camera.left = -40; dl.shadow.camera.right = 40;
+      dl.shadow.camera.top = 40; dl.shadow.camera.bottom = -40;
+      dl.shadow.camera.near = 10; dl.shadow.camera.far = 220;
+      dl.shadow.bias = -0.0004;
+      dl.shadow.radius = 3;                     // PCFSoft: bordas suaves
       sc.add(dl);
-      const grid = new THREE.GridHelper(80, 20, 0x1f6feb, 0x161b22);
-      grid.rotation.x = Math.PI / 2;
-      grid.position.z = -0.15;
-      sc.add(grid);
+      const fill = new THREE.DirectionalLight(0x9cc7ff, 0.28);
+      fill.position.set(70, 45, -60);
+      sc.add(fill);
     });
+    // Grade discreta: acompanha o tamanho do terreno e fica ABAIXO da BASE
+    // do bloco topográfico (PR #5g) — nunca atravessa a superfície.
+    // =====================================================================
+    // CORREÇÃO P0 (PR #5g): `terrainGeometry` precisa estar DECLARADA antes de
+    // QUALQUER chamada de bootstrap. `updateGroundGrid(70)` roda durante a
+    // avaliação do script inline (top-level) e lê `terrainGeometry` — se a
+    // binding ainda estiver em Temporal Dead Zone, o acesso lança
+    // `ReferenceError: Cannot access 'terrainGeometry' before initialization`
+    // e aborta TODO o JavaScript da página (Dashboard/clima/gráficos ficam em
+    // "Carregando…"). A declaração fica AQUI; o bloco de estado do DEM (PR #5e)
+    // apenas REUTILIZA esta variável (nenhuma dependência circular).
+    // =====================================================================
+    let terrainGeometry = null;               // geometria COMPARTILHADA real×sim
+    let groundGridReal = null, groundGridSim = null;
+    function updateGroundGrid(size) {
+      const s = Math.max(Number(size) || 60, 20);
+      const t = terrainGeometry && terrainGeometry.userData && terrainGeometry.userData.terrain;
+      const baseY = (t && t.worldStats) ? t.baseY : -0.06;
+      const gap = Math.max(0.15, Math.abs(baseY) * 0.02); // folga: grade × base
+      const mk = () => {
+        const g = new THREE.GridHelper(s, 20, 0x2b3a52, 0x1b2436);
+        g.position.y = baseY - gap;
+        const mats = Array.isArray(g.material) ? g.material : [g.material];
+        mats.forEach(m => { m.transparent = true; m.opacity = 0.16; m.depthWrite = false; });
+        return g;
+      };
+      if (groundGridReal) { sceneReal.remove(groundGridReal); groundGridReal.geometry.dispose(); }
+      if (groundGridSim) { sceneSim.remove(groundGridSim); groundGridSim.geometry.dispose(); }
+      groundGridReal = mk();
+      groundGridSim = mk();
+      sceneReal.add(groundGridReal);
+      sceneSim.add(groundGridSim);
+    }
+    updateGroundGrid(70);
 
-    const geo = new THREE.PlaneGeometry(50, 50, 64, 64);
+    // Subdivisão do terreno: 96×96 (≈9 m por quad em talhão de ~900 m) —
+    // suficiente para o DEM COPERNICUS_30 (30 m) sem custo de VRAM relevante.
+    // PR #5g: grade 1:1 com o grid do heightmap (97×97) — interpolação suave
+    // bilinear, sem resolução artificial superestimada.
+    const TERRAIN_SEGMENTS = 96;
+    const DEM_GRID_SIZE = TERRAIN_SEGMENTS + 1;   // 97 → amostrado no DEM do backend
+    const geo = new THREE.PlaneGeometry(50, 50, TERRAIN_SEGMENTS, TERRAIN_SEGMENTS);
 
     // ---------- CACHE DE TEXTURAS (gerenciamento de VRAM) ----------
     // LRU com limite de texturas ativas: na evicção o .dispose() libera a
     // memória GPU, corrigindo o vazamento ao trocar datas/camadas.
-    const MAX_CACHED_TEXTURES = 8; // 8 texturas 256×256 RGBA ≈ 2,6 MB de VRAM
+    // PR #5e — 16 texturas em VRAM acompanham o cache de cenas (12) + DEM:
+    // o terreno troca TEXTURA entre datas; o DEM é carregado 1× e reutilizado.
+    const MAX_CACHED_TEXTURES = 16;
     const textureLoader = new THREE.TextureLoader();
     textureLoader.setCrossOrigin('anonymous');
     const textureCache = new Map();     // key -> THREE.Texture (ordem de inserção = LRU)
@@ -848,7 +2077,7 @@
       }
     }
 
-    function getCachedTexture(key, url) {
+    function getCachedTexture(key, url, signal = undefined) {
       const hit = textureCache.get(key);
       if (hit) {
         textureCache.delete(key);   // MRU: atualiza a ordem de acesso
@@ -883,6 +2112,10 @@
                 const oldestKey = textureCache.keys().next().value; // LRU
                 textureCache.get(oldestKey).dispose();              // libera VRAM
                 textureCache.delete(oldestKey);
+                // NUNCA deixe uma cena "pronta" apontar para textura disposta:
+                // a entrada correspondente sai do cache de cenas (será refeita
+                // sob demanda se o usuário voltar a ela).
+                if (typeof evictSceneEntriesForTexture === 'function') evictSceneEntriesForTexture(oldestKey);
               }
               resolve(tex);
             } catch (err) {
@@ -913,7 +2146,7 @@
         }
 
         const token = localStorage.getItem('orion_auth_token');
-        fetch(url, { headers: token ? { 'Authorization': `Bearer ${token}` } : {} })
+        fetch(url, { headers: token ? { 'Authorization': `Bearer ${token}` } : {}, signal })
           .then((res) => {
             if (res.status === 401) {
               AuthService.logout();
@@ -942,57 +2175,1121 @@
       return pending;
     }
 
-    const matReal = new THREE.MeshStandardMaterial({ roughness: 0.85, displacementScale: 4.0, side: THREE.DoubleSide });
+    const matReal = new THREE.MeshStandardMaterial({ roughness: 0.85, side: THREE.DoubleSide });
     const meshReal = new THREE.Mesh(geo, matReal);
+    // Terreno no plano XZ (Y para cima): o deslocamento do DEM (eixo Z local
+    // da PlaneGeometry) vira elevação real no eixo Y do mundo.
+    meshReal.rotation.x = -Math.PI / 2;
+    // PR #5g: sombras suaves caem e os "morros" se destacam uns dos outros.
+    meshReal.castShadow = false;               // superfície: só RECEBE (custo)
+    meshReal.receiveShadow = true;
     sceneReal.add(meshReal);
 
-    const matSim = new THREE.MeshStandardMaterial({ roughness: 0.85, displacementScale: 4.0, side: THREE.DoubleSide });
+    const matSim = new THREE.MeshStandardMaterial({ roughness: 0.85, side: THREE.DoubleSide });
     const meshSim = new THREE.Mesh(geo, matSim);
+    meshSim.rotation.x = -Math.PI / 2;
+    meshSim.receiveShadow = true;
     sceneSim.add(meshSim);
 
-    let isPlaying = false, playInterval = null;
-    let factorNitro = 0, factorWater = 0, factorPest = 0;
+    // Par extra para CROSSFADE visual (200–500 ms) entre cenas já prontas.
+    // A transição altera APENAS a opacidade das texturas — nunca interpola
+    // valores científicos entre duas aquisições.
+    const matRealFade = new THREE.MeshStandardMaterial({ roughness: 0.85, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide });
+    const meshRealFade = new THREE.Mesh(geo, matRealFade);
+    meshRealFade.rotation.x = -Math.PI / 2;
+    meshRealFade.visible = false;
+    meshRealFade.renderOrder = 1;
+    sceneReal.add(meshRealFade);
 
-    // ---------- TOPOGRAFIA REAL (Copernicus DEM GL-30) ----------
-    // heightTexture = heightmap do DEM (ou null → fallback p/ NDVI)
-    // terrainScale  = escala de deslocamento derivada do alívio real
-    let heightTexture = null;
-    let terrainScale = 4.0;
+    const matSimFade = new THREE.MeshStandardMaterial({ roughness: 0.85, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide });
+    const meshSimFade = new THREE.Mesh(geo, matSimFade);
+    meshSimFade.rotation.x = -Math.PI / 2;
+    meshSimFade.visible = false;
+    meshSimFade.renderOrder = 1;
+    sceneSim.add(meshSimFade);
+
+    // =====================================================================
+    // PR #5f — ENQUADRAMENTO AUTOMÁTICO: o talhão é a estrela da cena.
+    // BoundingBox real (geometria + DEM) → centro + extensão → vista oblíqua
+    // elevada (42°) com distância proporcional. Funciona p/ talhões pequenos
+    // E grandes; nunca mais "faixa no horizonte".
+    // =====================================================================
+    function fitCameraToTerrain() {
+      if (!meshReal || !meshReal.geometry) return null;
+      const box = new THREE.Box3().setFromObject(meshReal);
+      const size = new THREE.Vector3();
+      const center = new THREE.Vector3();
+      box.getSize(size);
+      box.getCenter(center);
+      // Extensão dominante do talhão (largura/profundidade; relevo conta menos).
+      const extent = Math.max(size.x, size.z, Math.max(size.y, 1));
+      // PR #5g — mira no MEIO do volume (topo+lateral visíveis na mesma vista)
+      // e sobe a câmera proporcionalmente à amplitude do relevo.
+      const t = meshReal.geometry.userData && meshReal.geometry.userData.terrain;
+      const stats = (t && t.worldStats) || null;
+      const targetY = stats ? (stats.minY + stats.maxY) / 2 : center.y;
+      const amp = stats ? stats.amplitudeY : 0;
+      const w = container.clientWidth || window.innerWidth;
+      const h = container.clientHeight || (window.innerHeight - 56);
+      const aspect = Math.max((w / 2) / Math.max(h, 1), 0.2);
+      const fit = computeCameraFit(extent, aspect, CAMERA_PRESET);
+      camera.position.set(
+        fit.position[0] + center.x,
+        fit.position[1] + targetY + amp * 0.55,
+        fit.position[2] + center.z
+      );
+      controls.target.set(fit.target[0] + center.x, fit.target[1] + targetY, fit.target[2] + center.z);
+      controls.minDistance = fit.minDistance;
+      controls.maxDistance = fit.maxDistance;
+      controls.update();
+      updateGroundGrid(Math.max(size.x, size.z) * 1.4);
+      const baseY = stats ? (t && t.baseY) : null;
+      console.info(
+        `[3D-CAM] fit: extent=${extent.toFixed(1)}u distance=${fit.distance.toFixed(1)}u elev=${fit.elevationDeg}°` +
+        (stats ? ` minY=${stats.minY.toFixed(2)} maxY=${stats.maxY.toFixed(2)} baseY=${baseY.toFixed(2)}` : '')
+      );
+      return { extent, distance: fit.distance, elevationDeg: fit.elevationDeg, center: center.toArray(), targetY };
+    }
+
+    // =====================================================================
+    // PIPELINE 3D (PR #4) — helpers puros + fallback visual + What-If visual.
+    // Regra de ouro: NUNCA deixar o material sem `map` (o padrão do
+    // MeshStandardMaterial é branco → terreno branco silencioso).
+    // =====================================================================
+
+    // =====================================================================
+    // [3D-UX-HELPERS-START] — máquina de estados + formatação (PUROS, testáveis)
+    // Regras (PR #5d):
+    //  - timeline só avança DEPOIS de carregar/aplicar (LOADING → READY → intervalo);
+    //  - respostas atrasadas/antigas são descartadas via generationId (race-safe);
+    //  - erro → PAUSA automática + retry manual (nunca pula cena silenciosamente);
+    //  - troca de layer congela a timeline e retoma o Play se já estava ativo.
+    // =====================================================================
+
+    /** Gate de concorrência: cada `beginLoad()` invalida os carregamentos anteriores. */
+    function createSceneLoadGate() {
+      let generation = 0;
+      return {
+        beginLoad() { generation += 1; return generation; },
+        isCurrent(gen) { return gen === generation; },
+        currentGeneration() { return generation; },
+        invalidate() { generation += 1; },
+      };
+    }
+
+    /**
+     * Máquina pura do player da timeline:
+     *   mode   = 'playing' | 'paused'
+     *   status = 'idle' | 'loading' | 'ready' | 'error'
+     * `appliedIndex`/`appliedLayer`/`appliedMeta` representam a cena
+     * EFETIVAMENTE aplicada (fonte da verdade para UI e What-If).
+     */
+    function createTimelineMachine(initialIndex, count) {
+      return {
+        mode: 'paused',
+        status: 'idle',
+        count: Math.max(count, 1),
+        appliedIndex: initialIndex,
+        appliedLayer: null,
+        appliedMeta: null,
+        pendingIndex: null,
+        pendingLayer: null,
+        error: null,
+        resumeAfterLayer: false,
+      };
+    }
+
+    function playerPlay(state) { state.mode = 'playing'; return state; }
+    function playerPause(state) { state.mode = 'paused'; return state; }
+    function playerStartLoad(state, index, layer) {
+      state.status = 'loading';
+      state.pendingIndex = index;
+      state.pendingLayer = layer;
+      state.error = null;
+      return state;
+    }
+    function playerFinishLoad(state, index, layer, ok, errorMsg, meta) {
+      state.pendingIndex = null;
+      state.pendingLayer = null;
+      state.resumeAfterLayer = false;
+      if (ok) {
+        state.appliedIndex = index;
+        state.appliedLayer = layer;
+        state.appliedMeta = meta || null;
+        state.status = 'ready';
+        state.error = null;
+      } else {
+        state.status = 'error';
+        state.mode = 'paused';            // PAUSA — o usuário decide (retry/manual)
+        state.error = errorMsg || 'Falha ao carregar cena.';
+      }
+      return state;
+    }
+    function playerCancelLoad(state) {
+      state.status = state.appliedMeta ? 'ready' : 'idle';
+      state.pendingIndex = null;
+      state.pendingLayer = null;
+      state.error = null;
+      state.resumeAfterLayer = false;
+      return state;
+    }
+    function playerCanAdvance(state) {
+      return state.mode === 'playing' && state.status === 'ready';
+    }
+    /**
+     * PR #5f (correção cronológica) — próxima cena do Play na direção TEMPORAL:
+     * mais ANTIGA → mais RECENTE. O array interno `dates` continua DESC (API),
+     * logo "avançar no tempo" = índice - 1 (0 = mais recente).
+     * Retorna `null` quando já está na cena mais recente → Play PÁRA (sem loop).
+     */
+    function playerNextIndex(state) {
+      const idx = Number(state.appliedIndex);
+      if (!Number.isFinite(idx) || idx <= 0) return null;
+      return idx - 1;
+    }
+    /**
+     * Decisão de Início do Play (antiga → recente):
+     *  - cena intermediária/antiga selecionada → `null` (continua para frente);
+     *  - cena MAIS RECENTE selecionada → retorna o índice da cena mais ANTIGA
+     *    (reinício EXPLÍCITO da evolução completa; nunca loop infinito);
+     *  - uma única cena → `null` (o chamador pausa imediatamente).
+     */
+    function chronoPlayStartIndex(state) {
+      const next = playerNextIndex(state);
+      if (next === null && Number(state.count) > 1) return Number(state.count) - 1;
+      return null;
+    }
+    /** Troca de layer: congela avanço, mas preserva intenção de Play. */
+    function playerBeginLayerSwap(state, layer) {
+      state.resumeAfterLayer = (state.mode === 'playing');
+      state.pendingLayer = layer;
+      return state;
+    }
+
+    function isAbortError(err) {
+      return !!err && (
+        (err && err.name === 'AbortError') ||
+        (typeof err === 'object' && err !== null && (/abort/i.test(String(err.message || ''))))
+      );
+    }
+
+    function formatSceneDate(dateStr) {
+      if (!dateStr) return '—';
+      const parts = String(dateStr).split('-');
+      return parts.length === 3 ? parts.reverse().join('/') : String(dateStr);
+    }
+
+    function sceneErrorLabel(dateStr) {
+      return `Não foi possível carregar a cena de ${formatSceneDate(dateStr)}.`;
+    }
+
+    /**
+     * Proveniência COMPACTA (1 linha) — o painel grande virou "Detalhes".
+     * Nunca afirma ser Sentinel sem `data_origin === 'sentinel'`.
+     */
+    function provenanceSummary(meta, dem) {
+      if (!meta) return 'aguardando dados…';
+      const isReal = meta.data_origin === 'sentinel' &&
+        (meta.real_data_status === undefined || meta.real_data_status === null || meta.real_data_status === 'ok');
+      if (isReal) {
+        const date = formatSceneDate(meta.acquisition_date || meta.date);
+        const cc = (typeof meta.cloud_cover === 'number')
+          ? `${meta.cloud_cover.toFixed(1).replace('.', ',')}%` : '—';
+        const demTxt = (dem && typeof dem.min === 'number' && typeof dem.max === 'number')
+          ? ` • DEM ${dem.min}–${dem.max} m` : '';
+        return `Sentinel-2 L2A • ${date} • Nuvens ${cc}${demTxt}`;
+      }
+      if (meta.real_data_status === 'not_configured') return 'DADOS SATELITAIS REAIS NÃO CONFIGURADOS';
+      if (meta.real_data_status === 'no_scene') return 'Sem cena Sentinel-2 na janela • aproximado';
+      if (meta.real_data_status === 'error') return 'Dados reais indisponíveis • aproximado';
+      return (meta.real_data_message || 'Visualização aproximada');
+    }
+
+    /** Detalhes da proveniência (usados no drawer "Detalhes"). */
+    function provenanceDetailLines(meta, dem) {
+      if (!meta) return ['aguardando dados…'];
+      const isReal = meta.data_origin === 'sentinel' &&
+        (meta.real_data_status === undefined || meta.real_data_status === null || meta.real_data_status === 'ok');
+      if (!isReal) {
+        return [meta.real_data_message || 'FONTE: VISUALIZAÇÃO APROXIMADA (SEM SENTINEL-2 REAL)'];
+      }
+      const acq = meta.acquisition_date || meta.date || '—';
+      const cc = (typeof meta.cloud_cover === 'number') ? `${meta.cloud_cover.toFixed(1)}%` : '—';
+      const vpp = (typeof meta.valid_pixel_percentage === 'number')
+        ? `${meta.valid_pixel_percentage.toFixed(1)}%` : '—';
+      // DEM entra apenas quando carregado (resumo c/ min–max; detalhes técnicos
+      // no drawer): `dem` é o payload PURA de buildDemSummaryForUI.
+      const demLines = dem && typeof dem.min === 'number' ? [
+        `DEM fonte: ${dem.source || 'desconhecida'}`,
+        `Elevação real: ${dem.min}–${dem.max} m • alívio ~${dem.relief.toFixed(0)} m`,
+        `Escala: 1:1 horizontal (${(typeof dem.unitsPerMeter === 'number' ? dem.unitsPerMeter : 0).toFixed(4)} u/m)`,
+        `Exagero visual: ${dem.exaggeration || 1}×`,
+      ] : [];
+      return [
+        `Aquisição: ${acq}`,
+        `Nuvens: ${cc}`,
+        `Satélite: ${meta.platform || 'Sentinel-2'} (${meta.constellation || 'S2'})`,
+        `Produto: ${meta.collection || 'sentinel-2-l2a'} · ${meta.processing_level || 'L2A'}`,
+        `ID do item: ${meta.product_id || '—'}`,
+        `Bandas: ${Array.isArray(meta.bands) ? meta.bands.join(', ') : '—'}`,
+        `Pixels válidos: ${vpp}`,
+        `Seleção: ${String(meta.selection_reason || '—').toUpperCase()}`,
+        `Fornecedor: ${meta.provider || 'Copernicus Data Space Ecosystem'}`,
+        ...demLines,
+      ];
+    }
+
+    /** Status PRINCIPAL por cenário (1 linha no label de cada metade). */
+    function scenarioSubStatus(dataOrigin, realDataStatus) {
+      if (dataOrigin === 'sentinel') return { kind: 'real', text: 'Sentinel-2 L2A • dados reais' };
+      if (realDataStatus === 'not_configured') return { kind: 'no-config', text: 'Dados reais não configurados • aproximado' };
+      if (realDataStatus === 'no_scene') return { kind: 'approx', text: 'Sem cena Sentinel-2 • aproximado' };
+      if (realDataStatus === 'error') return { kind: 'approx', text: 'Erro nos dados reais • aproximado' };
+      return { kind: 'approx', text: 'Visualização aproximada' };
+    }
+
+    /** Base do cenário SIMULADO: mesma data/layer/origem da cena real aplicada. */
+    function buildSimBaseMeta(meta) {
+      if (!meta) return null;
+      return {
+        date: meta.acquisition_date || meta.date || null,
+        layer: meta.layer || null,
+        data_origin: meta.data_origin || 'procedural',
+        real_data_status: meta.real_data_status || null,
+      };
+    }
+    // [3D-UX-HELPERS-END]
+
+    // ---------- Estados visuais (UI fina sobre os helpers puros) ----------
+    function setLoadingIndicator(visible, text) {
+      const el = document.getElementById('load-indicator');
+      const txt = document.getElementById('load-indicator-text');
+      if (!el) return;
+      if (txt && text) txt.innerText = text;
+      el.classList.toggle('visible', !!visible);
+    }
+
+    function setSceneOverlay(visible, text) {
+      const el = document.getElementById('overlay-loading-real');
+      const txt = document.getElementById('overlay-loading-text');
+      if (!el) return;
+      if (txt && text) txt.innerText = text;
+      el.classList.toggle('visible', !!visible);
+    }
+
+    function setScenarioStatus(meta) {
+      const el = document.getElementById('status-real');
+      if (!el) return;
+      const origin = meta && (meta.data_origin || (meta.type === 'native' ? 'sentinel' : 'procedural'));
+      const status = meta && meta.real_data_status;
+      const sub = scenarioSubStatus(origin, status);
+      el.className = `scenario-sub ${sub.kind}`;
+      el.innerText = sub.text;
+    }
+
+    /** Label do cenário SIMULADO: sempre a MESMA data da cena real aplicada. */
+    function setSimScenarioStatus(simBase) {
+      const el = document.getElementById('status-sim');
+      if (!el) return;
+      const date = simBase && simBase.date ? formatSceneDate(simBase.date) : null;
+      el.innerText = date ? `Projeção What-If • base ${date}` : 'Projeção What-If';
+    }
+
+    function renderProvenanceSummary(meta, dem) {
+      const el = document.getElementById('metadata-summary');
+      const txt = document.getElementById('prov-summary');
+      if (!el || !txt) return;
+      txt.innerText = provenanceSummary(meta, dem);
+      const origin = meta && (meta.data_origin || (meta.type === 'native' ? 'sentinel' : 'procedural'));
+      const status = meta && meta.real_data_status;
+      el.className = origin === 'sentinel' ? 'metadata-summary real' : (
+        status === 'not_configured' ? 'metadata-summary no-config' : 'metadata-summary approx'
+      );
+    }
+
+    function renderProvenanceDetails(meta, dem) {
+      const el = document.getElementById('prov-lines');
+      if (!el) return;
+      el.innerText = provenanceDetailLines(meta, dem).join('\n');
+    }
+
+    function setDemLine(kind, text) {
+      const el = document.getElementById('dem-line');
+      if (!el) return;
+      el.className = `dem-line ${kind || ''}`;
+      el.innerText = text;
+    }
+
+    function showErrorToast(message, retryFn) {
+      const el = document.getElementById('error-toast');
+      const txt = document.getElementById('error-text');
+      if (!el) return;
+      if (txt) txt.innerText = message;
+      el.classList.add('visible');
+      const btn = document.getElementById('error-retry');
+      if (btn) {
+        // substitui listener sem acumular
+        const clone = btn.cloneNode(true);
+        btn.parentNode.replaceChild(clone, btn);
+        clone.addEventListener('click', () => {
+          hideErrorToast();
+          if (typeof retryFn === 'function') retryFn();
+        });
+      }
+    }
+
+    function hideErrorToast() {
+      const el = document.getElementById('error-toast');
+      if (el) el.classList.remove('visible');
+    }
+
+    // [3D-PIPELINE-HELPERS-START]
+    function classifyAssetHttpError(status) {
+      if (status === 401) return 'auth';
+      if (status === 403) return 'permission';
+      if (status === 404) return 'not_found';
+      return 'http';
+    }
+
+    /**
+     * Normaliza uma URL de asset devolvida pela API:
+     * - API em outra origem (dev local :5501 → :8000): mantém a URL absoluta;
+     * - frontend servido pelo próprio backend (API_URL relativo): devolve só
+     *   pathname+search para o fetch ir para a MESMA origem do proxy/preview.
+     */
+    function normalizeAssetUrl(url) {
+      if (!url || typeof url !== 'string') return url;
+      try {
+        const parsed = new URL(url, window.location.href);
+        if (API_URL.startsWith('http')) return url;
+        return parsed.pathname + parsed.search;
+      } catch (e) {
+        console.warn(`texture: URL de asset inválida: ${url}`, e);
+        return url;
+      }
+    }
+
+    function resolveTextureUrl(payload, layer, dateStr) {
+      if (payload && typeof payload.texture_url === 'string' && payload.texture_url) {
+        return normalizeAssetUrl(payload.texture_url);
+      }
+      // Não há mais URL padrão para `sentinel-21KXQ-*` local: o backend
+      // sempre devolve uma URL utilizável (nativa OU procedural). Sem URL,
+      // o 3D deve cair no fallback explícito — nunca num 404 silencioso.
+      return null;
+    }
+
+    /** Atribui textura de COR a um material 3D. O RELEVO vem da GEOMETRIA
+     *  (DEM aplicado nos vértices) — nunca do displacementMap do material. */
+    function applyTextureToMaterial(mat, mapTex) {
+      if (!mat || !mapTex) return false;
+      mat.map = mapTex;
+      mat.needsUpdate = true;
+      return true;
+    }
+
+    /**
+     * Transformação de pixel do cenário SIMULADO (What-If): delta NDVI
+     * positivo → mais verde/brilho; negativo → mais vermelho/castanho
+     * (estresse de pragas/seca). Determinística e testável.
+     */
+    function computeSimPixel(r, g, b, delta) {
+      const k = Math.max(-0.5, Math.min(0.5, Number(delta) * 1.5));
+      const clamp255 = (v) => Math.max(0, Math.min(255, Math.round(v)));
+      return [
+        clamp255(r * (1.0 - 0.60 * k)),
+        clamp255(g * (1.0 + 0.50 * k)),
+        clamp255(b * (1.0 + 0.10 * k)),
+      ];
+    }
+
+    function parseKmlPolygon(kmlCoordinates) {
+      if (!kmlCoordinates) return null;
+      try {
+        const coords = (typeof kmlCoordinates === 'string') ? JSON.parse(kmlCoordinates) : kmlCoordinates;
+        if (!Array.isArray(coords) || coords.length < 3) return null;
+        const pts = coords.map((p) => {
+          const lat = Number(p && p[0]);
+          const lon = Number(p && p[1]);
+          return [lat, lon];
+        });
+        if (pts.some((p) => !Number.isFinite(p[0]) || !Number.isFinite(p[1]))) return null;
+        return pts;
+      } catch (e) {
+        console.warn('geometria: polígono KML inválido — usando forma aproximada', e);
+        return null;
+      }
+    }
+
+    /**
+     * Converte o contorno real do talhão (KML) para o plano 3D.
+     * Usa a MESMA projeção do rasterizador do backend (margem 12% dentro do
+     * canvas) para o contorno ficar alinhado com a textura. Sem KML, usa a
+     * elipse do fallback do gerador (mesma do rasterizador) — nunca um plano
+     * retangular genérico.
+     */
+    function talhaoWorldGeometry(kmlCoordinates, lat, lon, areaHa) {
+      const pts = parseKmlPolygon(kmlCoordinates);
+      if (pts) {
+        const lats = pts.map((p) => p[0]);
+        const lons = pts.map((p) => p[1]);
+        const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+        const minLon = Math.min(...lons), maxLon = Math.max(...lons);
+        const spanLatM = Math.max((maxLat - minLat) * 111320.0, 1);
+        const mPerLon = 111320.0 * Math.max(Math.cos((lat * Math.PI) / 180.0), 0.05);
+        const spanLonM = Math.max((maxLon - minLon) * mPerLon, 1);
+        const scale = 50.0 / Math.max(spanLatM, spanLonM);
+        const width = spanLonM * scale;
+        const height = spanLatM * scale;
+        const spanLat = Math.max(maxLat - minLat, 1e-12);
+        const spanLon = Math.max(maxLon - minLon, 1e-12);
+        const fx = (f) => 0.12 + f * 0.76;
+        const points = pts.map((p) => [
+          (fx((p[1] - minLon) / spanLon) - 0.5) * width,
+          (0.5 - fx((maxLat - p[0]) / spanLat)) * height,
+        ]);
+        // Escala real (metros por unidade de mundo) para o DEM: o plano de
+        // 50 unidades representa max(spanLatM, spanLonM) metros no campo.
+        return { points, width, height, metersPerUnit: Math.max(spanLatM, spanLonM) / 50.0 };
+      }
+      // Sem polígono: elipse idêntica à do backend (bbox 12%–88%).
+      // A escala é aproximada (área → lado equivalente) e documentada como tal;
+      // com KML real o `metersPerUnit` é exato.
+      const radius = 0.35;
+      const width = 50.0, height = 50.0;
+      const sideM = Math.sqrt(Math.max(Number(areaHa) || 30, 1) * 10000);
+      const points = [];
+      for (let i = 0; i < 32; i++) {
+        const a = (i / 32) * Math.PI * 2.0;
+        points.push([Math.cos(a) * radius * width, Math.sin(a) * radius * height]);
+      }
+      return { points, width, height, metersPerUnit: sideM / 50.0 };
+    }
+
+    /** Textura de FALLBACK visual — NÃO finge ser Sentinel-2 real. */
+    function createFallbackTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 256;
+      canvas.height = 256;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
+      ctx.fillStyle = '#1b2430';
+      ctx.fillRect(0, 0, 256, 256);
+      // Faixas diagonais: padrão de "visualização aproximada" (não é dado real).
+      for (let x = -256; x < 512; x += 32) {
+        ctx.fillStyle = ((x / 32) % 2 === 0) ? 'rgba(60, 110, 62, 0.6)' : 'rgba(150, 120, 52, 0.55)';
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x + 32, 0);
+        ctx.lineTo(x + 32 - 256, 256);
+        ctx.lineTo(x - 256, 256);
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+      ctx.lineWidth = 3;
+      ctx.setLineDash([10, 8]);
+      ctx.strokeRect(5, 5, 246, 246);
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(0, 112, 256, 32);
+      ctx.fillStyle = '#f0d879';
+      ctx.font = 'bold 14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('VISUALIZAÇÃO APROXIMADA', 128, 133);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.generateMipmaps = true;
+      tex.minFilter = THREE.LinearMipmapLinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      return tex;
+    }
+
+    /** Textura do CENÁRIO SIMULADO: base (real/aproximada) + transformação. */
+    function buildSimulatedCanvasTexture(baseTex, delta) {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = 256;
+        canvas.height = 256;
+        const ctx = canvas.getContext('2d');
+        const img = baseTex && baseTex.image;
+        if (img && typeof img.width === 'number' && img.width > 0) {
+          ctx.drawImage(img, 0, 0, 256, 256);
+        } else {
+          ctx.fillStyle = '#1b2430';
+          ctx.fillRect(0, 0, 256, 256);
+        }
+        const imageData = ctx.getImageData(0, 0, 256, 256);
+        const px = imageData.data;
+        for (let i = 0; i < px.length; i += 4) {
+          const out = computeSimPixel(px[i], px[i + 1], px[i + 2], Number.isFinite(Number(delta)) ? Number(delta) : 0);
+          px[i] = out[0];
+          px[i + 1] = out[1];
+          px[i + 2] = out[2];
+        }
+        ctx.putImageData(imageData, 0, 0);
+        const tex = new THREE.CanvasTexture(canvas);
+        tex.generateMipmaps = true;
+        tex.minFilter = THREE.LinearMipmapLinearFilter;
+        tex.magFilter = THREE.LinearFilter;
+        return tex;
+      } catch (e) {
+        console.error('what-if: falha ao gerar textura simulada', e);
+        return null;
+      }
+    }
+
+    /**
+     * Carrega a textura (autenticada, via getCachedTexture) e aplica nos dois
+     * materiais. Em QUALQUER falha: aplica o fallback visual (nunca branco).
+     */
+    async function loadTextureOrFallback(key, url, matA, matB, signal = undefined) {
+      try {
+        const tex = await getCachedTexture(key, url, signal);
+        applyTextureToMaterial(matA, tex); // relevo é GEOMETRIA (DEM) — sem displacementMap
+        applyTextureToMaterial(matB, tex);
+        return { ok: true, texture: tex };
+      } catch (err) {
+        // Abort (pause/troca manual) NÃO pode trocar a cena aplicada por
+        // fallback: relança para o loadScene tratar como cancelamento.
+        if (isAbortError(err)) throw err;
+        console.error(`texture: falha ao carregar '${url}' — aplicando visualização aproximada`, err);
+        try {
+          const fb = createFallbackTexture();
+          if (fb) {
+            applyTextureToMaterial(matA, fb);
+            applyTextureToMaterial(matB, fb);
+            return { ok: false, texture: fb };
+          }
+        } catch (e2) {
+          console.error('texture: falha ao gerar fallback visual', e2);
+        }
+        return { ok: false, texture: null };
+      }
+    }
+    // [3D-PIPELINE-HELPERS-END]
+
+    // =====================================================================
+
+    // =====================================================================
+    // [3D-SCENE-CACHE-HELPERS-START] — CACHE DE CENAS + PLANO DE PRELOAD (puros).
+    // Chave: farmId|talhao|date|layer (contrato PR #5e).
+    // =====================================================================
+    const SCENE_CACHE_MAX = 12;
+    const PRELOAD_ALL_LIMIT = 12;      // calendário ≤ 12 cenas → preload TODAS
+    const PRELOAD_WINDOW = 5;          // ≥ 13 cenas: 1 anterior + atual + 3 próximas
+    const PRELOAD_CONCURRENCY = 2;     // fetches simultâneos de cena (máx)
+    /** Limites expostos para teste (const não viram global em VM). */
+    var SCENE_CACHE_LIMITS = {
+      max: SCENE_CACHE_MAX, allLimit: PRELOAD_ALL_LIMIT,
+      window: PRELOAD_WINDOW, concurrency: PRELOAD_CONCURRENCY,
+    };
+
+    function sceneCacheKey(farmId, talhaoId, dateStr, layer) {
+      return `${farmId}|${talhaoId || 0}|${dateStr}|${layer}`;
+    }
+
+    /** LRU real (Map preserva ordem de inserção; get() re-ordena p/ MRU). */
+    function createSceneCache(maxEntries) {
+      const map = new Map();
+      return {
+        maxEntries,
+        get(key) {
+          if (!map.has(key)) return null;
+          const value = map.get(key);
+          map.delete(key);
+          map.set(key, value);
+          return value;
+        },
+        has(key) { return map.has(key); },
+        /** Insere/atualiza e devolve as chaves EVICTED (para revogar de fato). */
+        set(key, value) {
+          if (map.has(key)) map.delete(key);
+          map.set(key, value);
+          const evicted = [];
+          while (map.size > this.maxEntries) {
+            const oldest = map.keys().next().value;
+            evicted.push(oldest);
+            map.delete(oldest);
+          }
+          return evicted;
+        },
+        delete(key) { return map.delete(key); },
+        size() { return map.size; },
+        keys() { return map.keys(); },
+        entries() { return map.entries(); },
+      };
+    }
+
+    /** Remove do cache de CENAS toda entrada que dependa de uma textura
+     *  descartada pelo LRU de texturas (VRAM) — nunca uma cena "pronta"
+     *  apontando para textura já disposta (retorna o nº de remoções). */
+    function evictSceneEntriesForTexture(textureKey) {
+      let removed = 0;
+      const stale = [];
+      // Snapshot: get() re-ordena (LRU) e não se pode iterar o Map vivo.
+      for (const k of Array.from(sceneCache.keys())) {
+        const entry = sceneCache.get(k);
+        if (entry && entry.textureKey === textureKey) stale.push(k);
+      }
+      for (const k of stale) { sceneCache.delete(k); removed += 1; }
+      return removed;
+    }
+
+    /**
+     * Plano de pré-carregamento (documentação de limites dos requisitos):
+     *  - calendário com ≤ 12 cenas → TODAS as cenas da layer ativa;
+     *  - calendário maior → 1 anterior + atual + 3 próximas (janela 5) e o
+     *    restante como preenchimento em background (mais próximo primeiro).
+     */
+    function computePreloadPlan(total, activeIndex, options = {}) {
+      const allLimit = options.allLimit || PRELOAD_ALL_LIMIT;
+      const windowSize = options.windowSize || PRELOAD_WINDOW;
+      const n = Math.max(1, Number(total) || 1);
+      const idx = Math.max(0, Math.min(Number(activeIndex) || 0, n - 1));
+      const priority = [];
+      const background = [];
+      const seen = new Set();
+      const add = (i, list) => {
+        if (i < 0 || i >= n || seen.has(i)) return;
+        seen.add(i);
+        list.push(i);
+      };
+      if (n <= allLimit) {
+        for (let i = 0; i < n; i++) add(i, priority);
+        return { target: idx, window: priority.slice(), priority, background: [], all: true };
+      }
+      add(idx - 1, priority);                       // 1 anterior
+      for (let d = 0; d < windowSize - 1; d++) add(idx + d, priority); // atual + próximas
+      for (let d = 0; d < n; d++) add(idx + d, background);  // preenchimento
+      for (let d = 1; d < n; d++) add(idx - d, background);
+      return { target: idx, window: priority.slice(), priority, background, all: false };
+    }
+
+    /** Estado discreto da timeline p/ UI: available|loading|ready|applied|error. */
+    function timelineSceneState(state, cache, preloadStates, key, index, layer) {
+      if (state.appliedIndex === index && state.appliedLayer === layer) return 'applied';
+      const st = preloadStates && preloadStates.get ? preloadStates.get(key) : null;
+      if (st === 'error') return 'error';
+      if (st === 'loading' || st === 'queued') return 'loading';
+      if (st === 'ready' || (cache && cache.has(key))) return 'ready';
+      return 'available';
+    }
+    // [3D-SCENE-CACHE-HELPERS-END]
+
+    // ---------- Geometria real do talhão (contorno + proporção real) ----------
+    let talhaoOutlineReal = null;
+    let talhaoOutlineSim = null;
+
+    // PR #5g — LATERAIS + BASE do bloco topográfico (volume real, não "folha").
+    // Geometria derivada da malha do terreno (mesma borda + mesmo DEM), então
+    // acompanha o contorno EXATO e nunca interfere nos cálculos do relevo.
+    let volumeSkirtReal = null;
+    let volumeSkirtSim = null;
+    let skirtGeoReal = null;
+    let skirtGeoSim = null;
+
+    function rebuildVolumeSides() {
+      if (volumeSkirtReal) {
+        sceneReal.remove(volumeSkirtReal);
+        if (volumeSkirtReal.material) volumeSkirtReal.material.dispose();
+        volumeSkirtReal = null;
+      }
+      if (skirtGeoReal) { skirtGeoReal.dispose(); skirtGeoReal = null; }
+      if (volumeSkirtSim) {
+        sceneSim.remove(volumeSkirtSim);
+        if (volumeSkirtSim.material) volumeSkirtSim.material.dispose();
+        volumeSkirtSim = null;
+      }
+      if (skirtGeoSim) { skirtGeoSim.dispose(); skirtGeoSim = null; }
+      const t = terrainGeometry && terrainGeometry.userData && terrainGeometry.userData.terrain;
+      if (!t || !t.worldPositions || !t.worldStats) return;
+      // PR #5g: com contorno real (KML/elipse) as paredes seguem o POLÍGONO;
+      // sem contorno, fecham a borda da grade (fallback defensivo).
+      const data = (t.outlineWorld && t.outlineWorld.length >= 3)
+        ? buildPolygonSkirtGeometryData(
+            t.outlineWorld,
+            (x, z) => terrainGridSampleWorld(t.worldPositions, t.cols, t.rows, x, z, t.worldStats),
+            t.baseY
+          )
+        : buildTerrainSkirtGeometryData(t.worldPositions, t.cols, t.rows, t.baseY);
+      const mk = (scene, color) => {
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.BufferAttribute(data.positions, 3));
+        g.setIndex(new THREE.BufferAttribute(data.indices, 1));
+        g.computeVertexNormals();
+        const mat = new THREE.MeshLambertMaterial({ color, side: THREE.DoubleSide });
+        const mesh = new THREE.Mesh(g, mat);
+        mesh.frustumCulled = true;
+        scene.add(mesh);
+        return mesh;
+      };
+      volumeSkirtReal = mk(sceneReal, 0x101820);
+      skirtGeoReal = volumeSkirtReal.geometry;
+      volumeSkirtSim = mk(sceneSim, 0x141a20);
+      skirtGeoSim = volumeSkirtSim.geometry;
+    }
+
+    function applyTalhaoGeometry(kmlCoordinates, lat, lon, areaHa) {
+      const g = talhaoWorldGeometry(kmlCoordinates, lat, lon, areaHa);
+      const newGeo = new THREE.PlaneGeometry(g.width, g.height, TERRAIN_SEGMENTS, TERRAIN_SEGMENTS);
+      // PR #5g — a SUPERFÍCIE é o contorno real do talhão (máscara de grid
+      // 97×97), não um retângulo com o polígono apenas "pintado" na textura.
+      maskPlaneGeometryToPolygon(newGeo, g.points);
+      meshReal.geometry.dispose();
+      meshReal.geometry = newGeo;
+      meshSim.geometry = newGeo; // compartilha a geometria (mesmo recorte)
+      meshRealFade.geometry = newGeo;
+      meshSimFade.geometry = newGeo;
+      terrainGeometry = newGeo;
+      terrainMetersPerUnit = g.metersPerUnit || 50.0;
+      // PR #5g — um único passe: relevo RELATIVO + laterais/base + hillshade
+      // (aplica a geometria DEM à NOVA malha sem nenhum fetch).
+      bakeDemGeometry();
+      // Contorno real do talhão para as PAREDES (sem fetch; só geometria).
+      if (newGeo.userData && newGeo.userData.terrain) {
+        newGeo.userData.terrain.outlineLocal = g.points;
+        newGeo.userData.terrain.outlineWorld = g.points.map((p) => [p[0], -p[1]]);
+      }
+      rebuildVolumeSides(); // paredes seguem o POLÍGONO real (KML/elipse)
+
+      if (talhaoOutlineReal) { sceneReal.remove(talhaoOutlineReal); talhaoOutlineReal.geometry.dispose(); talhaoOutlineReal = null; }
+      if (talhaoOutlineSim) { sceneSim.remove(talhaoOutlineSim); talhaoOutlineSim.geometry.dispose(); talhaoOutlineSim = null; }
+
+      const pts = g.points.map((p) => new THREE.Vector3(p[0], p[1], 0.05));
+      const lineGeo = new THREE.BufferGeometry().setFromPoints(pts);
+      talhaoOutlineReal = new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: 0x58a6ff }));
+      talhaoOutlineReal.rotation.x = -Math.PI / 2; // acompanha o plano Y-up
+      talhaoOutlineReal.position.y = 0.05 + demExaggeration * demReliefWorld;
+      talhaoOutlineSim = new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: 0xe3b341 }));
+      talhaoOutlineSim.rotation.x = -Math.PI / 2;
+      talhaoOutlineSim.position.y = 0.05 + demExaggeration * demReliefWorld;
+      sceneReal.add(talhaoOutlineReal);
+      sceneSim.add(talhaoOutlineSim);
+      // PR #5f — reenquadra a câmera à nova extensão (talhão inteiro visível).
+      fitCameraToTerrain();
+    }
+
+    // ---------- PLAYER DA TIMELINE (PR #5d — PRIMEIRO funcionalidades) ----------
+    // `player` = fonte da verdade do que está APLICADO; `currentIndex` espelha
+    // a data aplicada na UI. Avanço automático SÓ após aplicar (LOADING→READY).
+    let factorNitro = 0, factorWater = 0, factorPest = 0;
+    let baseTextureForSim = null;
+    let simTexture = null;
+    let simTextureActive = false;
+    let lastWhatIfDelta = null;
+    let whatIfTimer = null;
+    let playTimer = null;
+    let activeTextureAbort = null;
+    let lastSimBaseMeta = null;
+    let lastFailedScene = null;
+    // Pausa entre cenas do Play — configurável pela UI (#play-interval).
+    let PLAY_INTERVAL_MS = 1600;
+    const sceneLoadGate = createSceneLoadGate();
+    let player = createTimelineMachine(0, dates.length);
+
+    // ---------- PR #5e: estado do cache/preload de cenas ----------
+    const sceneCache = createSceneCache(SCENE_CACHE_MAX);
+    const sceneFetchInFlight = new Map();   // key -> Promise<entry> (dedupe)
+    const preloadQueue = [];                // {index, layer, key, priority}
+    const preloadQueuedKeys = new Set();    // dedupe de pendências
+    const preloadStates = new Map();        // key -> queued|loading|ready|error
+    let preloadRunning = false;
+    let preloadActiveCount = 0;
+
+    // ---------- TOPOGRAFIA REAL (Copernicus DEM GL-30) — PR #5e/#5g ----------
+    // O DEM é carregado 1× por fazenda e REUTILIZADO: trocar a data troca a
+    // TEXTURA, nunca reconstrói o DEM. O relevo é gravado nos VÉRTICES da
+    // malha (Y no mundo) com recomputação de normais — geometria real 3D.
+    let heightTexture = null;                 // THREE.Texture do heightmap (se houver)
+    let demGrid = null;                       // grid 0–255 (canvas → Float32) do DEM
+    let demGridSize = 0;
+    let demReliefWorld = 0;                   // alívio real em unidades do mundo (1×)
+    let demExaggeration = DEM_EXAGGERATION_DEFAULT; // 1|2|3|5 — só visual
+    let demInfo = null;                       // {min, max, relief, source, provider}
+    // `terrainGeometry` é declarada ANTES do bootstrap (ver updateGroundGrid);
+    // aqui é apenas REUTILIZADA (nunca redeclarada — evita TDZ na página).
+    // let terrainGeometry = null;  <- removido na correção P0 (PR #5g)
+    let terrainMetersPerUnit = 50.0;          // metros por unidade do plano 3D
+    // PR #5g — origem/escala explícitas (sem magic numbers):
+    let demMinElevation = null;               // elevação REAL mínima do DEM (m)
+    let demMaxElevation = null;               // elevação REAL máxima do DEM (m)
+    let demReliefMeters = 0;                  // alívio REAL (máx − mín)
+    let worldUnitsPerMeterHorizontal = 1.0;   // unidades de mundo por metro
+    let modelVerticalOrigin = 0;              // Y do modelo onde DEM = min (0 rel.)
+
+    /** Decodifica a textura do heightmap em grid 0–255 (1× só, cacheado). */
+    function sampleDemTexture(tex, size) {
+      try {
+        const img = tex && tex.image;
+        if (!img || !img.width || !img.height) return null;
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return null;
+        ctx.drawImage(img, 0, 0, size, size);
+        const data = ctx.getImageData(0, 0, size, size).data;
+        const grid = new Float32Array(size * size);
+        for (let i = 0; i < grid.length; i++) grid[i] = data[i * 4]; // canal vermelho (L)
+        return grid;
+      } catch (e) {
+        console.error('DEM: falha ao amostrar heightmap', e);
+        return null;
+      }
+    }
+
+    /** Aplica (ou re-aplica) o DEM à malha com o exagero atual. */
+    function bakeDemGeometry() {
+      if (!terrainGeometry) return false;
+      const prevT = terrainGeometry.userData && terrainGeometry.userData.terrain;
+      let ok = false;
+      if (demGrid && demGridSize > 1) {
+        ok = applyDemToGeometry(
+          terrainGeometry,
+          (u, v) => demGridSample(demGrid, demGridSize, u, v),
+          demReliefWorld,
+          demExaggeration
+        );
+      } else {
+        ok = flattenDemGeometry(terrainGeometry);
+      }
+      // PR #5g — volume recriado a partir da GEOMETRIA já deformada (sem rede);
+      // o contorno do talhão é PRESERVADO entre re-bakes (nunca refeito).
+      if (ok) {
+        const t = terrainGeometry.userData && terrainGeometry.userData.terrain;
+        if (t && prevT && prevT.outlineLocal) {
+          t.outlineLocal = prevT.outlineLocal;
+          t.outlineWorld = prevT.outlineWorld;
+        }
+        rebuildVolumeSides();
+      }
+      // PR #5g — HILLSHADE multiplicativo por vértice: ilumina encostas sem
+      // destruir as cores agrícolas (o material multiplica textura × cor).
+      const t = terrainGeometry.userData && terrainGeometry.userData.terrain;
+      if (t && t.worldPositions && typeof terrainGeometry.setAttribute === 'function') {
+        const colors = terrainHillshadeColors(t.worldPositions, t.cols, t.rows);
+        t.hillshade = colors;
+        terrainGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        // Todos os materiais que usam a malha (incl. crossfade) recebem o
+        // hillshade — sem "lampejo" de textura sem sombreamento na transição.
+        [matReal, matRealFade, matSim, matSimFade].forEach(m => {
+          m.vertexColors = true;
+          m.needsUpdate = true;
+        });
+      }
+      return ok;
+    }
+
+    /** Atualiza o rótulo discreto de elevação real + exagero visual (PR #5h). */
+    function updateElevationUI() {
+      const line = document.getElementById('dem-line');
+      if (line && demInfo) {
+        line.className = 'dem-line ok';
+        line.innerText = `DEM ${(demInfo.source || 'unknown').replace(/_/g, ' ').toUpperCase()} • ` +
+          `${demInfo.min}–${demInfo.max} m • alívio ~${demInfo.relief.toFixed(0)} m • exagero ${demExaggeration}×`;
+      } else if (line) {
+        line.className = 'dem-line warn';
+        line.innerText = 'DEM: indisponível • Elevação aproximada';
+      }
+      document.querySelectorAll('.exag-btn').forEach(btn => {
+        btn.classList.toggle('active', Number(btn.getAttribute('data-exag')) === demExaggeration);
+      });
+    }
+
+    function setExaggeration(mult) {
+      if (!DEM_EXAGGERATION_STEPS.includes(Number(mult))) return;
+      demExaggeration = Number(mult);
+      // PR #5g: NENHUM fetch — só posições Y + normais + laterais (geometria).
+      bakeDemGeometry();
+      updateElevationUI();
+      // Contorno acompanha o novo teto do relevo (evita linha "enterrada").
+      if (talhaoOutlineReal) talhaoOutlineReal.position.y = 0.05 + demExaggeration * demReliefWorld;
+      if (talhaoOutlineSim) talhaoOutlineSim.position.y = 0.05 + demExaggeration * demReliefWorld;
+      // Real×What-If compartilham a MESMA geometria → reenquadra os DOIS juntos.
+      fitCameraToTerrain();
+      // Log de auditoria [3D-DEM] (mesmo formato/atributos do carregamento).
+      const t = terrainGeometry && terrainGeometry.userData && terrainGeometry.userData.terrain;
+      const s = t && t.worldStats;
+      if (s) {
+        console.info(
+          `[3D-DEM] vertices=${(t.cols * t.rows).toLocaleString('pt-BR')} ` +
+          `dem_min=${demMinElevation} dem_max=${demMaxElevation} relief_real=${demReliefMeters.toFixed(1)}m ` +
+          `exaggeration=${demExaggeration}x mesh_relief_world=${s.amplitudeY.toFixed(3)}u ` +
+          `mesh_y_min=${s.minY.toFixed(3)} mesh_y_max=${s.maxY.toFixed(3)} base_y=${t.baseY.toFixed(3)} ` +
+          `world_units_per_meter=${worldUnitsPerMeterHorizontal.toFixed(6)}`
+        );
+      }
+    }
 
     async function loadHeightmap() {
-      const info = await SatelliteService.getTalhaoHeightmap(activeFarm.id);
+      setDemLine('', 'DEM: consultando (COPERNICUS 30/90)…');
+      let info = null;
+      try {
+        // Timeout de 90s: sem resposta, diagnóstico + fallback (nunca branco).
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 90000);
+        info = await SatelliteService.getTalhaoHeightmap(activeFarm.id, controller.signal);
+        clearTimeout(timer);
+      } catch (e) {
+        console.error('heightmap: falha ao consultar o endpoint', e);
+      }
       if (!info || !info.available || !info.heightmap_url) {
-        console.info("DEM GL-30: heightmap indisponível — usando NDVI como deslocamento.", info && info.reason);
+        // Fallback EXPLÍCITO: NUNCA chama o relevo de "real" sem o DEM.
+        console.info('DEM: heightmap indisponível — elevação aproximada (plano).', info && info.reason);
+        demGrid = null;
+        demInfo = null;
+        demReliefWorld = 0;
+        demMinElevation = null;
+        demMaxElevation = null;
+        demReliefMeters = 0;
+        worldUnitsPerMeterHorizontal = terrainWorldUnitsPerMeter(
+          terrainMetersPerUnit * TERRAIN_SCALE.planeUnits, TERRAIN_SCALE.planeUnits
+        );
+        modelVerticalOrigin = 0;
+        bakeDemGeometry();
+        updateElevationUI();
+        setDemLine('warn', 'DEM: indisponível • Elevação aproximada');
+        refreshProvenanceAfterDem();
+        fitCameraToTerrain();
         return;
       }
       try {
-        // Mesma LRU de texturas: 1 heightmap por fazenda, sem custo extra de VRAM
+        // Mesma LRU de texturas: 1 heightmap por fazenda, sem custo extra de VRAM.
         const key = `height|${activeFarm.id}|${info.heightmap_url}`;
         const tex = await getCachedTexture(key, info.heightmap_url);
-        // Dados de altura são lineares — sem conversão sRGB (r152+ ignora em r128)
+        // Dados de altura são lineares — sem conversão sRGB (r152+ ignora em r128).
         if ("colorSpace" in tex) tex.colorSpace = THREE.NoColorSpace;
 
         heightTexture = tex;
-        // Escala de relevo: 8 m de alívio ≈ 2 unidades do mundo (teto 8)
-        const relief = Math.max(1, (info.max_elevation_m || 0) - (info.min_elevation_m || 0));
-        terrainScale = Math.min(8, Math.max(2, relief / 8));
+        const relief = Math.max(0, (info.max_elevation_m || 0) - (info.min_elevation_m || 0));
+        demGrid = sampleDemTexture(tex, DEM_GRID_SIZE);
+        demGridSize = DEM_GRID_SIZE;          // 97×97 (1:1 com a malha)
+        demMinElevation = info.min_elevation_m;
+        demMaxElevation = info.max_elevation_m;
+        demReliefMeters = relief;
+        demInfo = {
+          min: info.min_elevation_m,
+          max: info.max_elevation_m,
+          relief,
+          source: info.source || 'unknown',
+          provider: info.provider || 'Copernicus DEM',
+        };
+        // PR #5g — ESCALA EXPLÍCITA (sem magic numbers):
+        //   horizontal: 50 u ÷ span real (moldura de 50 u = maior dimensão).
+        worldUnitsPerMeterHorizontal = terrainWorldUnitsPerMeter(
+          terrainMetersPerUnit * TERRAIN_SCALE.planeUnits, TERRAIN_SCALE.planeUnits
+        );
+        //   vertical (1×): MESMA conversão → proporção topográfica real;
+        //   o exagero multiplica SOMENTE a diferença relativa (relativeHeight).
+        demReliefWorld = demReliefWorldUnits(relief, terrainMetersPerUnit * TERRAIN_SCALE.planeUnits, TERRAIN_SCALE.planeUnits);
+        //   origem do modelo: elevation MÍNIMA → Y relativo 0 (base em 0).
+        modelVerticalOrigin = 0;
+        // Geometria real (os dois cenários compartilham a MESMA malha).
+        bakeDemGeometry();
+        // Prova de que o DEM deforma a GEOMETRIA (auditoria técnica, §5):
+        const t3 = terrainGeometry && terrainGeometry.userData && terrainGeometry.userData.terrain;
+        const s3 = t3 && t3.worldStats;
+        if (s3) {
+          console.info(
+            `[3D-DEM] vertices=${(t3.cols * t3.rows).toLocaleString('pt-BR')} ` +
+            `dem_min=${info.min_elevation_m} dem_max=${info.max_elevation_m} relief_real=${relief.toFixed(1)}m ` +
+            `exaggeration=${demExaggeration}x mesh_relief_world=${s3.amplitudeY.toFixed(3)}u ` +
+            `mesh_y_min=${s3.minY.toFixed(3)} mesh_y_max=${s3.maxY.toFixed(3)} base_y=${t3.baseY.toFixed(3)} ` +
+            `world_units_per_meter=${worldUnitsPerMeterHorizontal.toFixed(6)}`
+          );
+        }
+        calculateImpact(); // re-aplica efeitos What-If (mesma base geométrica)
+        updateElevationUI();
 
-        matReal.displacementMap = tex;
-        matReal.displacementScale = terrainScale;
-        matReal.needsUpdate = true;
-        matSim.displacementMap = tex;
-        matSim.needsUpdate = true;
-        calculateImpact(); // re-aplica a escala what-if no lado simulado
-
-        console.info(`DEM GL-30: relevo real ativo (alívio ~${relief.toFixed(0)} m, ${info.min_elevation_m}–${info.max_elevation_m} m)`);
+        const sourceLabel = (info.source || 'unknown').replace(/_/g, ' ').toUpperCase();
+        setDemLine(
+          'ok',
+          `DEM: ${sourceLabel} • ${info.min_elevation_m}–${info.max_elevation_m} m • alívio ~${relief.toFixed(0)} m • escala 1:1 (${worldUnitsPerMeterHorizontal.toFixed(4)} u/m)`
+        );
+        refreshProvenanceAfterDem();
+        console.info(`DEM ${sourceLabel}: relevo real ativo (alívio ~${relief.toFixed(0)} m, ${info.min_elevation_m}–${info.max_elevation_m} m)`);
+        // PR #5f/#5g — o relevo muda o bounding box; reenquadra (mantém ângulo)
+        // com a câmera no meio do volume (topo + lateral visíveis).
+        fitCameraToTerrain();
       } catch (e) {
-        console.warn("Falha ao aplicar heightmap DEM:", e);
+        console.error('heightmap: falha ao aplicar heightmap DEM', e);
+        demGrid = null;
+        demInfo = null;
+        demReliefWorld = 0;
+        demMinElevation = null;
+        demMaxElevation = null;
+        demReliefMeters = 0;
+        worldUnitsPerMeterHorizontal = terrainWorldUnitsPerMeter(
+          terrainMetersPerUnit * TERRAIN_SCALE.planeUnits, TERRAIN_SCALE.planeUnits
+        );
+        modelVerticalOrigin = 0;
+        bakeDemGeometry();
+        updateElevationUI();
+        setDemLine('warn', 'DEM: falha ao aplicar • Elevação aproximada');
+        refreshProvenanceAfterDem();
       }
+    }
+
+    function localWhatIfDelta() {
+      return (factorNitro * 0.0015) + (factorWater * 0.002) - (factorPest * 0.004);
+    }
+
+    /**
+     * Cenário SIMULADO: recompõe a textura do lado direito com a variação
+     * What-If (pixel a pixel). O delta vem do endpoint do backend quando
+     * disponível; senão, do modelo local (mesmas constantes).
+     */
+    function renderSimulatedTexture() {
+      const base = baseTextureForSim || createFallbackTexture();
+      if (!base) {
+        console.error('what-if: sem base de textura para o cenário simulado');
+        simTextureActive = false;
+        return;
+      }
+      const delta = (typeof lastWhatIfDelta === 'number') ? lastWhatIfDelta : localWhatIfDelta();
+      const tex = buildSimulatedCanvasTexture(base, delta);
+      if (!tex) {
+        // Sem canvas: mantém o tint de cor antigo como fallback visual.
+        simTextureActive = false;
+        matSim.map = base;
+        matSim.needsUpdate = true; // geometria DEM permanece (nunca reconstrói)
+        return;
+      }
+      if (simTexture) simTexture.dispose();
+      simTexture = tex;
+      matSim.map = tex;
+      // PR #5e: relevo é GEOMETRIA compartilhada (Real e What-If) — a troca
+      // de textura NUNCA reconstrói nem desloca a malha DEM.
+      matSim.needsUpdate = true;
+      simTextureActive = true;
+    }
+
+    /** Consulta o What-If no backend (debounce) e refina a textura simulada.
+     *  O status interno muda nos números/visual — sem faixa central na tela. */
+    function scheduleWhatIfRefresh() {
+      if (whatIfTimer) clearTimeout(whatIfTimer);
+      whatIfTimer = setTimeout(async () => {
+        try {
+          const res = await SimulationService.calculateWhatIf(
+            factorNitro, factorWater, factorPest,
+            activeFarm.total_area || 42.54
+          );
+          if (res && typeof res.delta_ndvi === 'number') {
+            lastWhatIfDelta = res.delta_ndvi;
+            renderSimulatedTexture();
+            return;
+          }
+        } catch (e) {
+          console.error('what-if: falha ao consultar o backend — usando modelo local', e);
+        }
+        lastWhatIfDelta = null;
+        renderSimulatedTexture();
+      }, 300);
     }
 
     function calculateImpact() {
       const area = activeFarm.total_area || 42.54;
-      const deltaNDVI = (factorNitro * 0.0015) + (factorWater * 0.002) - (factorPest * 0.004);
+      const deltaNDVI = localWhatIfDelta();
       const deltaYield = (deltaNDVI * 45).toFixed(1);
       const totalFinance = (deltaYield * area * 125.0);
 
@@ -1004,12 +3301,17 @@
       document.getElementById('dash-yield-val').innerText = `${deltaYield >= 0 ? '+' : ''}${deltaYield} sc/ha`;
       document.getElementById('dash-money-val').innerText = `${totalFinance >= 0 ? '+' : ''}${totalFinance.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`;
 
-      matSim.displacementScale = Math.max(1.0, terrainScale + (deltaNDVI * 8.0));
+      // PR #5e: o relevo é GEOMETRIA (DEM) — What-If muda apenas a TEXTURA.
+      // O exagero vertical é o único controle de escala e é operado no DEM.
 
-      if (deltaNDVI >= 0) {
-        matSim.color.setRGB(1.0 - (deltaNDVI * 0.5), 1.0 + (deltaNDVI * 0.8), 1.0 - (deltaNDVI * 0.5));
-      } else {
-        matSim.color.setRGB(1.0 + Math.abs(deltaNDVI), 1.0 - Math.abs(deltaNDVI * 1.5), 0.8);
+      // Com textura simulada ativa, a variação visual vem do canvas (map);
+      // o tint de cor só é usado como fallback quando não há canvas.
+      if (!simTextureActive) {
+        if (deltaNDVI >= 0) {
+          matSim.color.setRGB(1.0 - (deltaNDVI * 0.5), 1.0 + (deltaNDVI * 0.8), 1.0 - (deltaNDVI * 0.5));
+        } else {
+          matSim.color.setRGB(1.0 + Math.abs(deltaNDVI), 1.0 - Math.abs(deltaNDVI * 1.5), 0.8);
+        }
       }
     }
 
@@ -1029,7 +3331,11 @@
       document.getElementById('val-dash-w').innerText = `${w >= 0 ? '+' : ''}${w} mm`;
       document.getElementById('val-dash-p').innerText = `${p}%`;
 
+      // PR #4 — regenera a textura do cenário simulado a cada alteração de
+      // parâmetro (diferença visual compreensível real × simulado).
+      renderSimulatedTexture();
       calculateImpact();
+      scheduleWhatIfRefresh();
     }
 
     document.getElementById('slider-3d-n').addEventListener('input', e => syncWhatIfInputs(parseFloat(e.target.value), factorWater, factorPest));
@@ -1039,65 +3345,628 @@
     document.getElementById('slider-dash-w').addEventListener('input', e => syncWhatIfInputs(factorNitro, parseFloat(e.target.value), factorPest));
     document.getElementById('slider-dash-p').addEventListener('input', e => syncWhatIfInputs(factorNitro, factorWater, parseFloat(e.target.value)));
 
-    async function updateTextures() {
-      const dateStr = dates[currentIndex];
-      document.getElementById('date-label').innerText = dateStr.split('-').reverse().join('/');
+    // ---------------------------------------------------------------------
+    // MOTOR DE CARREGAMENTO (PR #5d): CARREGAR → APLICAR → ESPERAR → PRÓXIMA.
+    // `generationId` descarta respostas atrasadas; AbortController cancela
+    // requisições antigas. A timeline só muda após a cena estar aplicada.
+    // ---------------------------------------------------------------------
+    function setPlayButtonUI() {
+      const btn = document.getElementById('play-btn');
+      if (!btn) return;
+      const playing = player.mode === 'playing';
+      btn.innerText = playing ? '⏸ Pause' : '▶ Play';
+      btn.classList.toggle('playing', playing);
+    }
 
-      let textureUrl = `sentinel-21KXQ-${dateStr}/${currentLayer}_cloudless_min_max.png`;
+    /** Re-renderiza resumo+detralhes da proveniência quando o DEM chega. */
+    function refreshProvenanceAfterDem() {
+      if (!player || !player.appliedMeta) return;
+      const dem = buildDemSummaryForUI();
+      renderProvenanceSummary(player.appliedMeta, dem);
+      renderProvenanceDetails(player.appliedMeta, dem);
+    }
 
-      try {
-        const res = await fetch(`${API_URL}/talhao/${activeFarm.id}/texture?layer=${currentLayer}`, { headers: { ...authHeaders() } });
-        if (res.status === 401) { AuthService.logout(); }
-        else if (res.ok) {
-          const data = await res.json();
-          if (data && data.texture_url) textureUrl = data.texture_url;
+    /**
+     * WHAT-IF RECOLHÍVEL (PR #5h): ao recolher vira a aba [⚡ What-If]; como a
+     * função troca APENAS `display`, os valores dos sliders/resultados ficam
+     * INTACTOS e reabrem exatamente onde estavam.
+     */
+    function setWhatIfCollapsed(collapsed) {
+      const panel = document.getElementById('whatif-panel-3d');
+      const tab = document.getElementById('whatif-tab');
+      const toggle = document.getElementById('whatif-toggle');
+      const c = !!collapsed;
+      if (panel) panel.style.display = c ? 'none' : '';
+      if (tab) tab.style.display = c ? '' : 'none';
+      if (toggle) toggle.setAttribute('aria-expanded', String(!c));
+    }
+
+    /** Payload PURA do DEM p/ proveniência (nunca sugere dados fora do meta). */
+    function buildDemSummaryForUI() {
+      if (typeof demInfo === 'undefined' || !demInfo) return null;
+      return {
+        source: demInfo.source,
+        min: demInfo.min,
+        max: demInfo.max,
+        relief: demInfo.relief,
+        unitsPerMeter: (typeof worldUnitsPerMeterHorizontal !== 'undefined') ? worldUnitsPerMeterHorizontal : null,
+        exaggeration: (typeof demExaggeration !== 'undefined') ? demExaggeration : null,
+      };
+    }
+
+    function updateTimelineUI(index) {
+      const dateStr = dates[index] || '';
+      const slider = document.getElementById('timeline-slider');
+      if (slider) slider.value = index;
+      const dateLabel = document.getElementById('date-label');
+      if (dateLabel) dateLabel.innerText = formatSceneDate(dateStr);
+      // Destaque da cena APLICADA: só muda no COMMIT (quem chama aqui).
+      document.querySelectorAll('.date-pill').forEach(el => {
+        const idx = parseInt((el.id || '').replace('date-pill-', ''), 10);
+        el.classList.toggle('active', idx === index);
+      });
+      document.querySelectorAll('.scene-chip').forEach(el => {
+        const idx = parseInt((el.id || '').replace('scene-chip-', ''), 10);
+        el.classList.toggle('active', idx === index);
+        if (idx === index && typeof el.scrollIntoView === 'function') {
+          try { el.scrollIntoView({ inline: 'center', block: 'nearest' }); } catch (e) { /* noop */ }
         }
+      });
+      updateTimelinePillStates();
+    }
+
+    /** Estados discretos da timeline: disponível/carregando/pronta/aplicada/erro. */
+    // [3D-TIMELINE-STATES-START]
+    function updateTimelinePillStates() {
+      const applyStates = (root, idPrefix) => {
+        if (!root || typeof root.querySelectorAll !== 'function') return;
+        root.querySelectorAll('[id^="' + idPrefix + '"]').forEach(el => {
+          const idx = parseInt((el.id || '').replace(idPrefix, ''), 10);
+          const dateStr = dates[idx];
+          if (!dateStr) return;
+          const key = sceneCacheKey(activeFarm.id, activeTalhaoId(), dateStr, currentLayer);
+          const state = timelineSceneState(player, sceneCache, preloadStates, key, idx, currentLayer);
+          el.classList.remove('available', 'loading', 'ready', 'applied', 'error');
+          el.classList.add(state);
+        });
+      };
+      applyStates(document.getElementById('dashboard-dates-bar'), 'date-pill-');
+      applyStates(document.getElementById('scene-timeline'), 'scene-chip-');
+    }
+    // [3D-TIMELINE-STATES-END]
+
+    // =====================================================================
+    // PR #5e — PREPARAÇÃO × REPRODUÇÃO: cache de cenas + fila de preload.
+    //  - cache: farmId|talhao|date|layer (LRU 12) — cena pronta não refaz rede;
+    //  - preload: ≤12 cenas → TODAS; >12 → janela 5 (anterior+atual+3) +
+    //    preenchimento em background; prioridade manual > play > preload;
+    //  - Play só avança para cena PRONTA; se chegar numa incompleta, espera
+    //    AQUELA cena (nunca pula, nunca inventa);
+    //  - preload NUNCA altera a cena aplicada sozinho.
+    // =====================================================================
+
+    /** Id do talhão para a chave de cache (0 = talhão único/desconhecido). */
+    function activeTalhaoId() {
+      const t = activeFarm && activeFarm.talhoes && activeFarm.talhoes[0];
+      return (t && (t.id || t.talhao_id)) || 0;
+    }
+
+    /**
+     * Busca metadata + textura de uma cena e devolve a ENTRADA de cache.
+     * Não aplica nada (preparação pura); Metadados/textura podem vir do cache
+     * do backend (que já evita reprocessar o CDSE) e da LRU local de texturas.
+     */
+    async function fetchSceneForCache(index, layer, controller) {
+      const dateStr = dates[index];
+      const key = sceneCacheKey(activeFarm.id, activeTalhaoId(), dateStr, layer);
+      const dedupe = sceneFetchInFlight.get(key);
+      if (dedupe) return dedupe;
+      const task = (async () => {
+        const res = await fetch(
+          `${API_URL}/talhao/${activeFarm.id}/texture?layer=${layer}&date=${dateStr}`,
+          { headers: { ...authHeaders() }, signal: controller ? controller.signal : undefined }
+        );
+        if (res.status === 401) {
+          AuthService.logout();
+          throw new Error('Sessão expirada.');
+        }
+        if (!res.ok) throw new Error(`metadados HTTP ${res.status} (${dateStr})`);
+        const metadata = await res.json();
+        const textureUrl = resolveTextureUrl(metadata, layer, dateStr);
+        const dataOrigin = metadata && (metadata.data_origin || (metadata.type === 'native' ? 'sentinel' : 'procedural'));
+        const realDataStatus = metadata && metadata.real_data_status;
+        const texKey = textureUrl ? `${activeFarm.id}|${layer}|${textureUrl}` : null;
+        let texture = null;
+        if (textureUrl) {
+          texture = await getCachedTexture(texKey, textureUrl, controller ? controller.signal : undefined);
+        } else {
+          texture = createFallbackTexture();
+        }
+        const meta = metadata || {
+          date: dateStr,
+          data_origin: dataOrigin || 'procedural',
+          real_data_status: realDataStatus || 'error',
+          real_data_message: 'Falha ao obter metadados da cena.',
+        };
+        return {
+          key,
+          farmId: activeFarm.id,
+          talhaoId: activeTalhaoId(),
+          date: dateStr,
+          layer,
+          textureUrl,
+          textureKey: texKey, // p/ invalidar cena se a VRAM evictar
+          meta,
+          texture,
+          dataOrigin,
+          realDataStatus,
+          acquisitionDate: meta.acquisition_date || meta.date || dateStr,
+          cloudCover: (typeof meta.cloud_cover === 'number') ? meta.cloud_cover : null,
+          stats: meta.stats || null,
+          preparedAt: Date.now(),
+        };
+      })();
+      sceneFetchInFlight.set(key, task);
+      task.then(
+        () => sceneFetchInFlight.delete(key),
+        () => sceneFetchInFlight.delete(key),
+      );
+      return task;
+    }
+
+    /**
+     * Crossfade 100% VISUAL (≈260 ms): a textura NOVA entra com opacidade
+     * crescente sobre a antiga e, ao final, torna-se a principal. NUNCA
+     * interpola índices/valores entre duas aquisições — só opacidade.
+     */
+    function crossfadeRealTexture(mapTex) {
+      try {
+        if (!matRealFade || !meshRealFade || !matReal || !meshReal || typeof requestAnimationFrame !== 'function') return false;
+        const fadeMs = 260;
+        applyTextureToMaterial(matRealFade, mapTex);
+        matReal.transparent = true;
+        matRealFade.opacity = 0;
+        meshRealFade.visible = true;
+        matRealFade.needsUpdate = true;
+        const now = (typeof performance !== 'undefined' && performance.now) ? () => performance.now() : () => Date.now();
+        const t0 = now();
+        const step = () => {
+          const t = Math.min(1, (now() - t0) / fadeMs);
+          matReal.opacity = 1 - t;
+          matRealFade.opacity = t;
+          if (t < 1) { requestAnimationFrame(step); return; }
+          // Fade concluído: a nova textura é a principal; o par de fade volta
+          // a ficar oculto (será reutilizado na próxima transição).
+          applyTextureToMaterial(matReal, mapTex);
+          matReal.opacity = 1;
+          matReal.transparent = false;
+          meshRealFade.visible = false;
+          matRealFade.opacity = 0;
+        };
+        requestAnimationFrame(step);
+        return true;
       } catch (e) {
-        console.warn("Usando textura padrão local.", e);
+        console.warn('crossfade: falha — aplicação direta da textura', e);
+        return false;
+      }
+    }
+
+    /** Aplica uma cena pronta (cache ou recém-buscada) nos dois materiais. */
+    function applySceneEntry(entry, index, layer) {
+      // Cenário REAL: crossfade visual quando já existe cena aplicada; senão,
+      // aplicação direta (primeira carga — sem tela grande de loading).
+      const hasPrevious = !!(player.appliedMeta || matReal.map);
+      if (hasPrevious && !crossfadeRealTexture(entry.texture)) {
+        applyTextureToMaterial(matReal, entry.texture);
+      } else if (!hasPrevious) {
+        applyTextureToMaterial(matReal, entry.texture);
+      }
+      // Cenário SIMULADO: textura base atualizada (o renderSimulatedTexture do
+      // COMMIT regenera a projeção What-If sobre ela com a MESMA geometria DEM).
+      applyTextureToMaterial(matSim, entry.texture);
+      baseTextureForSim = entry.texture;
+    }
+
+    /** COMMIT: única função que torna uma cena APLICADA (player + UI + What-If). */
+    function commitScene(index, layer, meta, texture, opts = {}) {
+      currentIndex = index;
+      playerFinishLoad(player, index, layer, true, null, meta);
+      lastSimBaseMeta = buildSimBaseMeta(meta);   // What-If usa a MESMA cena
+      if (lastSimBaseMeta) lastSimBaseMeta.layer = layer; // contrato: layer aplicada
+      updateTimelineUI(index);
+      setLoadingIndicator(false);
+      setSceneOverlay(false);
+      renderProvenanceSummary(meta, buildDemSummaryForUI());
+      renderProvenanceDetails(meta, buildDemSummaryForUI());
+      setScenarioStatus(meta);
+      setSimScenarioStatus(lastSimBaseMeta);
+      renderSimulatedTexture();
+      calculateImpact();
+      updateZoneCards(index);
+      // Pré-carrega a nova layer/janela após cada cena aplicada (em background).
+      // Só depois que o calendário STAC chegou (evita preload da grade antiga).
+      // Preload SÓ com calendário STAC real: datas de demonstração nunca
+      // entram na fila (evita "preparar" cenas que não são aquisições).
+      if (calendarMeta && calendarMeta.is_real) schedulePreloadForTimeline();
+      if (player.mode === 'playing') schedulePlayNext();  // LOADING→READY→intervalo
+      console.info(`cena aplicada: ${dates[index]} (${layer})${opts.fromCache ? ' [cache]' : ''}`);
+      return meta;
+    }
+
+    // ---------- FILA DE PRELOAD (prioridade manual > play > preload) ----------
+    const PRELOAD_PRIORITY_RANK = { manual: 0, play: 1, preload: 2 };
+
+    function preloadKeyFor(index, layer) {
+      return sceneCacheKey(activeFarm.id, activeTalhaoId(), dates[index], layer);
+    }
+
+    function enqueuePreload(index, layer, priority = 'preload') {
+      if (!dates[index]) return false;
+      const key = preloadKeyFor(index, layer);
+      if (sceneCache.has(key)) { preloadStates.set(key, 'ready'); return false; }
+      // Já está sendo buscada (por um load manual/Play ou outro preload):
+      // NUNCA duplica a requisição da mesma cena.
+      if (sceneFetchInFlight.has(key)) { preloadStates.set(key, 'queued'); return false; }
+      if (preloadQueuedKeys.has(key) || preloadStates.get(key) === 'loading') return false;
+      preloadQueuedKeys.add(key);
+      preloadStates.set(key, 'queued');
+      preloadQueue.push({ index, layer, key, priority });
+      renderPreloadStatus();
+      schedulePreloadRun();
+      return true;
+    }
+
+    function schedulePreloadForTimeline(layerOverride) {
+      const idx = player.appliedIndex >= 0 ? player.appliedIndex : currentIndex;
+      const layer = layerOverride || player.appliedLayer || currentLayer;
+      enqueuePreload(idx, layer, 'play');           // atual primeiro (se pronta, no-op)
+      const plan = computePreloadPlan(dates.length, idx);
+      plan.priority.forEach(i => enqueuePreload(i, layer, 'play'));
+      plan.background.forEach(i => enqueuePreload(i, layer, 'preload'));
+    }
+
+    let preloadDrainTimer = null;
+    function schedulePreloadRun() {
+      if (preloadDrainTimer) return;
+      preloadDrainTimer = setTimeout(() => {
+        preloadDrainTimer = null;
+        drainPreloadQueue();
+      }, 0);
+    }
+
+    async function drainPreloadQueue() {
+      if (preloadRunning) return;
+      preloadRunning = true;
+      try {
+        while (preloadQueue.length > 0) {
+          if (preloadActiveCount >= PRELOAD_CONCURRENCY) break; // limite de fetches
+          // Prioridade manual > play > preload (escolhe a melhor pendente).
+          let bestIdx = 0;
+          for (let i = 0; i < preloadQueue.length; i++) {
+            if (PRELOAD_PRIORITY_RANK[preloadQueue[i].priority] < PRELOAD_PRIORITY_RANK[preloadQueue[bestIdx].priority]) bestIdx = i;
+          }
+          const task = preloadQueue.splice(bestIdx, 1)[0];
+          preloadQueuedKeys.delete(task.key);
+          if (sceneCache.has(task.key)) { preloadStates.set(task.key, 'ready'); continue; }
+          preloadActiveCount += 1;
+          preloadStates.set(task.key, 'loading');
+          renderPreloadStatus();
+          try {
+            const entry = await fetchSceneForCache(task.index, task.layer, null);
+            if (entry && entry.texture) {
+              sceneCache.set(entry.key, entry);   // evictados → só o cache descarta
+              preloadStates.set(entry.key, 'ready');
+            } else {
+              preloadStates.set(task.key, 'error');
+            }
+          } catch (err) {
+            if (!isAbortError(err)) {
+              preloadStates.set(task.key, 'error');
+              console.warn(`preload: falha na cena ${dates[task.index]} (${task.layer})`, err);
+            }
+          } finally {
+            preloadActiveCount -= 1;
+            renderPreloadStatus();
+          }
+        }
+      } finally {
+        preloadRunning = false;
+        renderPreloadStatus();
+      }
+    }
+
+    /** Progresso discreto ("Preparando cenas: 3/7") — nunca bloqueia a UI. */
+    function renderPreloadStatus() {
+      const el = document.getElementById('preload-status');
+      if (!el) return;
+      const total = preloadQueue.length + preloadActiveCount;
+      const ready = preloadStates && Array.from(preloadStates.values()).filter(s => s === 'ready').length;
+      if (total > 0) {
+        el.hidden = false;
+        el.classList.remove('done');
+        el.innerText = `Preparando cenas: ${Math.min(ready + 1, total)}/${total}`;
+      } else if (ready > 0) {
+        el.hidden = false;
+        el.classList.add('done');
+        el.innerText = `Cenas prontas: ${ready}`;
+      } else {
+        el.hidden = true;
+        el.innerText = '';
+      }
+    }
+
+    function schedulePlayNext() {
+      if (!playerCanAdvance(player)) return;
+      // PR #5f (cronológico): chegou à cena MAIS RECENTE → PÁRA explicitamente,
+      // mantém a cena selecionada e devolve o botão para "▶ Play" (sem loop).
+      const next = playerNextIndex(player);
+      if (next === null) {
+        playerPause(player);
+        setPlayButtonUI();
+        return;
+      }
+      if (playTimer) clearTimeout(playTimer);
+      playTimer = setTimeout(() => { playTimer = null; advanceToNext(); }, PLAY_INTERVAL_MS);
+    }
+
+    async function advanceToNext() {
+      // Guarda: só avança se estiver PLAYING e a cena atual estiver READY
+      // (durante LOADING/ERROR o intervalo é simplesmente descartado).
+      if (!playerCanAdvance(player)) return;
+      const next = playerNextIndex(player);
+      if (next === null) {
+        // Cena mais recente: pausa (nunca volta para a mais antiga sozinho).
+        playerPause(player);
+        setPlayButtonUI();
+        return;
+      }
+      await loadScene(next, player.appliedLayer || currentLayer, { fromPlay: true });
+      // loadScene reagenda o intervalo ao aplicar com sucesso (mode=playing).
+    }
+
+    /** PAUSA explícita: cancela/invalida o carregamento em andamento e NÃO
+     *  avança automaticamente depois. A cena aplicada permanece intacta. */
+    function pauseTimelinePlay() {
+      playerPause(player);
+      if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+      sceneLoadGate.invalidate();
+      if (activeTextureAbort) { activeTextureAbort.abort(); activeTextureAbort = null; }
+      // Se uma TROCA DE LAYER estava em voo, os materiais continuam com a
+      // camada APLICADA — reverte a UI (select + pills) para bater com ela.
+      if (player.pendingLayer && player.appliedLayer && player.pendingLayer !== player.appliedLayer) {
+        currentLayer = player.appliedLayer;
+        const sel = document.getElementById('layer-select');
+        if (sel) sel.value = currentLayer;
+        document.querySelectorAll('.layer-pill').forEach(btn => {
+          btn.classList.toggle('active', btn.getAttribute('onclick').includes(currentLayer));
+        });
+      }
+      playerCancelLoad(player);            // volta a ready/idle sem erro
+      setLoadingIndicator(false);
+      setSceneOverlay(false);
+      setPlayButtonUI();
+      updateTimelinePillStates();
+    }
+
+    /** Backwards-compat: carrega a data APLICADA atual com a layer atual. */
+    async function updateTextures() {
+      return loadScene(currentIndex, currentLayer);
+    }
+
+    /**
+     * Carrega (metadata → textura → aplica) uma cena.
+     * CENA PRONTA NO CACHE → aplica SEM rede (Play fluido, sem refetch).
+     * CENA INCOMPLETA → espera apenas aquela cena (nunca pula para outra).
+     * Retorna {ok:true, meta, fromCache} quando aplicada; {ok:false,error} em
+     * falha; {cancelled:true} quando uma requisição mais nova/substituição/pause.
+     */
+    async function loadScene(index, layer, opts = {}) {
+      const safe = Math.max(0, Math.min(Number(index) || 0, dates.length - 1));
+      const dateStr = dates[safe];
+      if (!dateStr) {
+        playerFinishLoad(player, safe, layer, false, sceneErrorLabel(''), null);
+        showErrorToast('Datas da timeline indisponíveis.', () => { loadScene(0, currentLayer); });
+        return { ok: false, error: 'calendário vazio' };
+      }
+      const gen = sceneLoadGate.beginLoad();          // invalida carregamentos anteriores
+      if (activeTextureAbort) { activeTextureAbort.abort(); activeTextureAbort = null; }
+      // Intervalo pendente do Play é cancelado: será reagendado após APLICAR.
+      if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+      const controller = new AbortController();
+      activeTextureAbort = controller;
+      playerStartLoad(player, safe, layer);
+      hideErrorToast();
+
+      const cacheKey = sceneCacheKey(activeFarm.id, activeTalhaoId(), dateStr, layer);
+      const cached = sceneCache.get(cacheKey);
+      if (cached && cached.texture && cached.meta) {
+        // PR #5e — CENA PRONTA: aplica instantaneamente, sem espera de rede.
+        applySceneEntry(cached, safe, layer);
+        preloadStates.set(cacheKey, 'ready');
+        const meta = commitScene(safe, layer, cached.meta, cached.texture, { fromCache: true });
+        return { ok: true, meta, fromCache: true };
       }
 
-      // Cache LRU: evita realocar a mesma textura e o .dispose() na evicção
-      // corrige o vazamento de VRAM entre datas/camadas
-      const key = `${activeFarm.id}|${currentLayer}|${textureUrl}`;
-      const tex = await getCachedTexture(key, textureUrl);
+      const loadLabel = `Carregando ${formatSceneDate(dateStr)}…`;
+      setLoadingIndicator(true, loadLabel);
+      setSceneOverlay(true, loadLabel);
 
-      // NDVI = cor (map); DEM GL-30 = relevo (displacementMap).
-      // Sem heightmap disponível, o NDVI segue fazendo o deslocamento (fallback).
-      const disp = heightTexture || tex;
+      let timedOut = false;
+      let loadTimer = null;
+      try {
+        // 1) Metadados + textura sob UM timeout de 75s (nenhuma etapa pode
+        // travar). Timeout NÃO é cancelamento: vira erro → pausa + retry.
+        loadTimer = setTimeout(() => { timedOut = true; controller.abort(); }, 75000);
+        const entry = await fetchSceneForCache(safe, layer, controller);
+        if (!sceneLoadGate.isCurrent(gen)) return { cancelled: true };
+        if (!entry || !entry.texture) throw new Error('cena sem textura');
 
-      matReal.map = tex;
-      matReal.displacementMap = disp;
-      matReal.needsUpdate = true;
+        // 2) GUARDA no cache ANTES de aplicar (Play seguinte não refaz rede).
+        const evicted = sceneCache.set(cacheKey, entry);
+        // Eviction de cena: o blob/objeto URL de textura é descartado apenas
+        // aqui (o cache de textura LRU ainda pode reutilizá-lo; o dispose de
+        // VRAM fica a cargo do LRU de texturas — nunca revoga em uso).
+        if (evicted.length > 0) console.info(`cache de cena: evicted ${evicted.join(', ')}`);
+        preloadStates.set(cacheKey, 'ready');
 
-      matSim.map = tex;
-      matSim.displacementMap = disp;
-      matSim.needsUpdate = true;
-
-      calculateImpact();
-      updateZoneCards(currentIndex);
+        // 3) COMMIT: somente a requisição MAIS RECENTE aplica data/textura/meta.
+        applySceneEntry(entry, safe, layer);
+        const meta = commitScene(safe, layer, entry.meta, entry.texture, {});
+        return { ok: true, meta };
+      } catch (err) {
+        if (!sceneLoadGate.isCurrent(gen) || (isAbortError(err) && !timedOut)) {
+          // Substituída/pause: NUNCA sobrescreve a cena atual nem vira erro.
+          return { cancelled: true };
+        }
+        const msg = sceneErrorLabel(dateStr);
+        playerFinishLoad(player, safe, layer, false, msg, null);
+        lastFailedScene = { index: safe, layer };
+        setLoadingIndicator(false);
+        setSceneOverlay(false);
+        setPlayButtonUI();          // erro → mode paused (botão volta a ▶ Play)
+        showErrorToast(msg, () => { lastFailedScene = null; loadScene(safe, layer); });
+        console.error(`texture: erro ao carregar cena ${dateStr}`, err);
+        return { ok: false, error: msg };
+      } finally {
+        if (loadTimer) clearTimeout(loadTimer);
+        if (gen === sceneLoadGate.currentGeneration()) activeTextureAbort = null;
+      }
     }
 
     const slider = document.getElementById('timeline-slider');
-    slider.addEventListener('input', e => { 
+    slider.addEventListener('input', e => {
       selectDateIndex(parseInt(e.target.value));
     });
-    
-    document.getElementById('layer-select').addEventListener('change', e => { 
+
+    document.getElementById('layer-select').addEventListener('change', e => {
       setSpectralLayer(e.target.value);
     });
 
-    document.getElementById('play-btn').addEventListener('click', () => {
-      isPlaying = !isPlaying;
-      document.getElementById('play-btn').innerText = isPlaying ? "⏸ Pause" : "▶ Play";
-      if (isPlaying) {
-        playInterval = setInterval(() => {
-          const nextIdx = (currentIndex + 1) % dates.length;
-          selectDateIndex(nextIdx);
-        }, 1400);
-      } else {
-        clearInterval(playInterval);
-      }
+    // ---------- PR #5e/5f — calendário REAL: períodos + personalizado ----------
+    const PERIOD_OPTIONS = [30, 60, 90, 180, 365];
+    const PERIOD_LABELS = { 30: '30d', 60: '60d', 90: '90d', 180: '6m', 365: '1a' };
+
+    function renderPeriodPills() {
+      const holder = document.getElementById('period-pills');
+      if (!holder) return;
+      holder.innerHTML = '';
+      PERIOD_OPTIONS.forEach(p => {
+        const btn = document.createElement('button');
+        btn.className = `period-pill ${currentPeriod === p ? 'active' : ''}`;
+        btn.type = 'button';
+        btn.innerText = PERIOD_LABELS[p] || `${p} dias`;
+        btn.onclick = () => applyPeriod(p);
+        holder.appendChild(btn);
+      });
+      const customBtn = document.createElement('button');
+      customBtn.className = `period-pill ${currentPeriod === 'custom' ? 'active' : ''}`;
+      customBtn.type = 'button';
+      customBtn.innerText = 'Personalizado';
+      customBtn.onclick = () => {
+        currentPeriod = 'custom';
+        renderPeriodPills();
+        const row = document.getElementById('custom-period-row');
+        if (row) row.hidden = false;
+      };
+      holder.appendChild(customBtn);
+    }
+
+    function applyPeriod(p) {
+      currentPeriod = p;
+      renderPeriodPills();
+      const row = document.getElementById('custom-period-row');
+      if (row) row.hidden = true;
+      refreshRealTimeline(p, null, null);
+    }
+
+    function applyCustomPeriod() {
+      const sEl = document.getElementById('custom-start');
+      const eEl = document.getElementById('custom-end');
+      if (!sEl || !eEl || !sEl.value || !eEl.value) return;
+      currentPeriod = 'custom';
+      renderPeriodPills();
+      refreshRealTimeline('custom', sEl.value, eEl.value);
+    }
+
+    document.getElementById('btn-latest').addEventListener('click', () => {
+      // PR #5f: "Mais recente" = cena válida MAIS RECENTE do catálogo,
+      // resolvida por `latestSceneIndex` (preferência explícita por
+      // `latest_date` da API; fallback documentado = dates[0] do contrato DESC).
+      const latestIdx = latestSceneIndex(dates, calendarMeta && calendarMeta.latest_date);
+      if (latestIdx >= 0) selectDateIndex(latestIdx);
     });
+    document.getElementById('custom-apply').addEventListener('click', applyCustomPeriod);
+
+    // Exagero vertical: 1×/2×/3× — APENAS visual (elevações reais intactas).
+    document.querySelectorAll('.exag-btn').forEach(btn => {
+      btn.addEventListener('click', () => setExaggeration(Number(btn.getAttribute('data-exag'))));
+    });
+
+    // Pausa entre cenas do Play: lê a preferência da UI (1/1,6/3/5 s).
+    const playIntervalSel = document.getElementById('play-interval');
+    if (playIntervalSel) {
+      playIntervalSel.addEventListener('change', () => {
+        const ms = parseInt(playIntervalSel.value, 10);
+        PLAY_INTERVAL_MS = (ms >= 500 && ms <= 15000) ? ms : 1600;
+      });
+    }
+
+    // PR #5f — Resetar visão: reenquadra o talhão (data/layer/relevo intactos).
+    const resetCamBtn = document.getElementById('btn-reset-camera');
+    if (resetCamBtn) resetCamBtn.addEventListener('click', () => fitCameraToTerrain());
+
+    // PR #5f — setas da timeline: rolam a faixa de cenas (5, 10, 20+ cenas).
+    function scrollSceneTimeline(dir) {
+      const scroller = document.getElementById('scene-timeline');
+      if (!scroller) return;
+      scroller.scrollBy({ left: dir * 240, behavior: 'smooth' });
+    }
+    const tlPrev = document.getElementById('tl-prev');
+    const tlNext = document.getElementById('tl-next');
+    if (tlPrev) tlPrev.addEventListener('click', () => scrollSceneTimeline(-1));
+    if (tlNext) tlNext.addEventListener('click', () => scrollSceneTimeline(1));
+
+    document.getElementById('play-btn').addEventListener('click', () => {
+      hideErrorToast();
+      if (player.mode === 'playing') {
+        pauseTimelinePlay();
+        return;
+      }
+      // PLAY: continua visualmente ativo mesmo durante loading; o avanço
+      // automático só é disparado quando a cena atual está READY.
+      playerPlay(player);
+      setPlayButtonUI();
+      if (player.status === 'ready' || player.status === 'idle') {
+        // PR #5f (cronológico): se a cena aplicada já é a MAIS RECENTE, o Play
+        // reinicia explicitamente pela mais ANTIGA (rever a evolução completa);
+        // caso contrário, continua para a frente a partir da cena atual.
+        const restart = chronoPlayStartIndex(player);
+        if (restart !== null) {
+          loadScene(restart, player.appliedLayer || currentLayer);
+        } else if (player.status === 'ready') {
+          schedulePlayNext();
+        } else {
+          loadScene(player.appliedIndex, currentLayer);
+        }
+      } else if (player.status === 'error' && lastFailedScene) {
+        // Play também serve de RETRY: nunca fica preso após erro.
+        const retry = lastFailedScene;
+        lastFailedScene = null;
+        loadScene(retry.index, retry.layer);
+      }
+      // Se estiver LOADING, loadScene reagendará ao aplicar (se ainda playing).
+    });
+
+    // Drawer retrátil de proveniência (nunca fixo sobre o terreno)
+    const provToggle = document.getElementById('prov-toggle');
+    if (provToggle) {
+      provToggle.addEventListener('click', () => {
+        const details = document.getElementById('prov-details');
+        if (!details) return;
+        const open = details.classList.toggle('open');
+        provToggle.innerText = open ? 'Fechar' : 'Detalhes';
+      });
+    }
 
     function onWindowResize() {
       const container = document.getElementById('canvas-container');
@@ -1131,6 +4000,7 @@
       requestAnimationFrame(animate);
 
       controls.update();
+      debug3dUpdate();   // ?debug3d=1 (no-op sem o parâmetro)
 
       const container = document.getElementById('canvas-container');
       const w = container.clientWidth || window.innerWidth;
@@ -1149,6 +4019,98 @@
     }
     // O loop inicia sob demanda via startRenderLoop() ao abrir a aba 3D
     // (antes: `animate();` mantinha o rAF ativo para sempre desde o load).
+
+    // =====================================================================
+    // PR #5g — ?debug3d=1: wireframe + bounding box + eixos + estatísticas da
+    // malha. Habilita SOMENTE com o parâmetro explícito na URL (nunca default).
+    // =====================================================================
+    let debug3dEnabled = false;
+    let debug3dAttached = false;
+    let debugAxesReal = null, debugAxesSim = null;
+    let debugBoxReal = null, debugBoxSim = null;
+    let debugWireReal = null, debugWireSim = null;
+    const debugOverlay = document.createElement('div');
+
+    function debugOverlayText() {
+      const t = terrainGeometry && terrainGeometry.userData && terrainGeometry.userData.terrain;
+      if (!t || !t.worldStats) return '[3D-DEBUG] aguardando terreno…';
+      const s = t.worldStats;
+      const vc = (t.cols * t.rows).toLocaleString('pt-BR');
+      return [
+        `[3D-DEBUG] vértices=${vc} triângulos≈${(vc * 2).toLocaleString('pt-BR')}`,
+        `DEM real: ${demMinElevation ?? '—'}–${demMaxElevation ?? '—'} m • alívio ${demReliefMeters.toFixed(1)} m`,
+        `exagero=${demExaggeration}× • relevo na malha=${s.amplitudeY.toFixed(3)} u`,
+        `Y mínimo=${s.minY.toFixed(3)} • Y máximo=${s.maxY.toFixed(3)} • base=${t.baseY.toFixed(3)}`,
+        `escala h=${worldUnitsPerMeterHorizontal.toFixed(6)} u/m • extent=${s.extent.toFixed(2)} u`,
+        `render: ${renderer.info.render.calls} calls • ${renderer.info.render.triangles} tris`,
+      ].join('\n');
+    }
+
+    function ensureDebug3D() {
+      if (debug3dAttached && debugWireReal && debugWireReal.geometry === terrainGeometry) return;
+      const remove = (scene, obj) => { if (obj) { scene.remove(obj); if (obj.geometry) obj.geometry.dispose(); } };
+      remove(sceneReal, debugAxesReal); remove(sceneReal, debugBoxReal); remove(sceneReal, debugWireReal);
+      remove(sceneSim, debugAxesSim); remove(sceneSim, debugBoxSim); remove(sceneSim, debugWireSim);
+      debugAxesReal = debugAxesSim = debugBoxReal = debugBoxSim = debugWireReal = debugWireSim = null;
+      if (!terrainGeometry) { debug3dAttached = false; return; }
+      const t = terrainGeometry.userData && terrainGeometry.userData.terrain;
+      const s = t && t.worldStats;
+      const extent = s ? s.extent : 50;
+      const box = s ? new THREE.Box3(
+        new THREE.Vector3(s.minX, t.baseY, s.minZ),
+        new THREE.Vector3(s.maxX, s.maxY, s.maxZ)
+      ) : new THREE.Box3(new THREE.Vector3(-25, -1, -25), new THREE.Vector3(25, 0, 25));
+      const mk = (scene) => {
+        const axes = new THREE.AxesHelper(Math.max(extent * 0.75, 10));
+        axes.position.set(0, box.min.y, 0);
+        const bbox = new THREE.Box3Helper(box, 0xff7b72);
+        const wire = new THREE.LineSegments(
+          new THREE.WireframeGeometry(terrainGeometry),
+          new THREE.LineBasicMaterial({ color: 0xffa657, transparent: true, opacity: 0.55 })
+        );
+        wire.rotation.x = -Math.PI / 2;      // mesma orientação da malha
+        scene.add(axes); scene.add(bbox); scene.add(wire);
+        return { axes, bbox, wire };
+      };
+      const r = mk(sceneReal), s2 = mk(sceneSim);
+      debugAxesReal = r.axes; debugBoxReal = r.bbox; debugWireReal = r.wire;
+      debugAxesSim = s2.axes; debugBoxSim = s2.bbox; debugWireSim = s2.wire;
+      debug3dAttached = true;
+    }
+
+    function debug3dUpdate() {
+      if (!debug3dEnabled) return;
+      ensureDebug3D();
+      debugOverlay.textContent = debugOverlayText();
+    }
+
+    function initDebug3D() {
+      const q = new URLSearchParams(window.location.search);
+      debug3dEnabled = q.get('debug3d') === '1' || q.get('debug3d') === 'true';
+      if (!debug3dEnabled) return;
+      debugOverlay.style.cssText =
+        'position:fixed;top:64px;left:16px;z-index:9999;background:rgba(0,0,0,.82);' +
+        'color:#7ee787;font:11px/1.5 monospace;padding:8px 10px;border:1px solid #2ea043;' +
+        'border-radius:6px;white-space:pre;pointer-events:none;max-width:420px;';
+      document.body.appendChild(debugOverlay);
+      console.warn('[3D-DEBUG] modo debug3d ATIVO (wireframe/bbox/eixos/estatísticas)');
+    }
+    initDebug3D();
+
+    // =====================================================================
+    // PR #5h — WHAT-IF RECOLHÍVEL: ao recolher vira a aba [⚡ What-If]; os
+    // VALORES dos sliders/resultados são preservados (o DOM dos inputs nunca
+    // é alterado) e reabre exatamente onde estava.
+    // =====================================================================
+    const whatifToggleBtn = document.getElementById('whatif-toggle');
+    if (whatifToggleBtn) {
+      whatifToggleBtn.addEventListener('click', () => {
+        const panel = document.getElementById('whatif-panel-3d');
+        setWhatIfCollapsed(!(panel && panel.style.display === 'none'));
+      });
+    }
+    const whatifTabBtn = document.getElementById('whatif-tab');
+    if (whatifTabBtn) whatifTabBtn.addEventListener('click', () => setWhatIfCollapsed(false));
 
     loadActiveFarm();
   </script>

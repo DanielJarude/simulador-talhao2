@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Playtest 3D PR #5g — DEM sintético 592–615 m (dev apenas)</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: #0d1117; color: #f0f6fc;
+      font-family: 'Segoe UI', Roboto, Helvetica, sans-serif; display: flex; flex-direction: column; }
+    header { background: #161b22; border-bottom: 1px solid #30363d; padding: 10px 16px;
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    header h1 { font-size: 0.95rem; margin: 0; color: #58a6ff; font-weight: 800; }
+    header .warn { font-size: 0.7rem; color: #e3b341; }
+    #controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    #controls button { background: #21262d; color: #c9d1d9; border: 1px solid #30363d;
+      border-radius: 6px; padding: 6px 12px; font-size: 0.78rem; font-weight: 700; cursor: pointer; }
+    #controls button:hover { border-color: #58a6ff; color: #58a6ff; }
+    #controls button.active { background: #1f6feb; color: #fff; border-color: #388bfd; }
+    main { flex: 1; position: relative; }
+    iframe { width: 100%; height: 100%; border: 0; }
+    #stats {
+      position: absolute; top: 10px; right: 10px; z-index: 5; max-width: 460px;
+      background: rgba(0,0,0,.82); border: 1px solid #2ea043; border-radius: 8px;
+      padding: 8px 12px; font: 11px/1.55 monospace; color: #7ee787; white-space: pre-wrap;
+      pointer-events: none; overflow: auto; max-height: 70%;
+    }
+    #logs { position: absolute; bottom: 10px; left: 10px; z-index: 4; max-width: 720px;
+      background: rgba(0,0,0,.8); border: 1px solid #30363d; border-radius: 8px;
+      padding: 6px 10px; font: 10px/1.5 monospace; color: #8b949e; max-height: 30%; overflow: auto; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>⛰️ Playtest PR #5g — DEM sintético (592–615 m, alívio ~23 m)</h1>
+    <span class="warn">⚠️ FERRAMENTA DE DESENVOLVIMENTO — nunca usada em produção. O DEM e as texturas
+      são SINTÉTICOS (rotulados); o pipeline 3D (geometria, escala, exagero, laterais, sombras,
+      câmera, Real×What-If) é o MESMO de index.html.</span>
+    <div id="controls">
+      <span style="font-size:0.72rem;color:#8b949e;">Exagero:</span>
+      <button data-exag="1">1×</button>
+      <button data-exag="2" class="active">2×</button>
+      <button data-exag="3">3×</button>
+      <button data-exag="5">5×</button>
+      <button id="btn-reset">⟲ Resetar visão</button>
+      <button id="btn-orbit">🔄 Orbitar ~90°</button>
+      <button id="btn-reload">↻ Recarregar cena</button>
+    </div>
+  </header>
+  <main>
+    <iframe id="frame" src="../index.html?debug3d=1" title="Simulador 3D (pipeline real)"></iframe>
+    <div id="stats">Aguardando cena…</div>
+    <div id="logs"></div>
+  </main>
+  <script>
+    // =====================================================================
+    // PR #5g — HARNESS DE PLAYTEST (somente dev):
+    //  1. injeta um DEM sintético de 592–615 m (alívio ~23 m) como se fosse
+    //     a resposta do endpoint real (mesmo caminho de código: loadHeightmap
+    //     → texture cache → sampleDemTexture → bakeDemGeometry);
+    //  2. injeta um calendário STAC "real" (7 datas) + texturas by layer;
+    //  3. NÃO altera index.html — tudo via janela do iframe (mesma origem).
+    // =====================================================================
+    const frame = document.getElementById('frame');
+    const statsEl = document.getElementById('stats');
+    const logsEl = document.getElementById('logs');
+    const logLines = [];
+    let w = null;
+
+    function makeDemDataUrl() {
+      const size = 256;
+      const c = document.createElement('canvas');
+      c.width = size; c.height = size;
+      const ctx = c.getContext('2d');
+      const img = ctx.createImageData(size, size);
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const u = x / (size - 1), v = y / (size - 1);
+          // Relevo suave com morros/depressões (nada de montanhas artificiais).
+          let h = 0.45
+            + 0.22 * Math.sin(2 * Math.PI * (u * 0.9 + 0.13)) * Math.cos(2 * Math.PI * (v * 0.7))
+            + 0.15 * Math.sin(2 * Math.PI * (u * 1.7 + v * 1.1) + 0.4)
+            + 0.08 * Math.cos(2 * Math.PI * (u * 3.1 - v * 2.3));
+          h = Math.max(0, Math.min(1, h));
+          const r = Math.round(h * 255);
+          const i = (y * size + x) * 4;
+          img.data[i] = r; img.data[i + 1] = r; img.data[i + 2] = r; img.data[i + 3] = 255;
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+      return c.toDataURL('image/png');
+    }
+
+    function makeTextureDataUrl(layer, date) {
+      const size = 256;
+      const c = document.createElement('canvas');
+      c.width = size; c.height = size;
+      const ctx = c.getContext('2d');
+      const img = ctx.createImageData(size, size);
+      const seed = Number(String(date).replace(/\D/g, '') || 0);
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const u = x / (size - 1), v = y / (size - 1);
+          const zone = 0.5 + 0.5 * Math.sin(2 * Math.PI * (u * 1.3 + v * 0.9) + seed * 0.001);
+          const vig = 0.55 + 0.45 * zone;
+          let r, g, b;
+          if (layer === 'rgb') { r = 90 + 100 * zone; g = 120 + 80 * vig; b = 60; }
+          else if (layer === 'evi') { r = 40 + 90 * zone; g = 90 + 120 * vig; b = 40; }
+          else if (layer === 'ndre') { r = 70 + 60 * zone; g = 110 + 100 * vig; b = 80; }
+          else if (layer === 'ndmi') { r = 45 + 55 * zone; g = 100 + 90 * vig; b = 120; }
+          else { /* ndvi */ r = 60 + 60 * zone; g = 90 + 130 * vig; b = 45; }
+          const i = (y * size + x) * 4;
+          img.data[i] = r; img.data[i + 1] = g; img.data[i + 2] = b; img.data[i + 3] = 255;
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+      return c.toDataURL('image/png');
+    }
+
+    const DEM_DATA_URL = makeDemDataUrl();
+    const DATES = ['2026-08-30', '2026-08-27', '2026-08-15', '2026-07-31', '2026-07-26', '2026-07-18', '2026-07-16'];
+    const TEXTURES = new Map(); // key layer|date
+
+    function patchFetch(win) {
+      const orig = win.fetch.bind(win);
+      win.fetch = (url, opts) => {
+        const u = String(url);
+        if (u.includes('/dates')) {
+          return Promise.resolve(new Response(JSON.stringify({
+            source: 'sentinel-cdse', is_real: true, dates: DATES.slice(),
+            latest_date: '2026-08-30', count: DATES.length, status: 'ok',
+            calendar: DATES.map(d => ({ date: d, cloud_cover: 6 + (d.charCodeAt(9) % 20) })),
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+        }
+        const mTex = u.match(/\/texture\?layer=([a-z0-9]+)&date=([0-9-]+)/i);
+        if (mTex) {
+          const layer = mTex[1], date = mTex[2];
+          const key = layer + '|' + date;
+          if (!TEXTURES.has(key)) TEXTURES.set(key, makeTextureDataUrl(layer, date));
+          return Promise.resolve(new Response(JSON.stringify({
+            data_origin: 'sentinel', real_data_status: 'ok',
+            acquisition_date: date, collection: 'sentinel-2-l2a',
+            processing_level: 'L2A', platform: 'Sentinel-2B',
+            product_id: 'PLAYTEST-' + date.replace(/-/g, ''),
+            provider: 'Copernicus (harness dev)',
+            cloud_cover: 6 + (date.charCodeAt(9) % 20),
+            valid_pixel_percentage: 96.5,
+            texture_url: TEXTURES.get(key),
+            texture_label: 'SINTÉTICO (playtest dev)',
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+        }
+        return orig(url, opts);
+      };
+    }
+
+    function captureLogs(win) {
+      const orig = win.console.info.bind(win.console);
+      win.console.info = (...args) => {
+        const line = args.join(' ');
+        if (/\[3D-DEM\]|\[3D-CAM\]|\[3D-DATES\]|cena aplicada/.test(line)) {
+          logLines.unshift(line);
+          logsEl.textContent = logLines.slice(0, 14).join('\n');
+        }
+        orig(...args);
+      };
+    }
+
+    async function boot() {
+      w = frame.contentWindow;
+      patchFetch(w);
+      captureLogs(w);
+      // Pipeline REAL: calendário → cena → DEM (mesmas funções de index.html).
+      await w.refreshRealTimeline(60);
+      // Cena aplicada (SINTÉTICA) no pipeline real:
+      await w.updateTextures().catch(() => {});
+      // DEM sintético 592–615 m pelo caminho real (cache + bake + fit):
+      w.SatelliteService.getTalhaoHeightmap = async () => ({
+        available: true, heightmap_url: DEM_DATA_URL,
+        min_elevation_m: 592, max_elevation_m: 615,
+        source: 'PLAYTEST_SYNTHETIC', provider: 'harness dev (SINTÉTICO)',
+      });
+      await w.loadHeightmap();
+      refreshStats();
+    }
+
+    function refreshStats() {
+      if (!w || typeof w.debugOverlayText !== 'function') return;
+      let txt;
+      try { txt = w.debugOverlayText(); } catch (e) { txt = 'erro: ' + e.message; }
+      statsEl.textContent =
+        'DEM SINTÉTICO: 592–615 m (alívio ~23 m) — verifique o log [3D-DEM]\n\n' + txt;
+    }
+
+    frame.addEventListener('load', () => { boot().catch(e => { statsEl.textContent = 'ERRO: ' + e.message; }); });
+
+    document.querySelectorAll('#controls [data-exag]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (!w) return;
+        w.setExaggeration(Number(btn.getAttribute('data-exag')));
+        document.querySelectorAll('#controls [data-exag]').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        setTimeout(refreshStats, 120);
+      });
+    });
+    document.getElementById('btn-reset').addEventListener('click', () => {
+      if (w) { w.fitCameraToTerrain(); setTimeout(refreshStats, 120); }
+    });
+    document.getElementById('btn-reload').addEventListener('click', () => { frame.contentWindow.location.reload(); });
+    document.getElementById('btn-orbit').addEventListener('click', () => {
+      if (!w) return;
+      const canvas = w.document.querySelector('#canvas-container canvas');
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+      const steps = 40, dx = rect.width * 0.012; // ~metade da largura ⇒ ~90°
+      const ev = (type, x, y) => {
+        canvas.dispatchEvent(new w.MouseEvent(type, {
+          bubbles: true, clientX: x, clientY: y, button: 0, buttons: 1,
+        }));
+      };
+      ev('mousedown', cx, cy);
+      for (let i = 1; i <= steps; i++) ev('mousemove', cx + dx * i, cy);
+      ev('mouseup', cx + dx * steps, cy);
+      setTimeout(refreshStats, 300);
+    });
+
+    setInterval(refreshStats, 1500);
+  </script>
+</body>
+</html>

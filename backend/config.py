@@ -4,13 +4,24 @@ Configuração centralizada da API (padrão 12-factor).
 Todos os valores podem ser sobrescritos por variáveis de ambiente
 ou por um arquivo `.env` na pasta do backend (veja `.env.example`).
 """
+from pathlib import Path
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+#: Diretório do módulo de configuração (independe do CWD do processo).
+_BACKEND_DIR = Path(__file__).resolve().parent
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # O `.env` é resolvido contra a PASTA DO MÓDULO (backend/.env) e,
+        # como reforço, contra o CWD. Assim o servidor perde as credenciais
+        # CDSE se for iniciado de `backend/` OU da raiz do repositório.
+        # (Antes: `env_file=".env"` — relativo ao CWD → backend/.env era
+        # ignorado quando o processo subia da raiz, caindo silenciosamente
+        # no "not_configured" e no calendário fixo.)
+        env_file=[_BACKEND_DIR / ".env", ".env"],
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -77,6 +88,29 @@ class Settings(BaseSettings):
         "2025-12-10", "2025-12-18", "2026-01-27", "2026-02-11", "2026-03-08",
     ]
     spectral_indices: list[str] = ["ndvi", "evi", "ndre", "ndmi"]
+
+    # --- Copernicus Data Space Ecosystem (CDSE) — dados REAIS ---
+    # PR #4 etapa 2: Sentinel-2 L2A real via CDSE (STAC + Process API).
+    # Sem client_id/client_secret o serviço fica DESATIVADO e o sistema usa o
+    # fallback procedural explícito — nunca quebra, nunca inventa dado real.
+    # Endpoints confirmados na documentação oficial (documentation.dataspace.
+    # copernicus.eu): token OAuth2 client_credentials, Catalog/STAC e Process.
+    cdse_enabled: bool = True                   # desativa tudo se False
+    cdse_client_id: str = ""                    # nunca versionar segredo
+    cdse_client_secret: str = ""                # nunca versionar segredo
+    cdse_token_url: str = (
+        "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/"
+        "protocol/openid-connect/token"
+    )
+    cdse_stac_url: str = "https://stac.dataspace.copernicus.eu/v1"
+    cdse_process_url: str = "https://sh.dataspace.copernicus.eu/process/v1"
+    cdse_lookback_days: int = Field(default=60, ge=1, le=730)
+    cdse_max_cloud_cover: float = Field(default=20.0, ge=0.0, le=100.0)
+    cdse_timeout_s: float = Field(default=45.0, gt=0.0, le=300.0)
+    cdse_cache_hours: int = Field(default=12, ge=0, le=720)
+    cdse_retry_on_429: bool = True
+    cdse_retry_backoff_s: float = Field(default=2.0, gt=0.0, le=30.0)
+    cdse_raster_size: int = Field(default=256, ge=64, le=512)
 
 
 settings = Settings()

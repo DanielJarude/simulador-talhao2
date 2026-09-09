@@ -176,6 +176,54 @@ def process_talhao_heightmap(
         "source": "none",
     }
 
+    # --- PR #4b — DEM REAL via CDSE (Process API): COPERNICUS_30 → 90 ---
+    # Só quando configurado; sem credenciais a tentativa é pulada (fallback).
+    try:
+        from services.copernicus_service import (
+            fetch_dem_png,
+            is_configured,
+        )
+
+        if is_configured():
+            # talhao_bounds devolve (min_lat, max_lat, min_lon, max_lon);
+            # o CDSE espera [minLon, minLat, maxLon, maxLat] — converte aqui.
+            latlon = talhao_bounds(lat, lon, area_ha, kml_coordinates)
+            bounds = (latlon[2], latlon[0], latlon[3], latlon[1])
+            for instance, source in (
+                ("COPERNICUS_30", "copernicus_30"),
+                ("COPERNICUS_90", "copernicus_90"),
+            ):
+                dem = fetch_dem_png(bounds, size, instance=instance)
+                if dem:
+                    folder = os.path.join(
+                        BASE_DIR, "dynamic_talhoes", f"farm_{farm_id}_talhao_{talhao_id}"
+                    )
+                    os.makedirs(folder, exist_ok=True)
+                    out_path = os.path.join(folder, "heightmap.png")
+                    with open(out_path, "wb") as fh:
+                        fh.write(dem["png_bytes"])
+                    logger.info(
+                        "DEM: heightmap REAL %s×%s via CDSE %s (%.2f–%.2f m)",
+                        size, size, source, dem["min_elevation_m"], dem["max_elevation_m"],
+                    )
+                    return {
+                        "available": True,
+                        "farm_id": farm_id,
+                        "talhao_id": talhao_id,
+                        "size": size,
+                        "min_elevation_m": dem["min_elevation_m"],
+                        "max_elevation_m": dem["max_elevation_m"],
+                        "bounds": [round(bounds[0], 6), round(bounds[1], 6),
+                                   round(bounds[2], 6), round(bounds[3], 6)],
+                        "source": source,
+                        "heightmap_url": (
+                            f"{settings.public_base_url}/api/talhao/{farm_id}/heightmap.png?size={size}"
+                        ),
+                        "reason": None,
+                    }
+    except Exception:
+        logger.exception("DEM: falha inesperada na tentativa CDSE — usando fallback.")
+
     tif_path = _find_local_tile(lat, lon) or _download_tile(srtm_tile_name(lat, lon))
     if not tif_path:
         unavailable["reason"] = (

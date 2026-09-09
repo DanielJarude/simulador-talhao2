@@ -2,11 +2,11 @@ import logging
 import os
 import secrets
 from contextlib import asynccontextmanager
+from datetime import date
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response, StreamingResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from sqlalchemy.orm import Session
 
 import models
@@ -15,6 +15,13 @@ from config import settings
 from database import Base, SessionLocal, engine, get_db
 from security import create_access_token, get_current_user, get_auth_context, hash_password, require_role, verify_password
 from services.analytics_service import get_farm_temporal_series
+from services.copernicus_service import (
+    CALENDAR_FALLBACK_SOURCE,
+    CALENDAR_REAL_SOURCE,
+    cdse_dir,
+    fetch_real_calendar,
+    process_farm_layer,
+)
 from services.dem_service import process_talhao_heightmap
 from services.pdf_service import generate_farm_pdf_report
 from services.satellite_service import generate_all_spectral_layers
@@ -156,7 +163,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.mount("/dynamic_talhoes", StaticFiles(directory=dynamic_path), name="dynamic_talhoes")
+# PR #4 — o mount público /dynamic_talhoes foi REMOVIDO: os PNGs por fazenda
+# são privados e só podem ser acessados pelas rotas autenticadas
+# (`/api/talhao/{id}/texture.png` e `/api/talhao/{id}/heightmap.png`).
+# O diretório continua sendo o cache físico usado pelos serviços.
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +182,22 @@ def _get_farm_or_404(db: Session, farm_id: int) -> models.Farm:
 def _resolve_talhao_id(farm: models.Farm) -> int:
     """ID real do 1º talhão da fazenda (corrige o bug multi-talhão)."""
     return farm.talhoes[0].id if farm.talhoes else farm.id
+
+
+def _sentinel_native_texture_path(layer: str, date: str) -> str:
+    """
+    Caminho físico de uma textura Sentinel-2 nativa de demonstração.
+
+    Os datasets `sentinel-21KXQ-*` NÃO são versionados (ficam fora do Git /
+    na máquina do desenvolvedor). Quando ausentes — como em qualquer clone
+    limpo — o pipeline 3D usa o fallback explícito (textura procedural
+    autenticada + `data_origin="procedural"`), nunca um asset 404 silencioso.
+    """
+    return os.path.join(
+        BASE_PROJECT_DIR,
+        f"sentinel-21KXQ-{date}",
+        f"{layer}_cloudless_min_max.png",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -430,17 +456,85 @@ def delete_farm(
 def get_talhao_texture(
     farm_id: int,
     layer: schemas.SpectralLayer = "ndvi",
+    date: str | None = Query(default=None, description="Passagem Sentinel-2 (YYYY-MM-DD)"),
     db: Session = Depends(get_db),
     user: models.User = Depends(get_current_user),  # exige Bearer token
 ):
     # Ownership: só dono | admin | farm compartilhada (PR #3 — privacidade).
     farm = _require_farm_access(db, farm_id, user)
+    request_date = date or (settings.sentinel_dates[0] if settings.sentinel_dates else "2025-04-07")
+
+    # PR #4b — DADOS REAIS via CDSE (Sentinel-2 L2A) quando configurado.
+    # A chamada NUNCA quebra: sem credenciais/sem cena/erro → status explícito
+    # e o fluxo cai no fallback procedural (nunca tela branca).
+    talhao = farm.talhoes[0] if farm.talhoes else None
+    try:
+        cdse_result = process_farm_layer(
+            farm_id=farm.id,
+            talhao_id=_resolve_talhao_id(farm),
+            lat=farm.latitude,
+            lon=farm.longitude,
+            area_ha=farm.total_area,
+            kml_coordinates=talhao.kml_coordinates if talhao else None,
+            layer=layer,
+            date_str=request_date,
+        )
+    except Exception:
+        logger.exception("CDSE: falha inesperada no processamento")
+        cdse_result = {
+            "data_origin": "procedural",
+            "real_data_status": "error",
+            "real_data_message": "DADOS REAIS INDISPONÍVEIS (ERRO INESPERADO)",
+            "layer": layer,
+            "date": request_date,
+        }
+
+    if cdse_result.get("data_origin") == "sentinel" and cdse_result.get("texture_url"):
+        # Proveniência + textura REAL (fase 13). `type` mantém compatibilidade.
+        return {
+            "type": "dynamic",
+            "data_origin": "sentinel",
+            "date": cdse_result.get("date", request_date),
+            "texture_url": cdse_result["texture_url"],
+            "collection": cdse_result.get("collection"),
+            "product_id": cdse_result.get("product_id"),
+            "acquisition_date": cdse_result.get("acquisition_date"),
+            "cloud_cover": cdse_result.get("cloud_cover"),
+            "processing_level": cdse_result.get("processing_level"),
+            "bands": cdse_result.get("bands"),
+            "valid_pixel_percentage": cdse_result.get("valid_pixel_percentage"),
+            "selection_reason": cdse_result.get("selection_reason"),
+            "index_formulas": cdse_result.get("index_formulas"),
+            "stats": cdse_result.get("stats"),
+            "real_data_status": cdse_result.get("real_data_status"),
+        }
 
     if farm_id == 1:
-        return {
-            "type": "native",
-            "path_pattern": f"sentinel-21KXQ-{{date}}/{layer}_cloudless_min_max.png",
-        }
+        native_path = _sentinel_native_texture_path(layer, request_date)
+        if os.path.exists(native_path):
+            # Dataset Sentinel-2 nativo presente nesta máquina: é dado REAL.
+            return {
+                "type": "native",
+                "data_origin": "sentinel",
+                "date": request_date,
+                "texture_url": (
+                    f"sentinel-21KXQ-{request_date}/{layer}_cloudless_min_max.png"
+                ),
+                "path_pattern": (
+                    f"sentinel-21KXQ-{{date}}/{layer}_cloudless_min_max.png"
+                ),
+            }
+        # PR #4 — clone limpo não tem o dataset `sentinel-21KXQ-*`: nunca
+        # devolver uma URL de asset inexistente (404 → malha branca). O fluxo
+        # cai no MESMO pipeline das fazendas dinâmicas (textura procedural),
+        # servida por rota autenticada, com `data_origin` explícito para o
+        # frontend exibir "VISUALIZAÇÃO APROXIMADA".
+        logger.warning(
+            "Sentinel-2 nativo ausente para a farm demo (%s) — usando "
+            "visualização procedural aproximada. Coloque o dataset em "
+            "sentinel-21KXQ-* para voltar ao dado real.",
+            native_path,
+        )
 
     talhao_id = _resolve_talhao_id(farm)
     folder_name = f"farm_{farm.id}_talhao_{talhao_id}"
@@ -461,9 +555,15 @@ def get_talhao_texture(
     # servido por rota com checagem de ownership, não via StaticFiles solto).
     return {
         "type": "dynamic",
+        "data_origin": "procedural",
+        "date": request_date,
         "texture_url": (
             f"{settings.public_base_url}/api/talhao/{farm.id}/texture.png?layer={layer}"
         ),
+        **{
+            k: v for k, v in cdse_result.items()
+            if k.startswith("real_data_")
+        },
     }
 
 
@@ -471,12 +571,22 @@ def get_talhao_texture(
 def get_talhao_texture_png(
     farm_id: int,
     layer: schemas.SpectralLayer = "ndvi",
+    date: str | None = Query(default=None, description="Data real da aquisição (YYYY-MM-DD)"),
     db: Session = Depends(get_db),
     user: models.User = Depends(get_current_user),  # exige Bearer token
 ):
     """Streaming autenticado do PNG da textura espectral (PR #3 — privacidade)."""
     farm = _require_farm_access(db, farm_id, user)
     talhao_id = _resolve_talhao_id(farm)
+
+    # PR #4b — textura REAL (Sentinel-2 L2A) cacheadada em disco pelo CDSE.
+    if date:
+        real_path = os.path.join(
+            cdse_dir(farm.id, talhao_id, date), f"{layer}.png"
+        )
+        if os.path.exists(real_path):
+            return StreamingResponse(open(real_path, "rb"), media_type="image/png")
+
     folder_name = f"farm_{farm.id}_talhao_{talhao_id}"
     file_path = os.path.join(dynamic_path, folder_name, f"{layer}_cloudless_min_max.png")
     if not os.path.exists(file_path):
@@ -499,9 +609,121 @@ def get_talhao_texture_png(
 # ---------------------------------------------------------------------------
 @app.get("/api/talhao/dates")
 def get_available_dates():
+    # Público/legado: APENAS calendário DEMONSTRATIVO (nunca apresentado como real).
     return {
         "dates": settings.sentinel_dates,
         "indices": settings.spectral_indices,
+        "visual_layers": ["rgb", *settings.spectral_indices],
+        "source": "config_fallback",
+        "source_label": "Calendário demonstrativo (datas de demonstração)",
+        "is_real": False,
+    }
+
+
+def calendar_fallback_reason(status: str | None, detail: dict | None = None) -> str:
+    """Motivo em pt-BR (seguro — nunca segredos) de quando o calendário NÃO é real."""
+    if status == "not_configured":
+        return "CDSE não configurado (credenciais ausentes ou CDSE_ENABLED=false)"
+    if status == "no_scene":
+        return "Sem cena Sentinel-2 válida na janela (política de nuvens)"
+    if status == "error":
+        stage = (detail or {}).get("stage") or "cdse"
+        return f"Erro ao consultar o catálogo Sentinel-2 ({stage})"
+    return "Catálogo Sentinel-2 real indisponível"
+
+
+@app.get("/api/talhao/{farm_id}/dates")
+def get_farm_dates(
+    farm_id: int,
+    period_days: int | None = Query(
+        default=None, ge=30, le=730,
+        description="Janela em dias a partir de hoje (30/60/90/180/365/início-fim).",
+    ),
+    start: date | None = Query(default=None, description="Início da janela personalizada (YYYY-MM-DD)."),
+    end: date | None = Query(default=None, description="Fim da janela personalizada (YYYY-MM-DD)."),
+    limit: int = Query(default=12, ge=1, le=120, description="Máximo de cenas devolvidas."),
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """
+    Calendário temporal da fazenda: passagens REAIS Sentinel-2 (CDSE)
+    quando configurado — mais recente primeiro, dentro da janela pedida
+    (padrão 60 dias) — ou a lista oficial de datas da aplicação como
+    fallback explícito. A consulta usa SOMENTE metadados STAC: nenhum
+    asset é processado para montar o calendário.
+    O campo `source` diferencia: "sentinel-cdse" | "config".
+    """
+    farm = _require_farm_access(db, farm_id, user)
+    talhao = farm.talhoes[0] if farm.talhoes else None
+    # Janela personalizada (start/end) tem precedência; senão, `period_days`
+    # define o lookback a partir de hoje; sem nenhum dos dois, usa o padrão.
+    eff_limit = limit
+    if start or end:
+        lookback_days = None
+        eff_limit = max(limit, 60) if (start and end) else limit
+    elif period_days:
+        lookback_days = period_days
+        eff_limit = max(limit, min(60, max(12, period_days // 5)))
+    else:
+        lookback_days = None
+    try:
+        calendar, status, detail = fetch_real_calendar(
+            lat=farm.latitude,
+            lon=farm.longitude,
+            area_ha=farm.total_area,
+            kml_coordinates=talhao.kml_coordinates if talhao else None,
+            limit=eff_limit,
+            lookback_days=lookback_days,
+            start_date=start,
+            end_date=end,
+        )
+    except Exception:
+        logger.exception("CDSE: falha ao obter calendário real")
+        calendar, status, detail = [], "error", None
+    if calendar:
+        logger.info(
+            "[3D-DATES] source=%s count=%d latest=%s",
+            CALENDAR_REAL_SOURCE, len(calendar), calendar[0]["date"],
+        )
+        return {
+            "dates": [c["date"] for c in calendar],
+            "calendar": calendar,
+            "source": CALENDAR_REAL_SOURCE,
+            "source_label": "Copernicus Sentinel-2 — catálogo STAC real",
+            "is_real": True,
+            "status": status,
+            "stac_detail": detail,
+            "indices": settings.spectral_indices,
+            "visual_layers": ["rgb", *settings.spectral_indices],
+            "period_days": period_days,
+            "window_start": start.isoformat() if start else None,
+            "window_end": end.isoformat() if end else None,
+            "latest_date": calendar[0]["date"],
+            "count": len(calendar),
+        }
+    # Fallback EXPLÍCITO: datas de demonstração — a UI deve rotulá-las assim.
+    fallback_status = status or ("not_configured" if not calendar else "no_scene")
+    fallback_reason = calendar_fallback_reason(fallback_status, detail)
+    logger.warning(
+        "[3D-DATES] source=%s reason=%s count=0",
+        CALENDAR_FALLBACK_SOURCE, fallback_status,
+    )
+    return {
+        "dates": sorted(settings.sentinel_dates, reverse=True),  # demo, desc p/ "Mais recente"
+        "calendar": [],
+        "source": CALENDAR_FALLBACK_SOURCE,
+        "source_label": "Calendário demonstrativo (datas de demonstração)",
+        "is_real": False,
+        "status": fallback_status,
+        "fallback_reason": fallback_reason,
+        "stac_detail": detail,
+        "indices": settings.spectral_indices,
+        "visual_layers": ["rgb", *settings.spectral_indices],
+        "period_days": period_days,
+        "window_start": start.isoformat() if start else None,
+        "window_end": end.isoformat() if end else None,
+        "latest_date": None,
+        "count": 0,
     }
 
 
@@ -511,17 +733,34 @@ def get_available_dates():
 @app.get("/api/analytics/farm/{farm_id}")
 def get_farm_analytics(
     farm_id: int,
-    layer: schemas.SpectralLayer = "ndvi",
+    layer: schemas.AnalyticsLayer = "ndvi",
     db: Session = Depends(get_db),
     user: models.User = Depends(get_current_user),  # exige Bearer token
 ):
     farm = _require_farm_access(db, farm_id, user)  # ownership (PR #3)
     talhao_id = _resolve_talhao_id(farm)  # ID real do talhão (fix multi-talhão)
+    talhao = farm.talhoes[0] if farm.talhoes else None
+
+    # PR #4b — calendário REAL (STAC) é anexado como diagnóstico; a série em
+    # si continua na grade oficial, usando estatísticas REAIS quando cacheadas.
+    real_calendar: list = []
+    try:
+        real_calendar, _, _ = fetch_real_calendar(
+            lat=farm.latitude,
+            lon=farm.longitude,
+            area_ha=farm.total_area,
+            kml_coordinates=talhao.kml_coordinates if talhao else None,
+            limit=12,
+        )
+    except Exception:
+        logger.exception("CDSE: falha ao obter calendário para analytics")
+
     return get_farm_temporal_series(
         farm_id=farm.id,
         layer=layer,
         total_area_ha=farm.total_area,
         talhao_id=talhao_id,
+        real_calendar=real_calendar,
     )
 
 
@@ -627,7 +866,7 @@ def simulate_what_if(req: schemas.WhatIfRequest, user: models.User = Depends(get
 @app.get("/api/reports/farm/{farm_id}/pdf")
 def download_farm_report_pdf(
     farm_id: int,
-    layer: schemas.SpectralLayer = "ndvi",
+    layer: schemas.AnalyticsLayer = "ndvi",
     date_index: int = Query(default=0, ge=0, le=len(settings.sentinel_dates) - 1),
     n_kg: float = Query(default=0.0, ge=-200, le=500),
     w_mm: float = Query(default=0.0, ge=-100, le=300),
@@ -689,3 +928,54 @@ def download_farm_report_pdf(
         media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+# ---------------------------------------------------------------------------
+# FRONTEND NA MESMA ORIGEM (PR #4 — clone limpo roda só com uvicorn)
+#
+# Permite abrir http://localhost:8000/ (ou o preview/deploy) sem um servidor
+# estático separado nem `http://localhost:8000` hardcoded: o frontend usa URL
+# relativa quando servido pelo próprio backend. As rotas `/api/*` têm
+# precedência (registradas acima); este catch-all só atende o restante e
+# serve APENAS o allowlist (páginas/JS do frontend + PNGs nativos
+# `sentinel-21KXQ-*` quando o dataset está presente na máquina — nunca
+# `.env`/diretórios internos do backend).
+# ---------------------------------------------------------------------------
+_FRONTEND_STATIC_FILES = {"index.html", "fazendas.html", "auth.html", "dashboard.html", "app.js"}
+_FRONTEND_DEFAULT_PAGE = "index.html"
+_FRONTEND_ROOT_REAL = os.path.realpath(BASE_PROJECT_DIR)
+
+
+@app.get("/", include_in_schema=False)
+def serve_frontend_root():
+    return serve_frontend(_FRONTEND_DEFAULT_PAGE)
+
+
+@app.get("/{frontend_path:path}", include_in_schema=False)
+def serve_frontend(frontend_path: str):
+    path = (frontend_path or _FRONTEND_DEFAULT_PAGE).lstrip("/")
+    if not path or path.endswith("/"):
+        path = f"{path}{_FRONTEND_DEFAULT_PAGE}"
+    # APIs/Rotas de dados desconhecidas continuam sendo erro JSON (e não HTML).
+    if path.startswith(("api/", "dynamic_talhoes/", "docs", "redoc", "openapi.json")):
+        raise HTTPException(status_code=404, detail="Recurso não encontrado.")
+
+    first_seg = path.split("/", 1)[0]
+    is_frontend_file = path in _FRONTEND_STATIC_FILES
+    is_sentinel_png = bool(first_seg.startswith("sentinel-21KXQ-")) and path.endswith(".png")
+    if not (is_frontend_file or is_sentinel_png):
+        raise HTTPException(status_code=404, detail="Recurso não encontrado.")
+
+    candidate = os.path.join(BASE_PROJECT_DIR, path)
+    real = os.path.realpath(candidate)
+    inside_root = real == _FRONTEND_ROOT_REAL or real.startswith(_FRONTEND_ROOT_REAL + os.sep)
+    if not inside_root or not os.path.isfile(real):
+        raise HTTPException(status_code=404, detail="Recurso não encontrado.")
+
+    if path.endswith(".png"):
+        media = "image/png"
+    elif path.endswith(".js"):
+        media = "application/javascript"
+    else:
+        media = "text/html; charset=utf-8"
+    return FileResponse(real, media_type=media)

@@ -79,19 +79,21 @@ cd backend
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 cd ..
 
-# 6. Sirva o frontend (porta 5501) — em outro terminal
-python -m http.server 5501
-# (ou Live Server do VS Code)
-
-# 7. Acesse
-#    http://localhost:5501/fazendas.html   → cadastro/propriedades
-#    http://localhost:5501/auth.html       → login (demo: admin@orion.com / 123456)
+# 6. Acesse (PR #4 — o frontend TAMBÉM é servido pela própria API)
+#    http://localhost:8000/                → frontend completo (mesma origem)
 #    http://localhost:8000/docs            → Swagger da API
+#    (opcional) frontend separado em :5501 — outro terminal:
+#      python -m http.server 5501
+#      http://localhost:5501/fazendas.html
+#      login (demo: admin@orion.com / 123456)
 ```
 
-> **Nota:** a URL base da API usada pelo frontend está em `app.js` (`API_URL`).
-> Ajuste-a se a API rodar em outra porta/host (o backend também monta URLs
-> de texturas a partir de `PUBLIC_BASE_URL` no `.env`).
+> **Nota (PR #4):** a URL base da API (`API_URL`, em `app.js`) é resolvida
+> automaticamente: página servida pelo próprio backend → URL **relativa**;
+> página em servidor estático local (`:5501`) → `http://localhost:8000/api`.
+> Em deploy/preview, defina `window.ORION_API_URL = "<base>/api"` antes de
+> carregar o `app.js` (ou monte `PUBLIC_BASE_URL` no `.env` do backend, que
+> continua sendo a fonte das URLs de textura/heightmap devolvidas pela API).
 
 ## 🔌 Endpoints principais
 
@@ -103,8 +105,8 @@ python -m http.server 5501
 | `POST` | `/api/farms` | 🔑 | Cria fazenda **vinculada ao usuário logado** (gera texturas espectrais) |
 | `PUT` | `/api/farms/{id}` | 🔑 | Atualiza a **própria** fazenda (ou qualquer uma, se `admin`) |
 | `DELETE` | `/api/farms/{id}` | 🔑 | Remove a **própria** fazenda (ou qualquer uma, se `admin`) |
-| `GET` | `/api/talhao/{farm_id}/texture?layer=ndvi` | 🔑 | URL da textura espectral (nativa para farm demo, dinâmica autenticada p/ demais) |
-| `GET` | `/api/talhao/{farm_id}/heightmap?size=256` | 🔑 | **Heightmap Copernicus DEM GL-30** (relevo p/ Three.js) |
+| `GET` | `/api/talhao/{farm_id}/texture?layer=ndvi&date=YYYY-MM-DD` | 🔑 | URL da textura (`texture_url` + `data_origin: sentinel\|procedural` — nativa p/ demo quando o dataset existe; fallback procedural autenticado em clone limpo) |
+| `GET` | `/api/talhao/{farm_id}/heightmap?size=256` | 🔑 | **Heightmap Copernicus DEM GL-30** (relevo p/ Three.js; `available=false` + `reason` quando a tile não existe) |
 | `GET` | `/api/talhao/dates` | — | Datas Sentinel-2 e índices disponíveis (catálogo — público) |
 | `GET` | `/api/analytics/farm/{farm_id}` | 🔑 | Série temporal + zoneamento + estimativa de safras (da fazenda acessível) |
 | `GET` | `/api/weather/farm/{farm_id}` | 🔑 | Clima NASA POWER (cache TTL de 60 min por padrão) |
@@ -204,15 +206,227 @@ alembic revision --autogenerate -m "descreva a mudança"
   de demonstração (`sentinel-21KXQ-*`, servidas via `StaticFiles`) permanecem públicas por serem
   asset de vitrine.
 
-## ⛰️ Topografia — Copernicus DEM GL-30
+## ⛰️ Topografia — Copernicus DEM (CDSE real + GL-30 local)
 
-O terreno 3D usa **relevo real** a partir do Copernicus DEM GL-30 em vez de um plano com displacement genérico:
+O terreno 3D usa **relevo real** em vez de um plano com displacement genérico, com fonte reportada em `source`:
 
-- `GET /api/talhao/{farm_id}/heightmap` recorta a tile SRTM que cobre a fazenda (ex.: `s23_w056`), normaliza a elevação para 0–255 e resampleia para `size`×`size` (potência de 2, ideal p/ mipmaps), servindo um PNG cinza em `/dynamic_talhoes/…/heightmap.png` + mín/máx em metros.
-- O frontend aplica esse heightmap como `displacementMap` (o canal lido pelo Three.js), **mantendo as texturas NDVI como cor** e reutilizando o **mesmo cache LRU de VRAM** de antes (1 heightmap por fazenda — sem custo extra).
-- **Sem tile disponível**, o endpoint responde `available=false` e o 3D mantém o fallback (deslocamento via NDVI).
+- **CDSE configurado** (`CDSE_CLIENT_ID/SECRET`) → `GET /api/talhao/{farm_id}/heightmap` tenta primeiro o **DEM COPERNICUS_30** (GLO-30, infill GLO-90) via Process API; se indisponível, **COPERNICUS_90** (GLO-90 global). `source` = `copernicus_30`/`copernicus_90`, sem baixar produto inteiro (raster só da área do talhão).
+- **Sem CDSE** → recorte da tile local (`s23_w056`, etc.), normalização 0–255 e resample para `size`×`size`; `source` = `copernicus_gl30`/`local_geotiff`.
+- **Sem tile/sem CDSE** → `available=false` + `reason`; o 3D usa "Elevação aproximada" (plano) — nunca tela branca e nunca chama o relevo de "real".
+- **PR #5e — relevo é GEOMETRIA, não truque de câmera**: o heightmap é amostrado uma única vez por fazenda (mesh 96×96, ≈9 m/quad para talhão de ~900 m — coerente com o DEM de 30 m), os **vértices** são deslocados no eixo Y (`applyDemToGeometry` + `computeVertexNormals`) na escala real `alívio (m) / (extensão do talhão em m / 50 u)`, e a iluminação direcional revela o relevo. A troca de data **troca só a textura** — o DEM nunca é reconstruído; Real e What-If compartilham a **mesma malha**.
+- **PR #5g — terreno com VOLUME topográfico real**: escala **horizontal e vertical explícitas** (`terrainWorldUnitsPerMeter` = 50 u ÷ extensão em m; `demReliefWorldUnits`; a 1× o eixo vertical usa a **mesma proporção física** do campo — ex.: 23 m de relevo em 652 m ≈ 3,5% do lado — e o exagero multiplica **somente a diferença relativa de altitude**: `relativeHeight = (elev − minElevação)`, mín = 0); **superfície = contorno real do talhão** (máscara de grid pelo polígono KML/elipse — nunca um retângulo com a máscara "pintada"); **laterais + base** fecham o bloco (`baseY = minY − 8% da extensão`) acompanhando o DEM na borda; **hillshade multiplicativo** por vértice (encostas 0,8–1,2×, plano = 1,0 → cores dos índices agrícolas preservadas) + **sombras suaves** (PCFSoft, 1 luz, 1024²); grade discreta **abaixo da base**; `?debug3d=1` mostra wireframe/bbox/eixos/estatísticas (nunca por padrão).
+- **Exagero vertical 1×/2×/3×/5×** (default 2×) é **apenas visual**: altera a escala do deslocamento da malha, nunca os valores reais de elevação — a UI segue mostrando "Elevação real: X–Y m • relevo relativo: 0–R m • exagero N×" (ex.: "592–615 m") vinda do backend. Trocar o exagero **não refaz STAC/DEM/textura** — só posições Y, normais, paredes e sombreamento. O log `[3D-DEM]` prova tecnicamente a deformação (vértices, min/max reais, alívio, exagero, min/max Y da malha, escala).
+- **PR #5f — câmera ENQUADRADA no talhão**: `fitCameraToTerrain()` calcula o `BoundingBox` da malha (contorno real + DEM), usa o **centro como target** e posiciona a câmera em **vista oblíqua diagonal ~42° (35–55° acima do plano)** com distância proporcional à extensão — funciona para fazendas pequenas e grandes, nunca nasce "rasante/faixa no horizonte" nem pode passar sob o terreno (`maxPolarAngle = 0.44π`). O reenquadro roda após `applyTalhaoGeometry` e após o DEM; **"⟲ Resetar visão"** restaura a vista sem tocar na data/layer/exagero; grade discreta com opacidade reduzida abaixo do terreno e iluminação ambiente + hemisférica + direcional lateral (relevo com sombra, textura Sentinel não escurecida).
+- **PR #5f — timeline de datas REAIS clicável**: abaixo do 3D, **um botão por cena STAC** ("30 AGO" / "2026", tooltip com data completa + nuvens, scroll horizontal + setas ‹ ›, 5/10/20+ cenas), com **Play/Pause**, velocidade e camada na mesma barra. **Ordem cronológica da interface: esquerda = mais antiga, direita = mais recente** (a API segue DESC internamente — `dates[0]` = mais recente para `latest_date`/cache — e a UI usa `timelineOrderDates` para apresentar ASC, sem nunca mutar o array da API). O destaque azul ("ATUAL") só muda no **COMMIT** da cena (preload nunca move a seleção); estados discretos por ponto (disponível/carregando/pronta/aplicada/erro); "⇥ Mais recente" resolve por `latest_date` (`latestSceneIndex`) e faz scroll automático até o chip; **Play percorre antiga → recente**, para (sem loop) na mais recente mantendo-a selecionada e, se acionado com a mais recente selecionada, reinicia explicitamente pela mais antiga; períodos 30d/60d/90d/6m/1a/Personalizado reconstroem os chips preservando o cache compatível. A timeline real continua construída **exclusivamente** de `GET /api/talhao/{farm_id}/dates` (`is_real=true`/`source=sentinel-cdse`).
 
-**Como obter a tile:** baixe a tile `Copernicus_Dem_GLO30_<sN>_w<NNN>` correspondente à região (OpenTopography ou portal Copernicus) e coloque em `backend/data/dem/`. A API também tenta **baixar automaticamente** a tile dos espelhos públicos (best-effort, `DEM_DOWNLOAD_ENABLED`), cacheando o resultado localmente.
+**Como obter a tile (modo offline):** baixe `Copernicus_Dem_GLO30_<sN>_w<NNN>` (OpenTopography ou portal Copernicus) e coloque em `backend/data/dem/`; a API também tenta baixar automaticamente (best-effort, `DEM_DOWNLOAD_ENABLED`).
+
+## 🎨 Interface do Simulador 3D — 3 zonas (PR #5h)
+
+Polimento de UX/UI **sem tocar na geometria/pipeline 3D** (volume, DEM, câmera,
+timeline cronológica, cache, What-If e backend ficam exatamente como no #5g):
+
+- **3 zonas**: barra superior (navegação) · **viewport 3D dominante** (Real ×
+  What-If, `flex:1`) · **barra própria de timeline/controles abaixo do 3D**
+  (`clamp(120px,21vh,152px)`) — a timeline **nunca flutua/sobrepõe o terreno**.
+- **Linha 1**: Período `[30d][60d][90d][6m][1a]` + Personalizado + "⇥ Mais
+  recente" + setas ‹ › + **um botão por cena STAC** (scroll horizontal; visual
+  antiga → recente). **Linha 2**: `▶ Play` · `1,6s` · camada RGB/NDVI/EVI/NDRE/NDMI ·
+  Relevo `1×/2×/3×/5×` · `⟲ Resetar`.
+- **Data atual**: um único chip azul (ex.: `30 AGO / 2026`) por cena aplicada +
+  ponto discreto de estado — sem data duplicada nem badges simultâneos.
+- **What-If recolhível**: painel compacto (Adubação N · Irrigação · Pragas +
+  Resultado NDVI/Produtividade/Impacto) que vira a aba `[⚡ What-If]` ao
+  recolher; os valores dos sliders são **preservados** e restaurados ao reabrir.
+- **Proveniência/DEM compacta**: card translúcido no canto inferior esquerdo
+  (`max-width: 320px`) com `Sentinel-2 L2A • 30/08/2026 • Nuvens 9,8% • DEM
+  592–615 m`; `[Detalhes]` abre drawer técnico (product ID, provider, pixels
+  válidos, DEM source, elevação real, relevo, escala u/m e exagero).
+- **Cores neutras** (o NDVI já traz cor; azul/verde reservados a estado),
+  hierarquia tipográfica título → secundário → técnico, labels discretos
+  "OBSERVAÇÃO REAL" / "PROJEÇÃO WHAT-IF" e dica mínima "Arraste para orbitar ·
+  Scroll para zoom".
+- **Loading local** no chip/canto ("Carregando 27/08…") preservando a cena
+  anterior até o commit; **erro local** "Falha ao carregar <data> · Tentar
+  novamente" — nunca tela inteira.
+- **Responsivo**: 1920×1080, 1600×900 e 1366×768 (timeline 112–152px; painel
+  What-If encolhe; meta secundário oculto em telas < 1500px; cenas com scroll).
+
+## 🛰️ Dados REAIS Sentinel-2 — Copernicus Data Space Ecosystem (CDSE)
+
+O backend busca observação real sempre que possível, com fallback procedural explícito quando não há dado (sem credenciais, sem cena, erro/rate-limit). Nada é marcado como Sentinel sem ser.
+
+**Configuração (`backend/.env`, ver `.env.example`):**
+```
+CDSE_ENABLED=true
+CDSE_CLIENT_ID=...        # OAuth Client do dataspace.copernicus.eu
+CDSE_CLIENT_SECRET=...    # NUNCA versionado; nunca enviado ao frontend
+CDSE_STAC_URL=https://stac.dataspace.copernicus.eu/v1
+CDSE_PROCESS_URL=https://sh.dataspace.copernicus.eu/process/v1
+CDSE_LOOKBACK_DAYS=60
+CDSE_MAX_CLOUD_COVER=20
+CDSE_TIMEOUT_S=45
+CDSE_CACHE_HOURS=12
+CDSE_RASTER_SIZE=256
+```
+
+**Fluxo (funções puras em `backend/services/copernicus_service.py`):**
+```
+polígono do talhão (KML ≥ 3 pts) → STAC search sentinel-2-l2a (intersects)
+  → seleção explícita: mais recente ≤ 20% nuvem; relaxa (+15, +35, teto 100)
+  → Process API (bounds da FAZENDA, evalscript B02/B03/B04/B05/B08/B11+SCL+dataMask)
+  → máscara SCL (exclui nuvem/sombra/nodata) → RGB/NDVI/EVI/NDRE/NDMI reais
+  → PNG 256×256 mascarado + estatísticas + proveniência, cache em disco
+    (dynamic_talhoes/farm_X_talhao_Y/cdse/<data>/) e memória (TTL config).
+```
+
+**Fórmulas documentadas (validadas numericamente em `tests/test_copernicus_service.py`):**
+- NDVI = (B08−B04)/(B08+B04) · NDRE = (B08−B05)/(B08+B05) · NDMI = (B08−B11)/(B08+B11)
+- EVI = 2.5·(B08−B04)/(B08+6·B04−7.5·B02+1)
+- RGB = [2.5·B04, 2.5·B03, 2.5·B02] clampado a [0,1] (padrão visual CDSE)
+
+**Convenções de geometria (CRÍTICAS — corrigidas em PR #5c):**
+- `aoi_bounds()` devolve **`(min_lon, min_lat, max_lon, max_lat)`** = [west, south, east, north] — ordem exigida pelo STAC (`bbox`) e pela Process API (`bounds.bbox`). A versão anterior devolvia (min_lat, max_lat, min_lon, max_lon) e enviava bbox invertida ao STAC (`west > east` → HTTP 400).
+- GeoJSON (KML→`intersects`) usa **`[lon, lat]`**.
+- A janela temporal é RFC3339: `YYYY-MM-DDThh:mm:ssZ/YYYY-MM-DDThh:mm:ssZ`.
+
+**Diagnóstico de falhas (seguro):** qualquer 4xx/5xx do CDSE vira `real_data_error` com `stage` (`STAC_SEARCH`/`PROCESS_API`/`AUTH`), `http_status`, `endpoint`, `content_type` e um trecho truncado/sanitizado do corpo do provedor — nunca `Authorization`, `access_token`, `client_secret` ou `refresh_token`. `STAC OK SEM CENAS` (200 vazio) é distinto de `STAC ERRO` (4xx/5xx).
+
+**Camadas novas na API (mantendo compatibilidade):**
+- `GET /api/talhao/{id}/texture?layer=rgb|ndvi|evi|ndre|ndmi&date=YYYY-MM-DD` → `data_origin` (`sentinel`|`procedural`) + proveniência (`collection`, `product_id`, `acquisition_date`, `cloud_cover`, `processing_level`, `bands`, `valid_pixel_percentage`, `selection_reason`) quando real; `real_data_status` (`not_configured`|`no_scene`|`error`|`ok`) + `real_data_message` quando não.
+- `GET /api/talhao/{id}/texture.png?layer=...&date=YYYY-MM-DD` → PNG (real cacheado ou procedural).
+- `GET /api/talhao/{id}/dates?period_days=30..730&start=&end=&limit=` → **calendário real** com `source: "sentinel-cdse"`, `is_real: true`, `source_label`, `latest_date` (cena válida mais recente), `count` e `dates` = EXATAMENTE as cenas STAC (mais recente primeiro, filtro de nuvens); **fallback** apenas quando não há real: `source: "config_fallback"`, `is_real: false`, `source_label: "Calendário demonstrativo (datas de demonstração)"` e `fallback_reason` em pt-BR (nunca confundível com Sentinel real).
+- `GET /api/talhao/dates` → público/legado demonstração (`source: "config_fallback"`, `is_real: false`); `visual_layers` inclui `rgb`.
+- O `.env` do backend agora é resolvido contra a **pasta do módulo** (`backend/.env`) além do CWD — o servidor não perde mais as credenciais CDSE quando iniciado da raiz do repositório.
+
+**Validação de integração real (opcional, FORA da suíte):**
+```
+python scripts/test_cdse_connection.py --lat -22.7182 --lon -55.5421 --area 42.54 --demo
+```
+O script imprime o **contrato exato consumido pelo frontend**:
+`[3D-DATES] source=... count=... latest=... dates=...` (e confirma se a lista fixa de
+configuração foi usada ou não). Sem rede/credenciais apenas informa o status — nunca
+imprime segredo/token.
+
+**Sem credenciais** o app segue 100% funcional, mas a timeline exibe o rótulo explícito
+**"Calendário demonstrativo (datas de demonstração)"** + motivo — nunca apresenta datas
+fixas como se fossem aquisições Sentinel reais.
+
+## 🧊 Simulador 3D — pipeline (PR #4 ↔ PR #5d)
+
+O Split-View (CENÁRIO REAL × CENÁRIO SIMULADO) segue este fluxo, **sem depender de
+arquivos fora do Git**:
+
+```
+fazenda → /api/talhao/{id}/texture → texture_url (+ data_origin + proveniência)
+        → fetch autenticado (Bearer, AbortSignal) → Blob → TextureLoader → material.map
+fazenda → /api/talhao/{id}/heightmap → heightmap_url (ou available=false + reason)
+        → DEM amostrado 1× (grid 96×96) → VÉRTICES da malha deslocados em Y
+          + computeVertexNormals → linha discreta "Elevação real: 592–615 m"
+        → sem DEM → fallback explícito ("Elevação aproximada", plano)
+what-if → /api/simulation/what-if → delta_ndvi
+        → textura simulada via canvas (pixel a pixel) no lado direito
+        → SEMPRE sobre a MESMA data/layer da cena real APLICADA
+```
+
+### Sincronização assíncrona (PR #5d)
+
+**Sequência obrigatória: CARREGAR → APLICAR → ESPERAR → PRÓXIMA.** A timeline
+NUNCA avança enquanto a próxima cena carrega; a data principal (chip azul da cena
+aplicadaaplicada, slider e pílulas) é a da imagem **efetivamente aplicada**.
+
+- **Máquina de estados** (`createTimelineMachine`): `mode` = paused/playing,
+  `status` = idle/loading/ready/error, com `appliedIndex`/`appliedLayer`/
+  `appliedMeta` (fonte da verdade da cena aplicada) e `pending*` (carga em voo).
+- **Race-safe**: `createSceneLoadGate` (generationId) + `AbortController` por
+  carga; respostas atrasadas são descartadas e NUNCA substituem a cena atual;
+  troca manual de data e Pause cancelam/invalidam a carga anterior.
+- **Play**: intervalo que só dispara `playerCanAdvance()` (playing + ready);
+  durante loading o botão permanece "⏸ Pause" visualmente ativo, mas nada avança.
+- **Pausa**: cancela/invalida a carga, continua com a cena aplicada e NÃO retoma
+  sozinho (revertendo a UI se uma troca de layer estava em voo).
+- **Erro**: pausa automática + toast compacto com "Tentar novamente"; Play também
+  funciona como retry. Nunca troca silenciosamente de data nem fica preso.
+- **Layer swap** (RGB/NDVI/EVI/NDRE/NDMI): congela o avanço, carrega na data
+  aplicada, atualiza proveniência e retoma o Play se já estava ativo.
+- **What-If**: a base (`baseTextureForSim`) e o `lastSimBaseMeta` só mudam no
+  COMMIT da cena — Real e Simulado nunca se misturam por assincronia.
+
+### Fila de cenas + pré-carregamento (PR #5e)
+
+**PREPARAÇÃO é separada de REPRODUÇÃO**: abrir o simulador busca o calendário STAC
+(`GET /api/talhao/{id}/dates`), aplica a cena atual e **pré-carrega em segundo
+plano**; o Play só reproduz cena pronta e nunca avança para uma cena incompleta
+(se chegar nela, aguarda apenas aquela). Não há tela grande de loading — só o
+spinner discreto + "Preparando cenas: 3/7".
+
+- **Fonte da timeline = STAC real** (nunca lista fixa); "Mais recente" = cena
+  válida mais recente do catálogo (índice 0, reflete a política de nuvens);
+  período 30/60/90/180/365 ou personalizado (`period_days` / `start` + `end` no
+  endpoint — só metadados STAC; texturas processadas sob demanda). `maxDate` da
+  UI = "Última aquisição disponível". Sem CDSE → grade oficial marcada como
+  fallback (`source: config`).
+- **Estratégia** (`computePreloadPlan`): calendário ≤ 12 cenas → pré-carrega
+  **TODAS** da layer ativa; maior → janela de 5 (1 anterior + atual + 3
+  próximas) em prioridade e o restante em background (mais próximo primeiro).
+  Trocar de layer: carrega a cena atual da nova layer primeiro e agenda o
+  preload da nova camada em background.
+- **Cache por `farmId|talhao|date|layer`** (`sceneCacheKey`): textura +
+  proveniência + estatísticas + `real_data_status` + data de aquisição +
+  nuvens. LRU de 12 cenas (`SCENE_CACHE_MAX`) + LRU de 16 texturas de VRAM
+  (`MAX_CACHED_TEXTURES`); se a VRAM descartar uma textura, a cena associada é
+  invalidada (nunca fica "pronta" apontando para textura disposta). `blob:`
+  URLs são revogadas somente depois do carregamento e nunca uma URL ainda em
+  cache. Play → Pause → Play, voltar/avançar **não refazem** request de cena
+  pronta.
+- **Fila própria do preload**: prioridade manual > Play > preload, 2 fetches
+  simultâneos (`PRELOAD_CONCURRENCY`), dedupe por chave e `generationId`/
+  `AbortController` do PR #5d preservados. Preload **nunca** altera a cena
+  aplicada; layer swap, Pause e retry continuam os mesmos.
+- **Estados discretos da timeline**: disponível/carregando/pronta/aplicada/erro
+  (dot sob cada data) — nenhum estado é silencioso.
+- **Play fluido**: intervalos entre cenas prontas **sem rede**; pausa entre
+  datas configurável (1/1,6/3/5 s no `#play-interval`); crossfade de ~260 ms
+  **apenas visual** (opacidade — nunca interpola índices/valores entre duas
+  aquisições).
+- **Câmera 3D real** (`CAMERA_PRESET`): perspectiva 45°, visão oblíqua aérea,
+  órbita/zoom/pan com limites (nunca abaixo do horizonte), iluminação que
+  revela o relevo; terreno no plano XZ (Y-up) com grade horizontal.
+- **Exagero 1×/2×/3×**: muda só a escala visual do deslocamento da malha; a
+  elevação real exibida ("Elevação real: 592–615 m" + alívio) vem do backend e
+  nunca é falsificada. If DEM falha → "Elevação aproximada" (plano), nunca
+  "real".
+
+### Hierarquia visual (do mais importante ao menos)
+
+1. Terreno 3D (Split-View) — ocupa o máximo da tela;
+2. label de cada cenário (REAL ▸ `Sentinel-2 L2A • dados reais` | SIMULADO ▸
+   `Projeção What-If • base <data>`);
+3. timeline (Play, spinner de carregamento, slider, data aplicada, layer);
+4. painel What-If (parâmetros);
+5. metadados compactos (1 linha de proveniência + "Detalhes" retrátil);
+6. DEM → apenas uma linha discreta no rodapé dos metadados;
+7. mensagens técnicas → `console`/toast compacto de erro.
+
+- **Dado real vs aproximado**: a API devolve `data_origin` (`sentinel` = CDSE ou
+  dataset nativo presente na máquina; `procedural` = textura espectral gerada) +
+  `real_data_status`/`real_data_message` quando não há real. A proveniência mostra
+  `Sentinel-2 L2A • 15/08/2026 • Nuvens 2,0%` (real) ou o motivo explícito do
+  aproximado — nunca um terreno branco silencioso.
+- **Proveniência**: 1 linha + botão "Detalhes" (drawer retrátil com Aquisição,
+  Nuvens, Satélite, Produto, ID do item, Bandas, Pixels válidos, Seleção,
+  Fornecedor).
+- **Fallback visual**: se o load do asset falhar (rede/CORS/404) sem ser aborto,
+  o 3D aplica uma textura de fallback claramente marcada; a malha, o relevo e os
+  controles continuam funcionando e o erro pausa com retry.
+- **Geometria real do talhão**: o terreno usa o contorno KML (projeção alinhada à
+  rasterização) com contorno visível; sem KML, usa a elipse proporcional à área —
+  nunca um retângulo genérico.
+- **What-If visual**: N+/irrigação ⇒ mais verde; pragas ⇒ vermelho/castanho
+  (aplicado por pixel na textura do lado direito, com `displacementScale` e
+  valores financeiros atualizados em tempo real).
+- **Clone limpo**: sem `sentinel-21KXQ-*` e sem tiles DEM, o simulador funciona
+  em modo aproximado explícito; com os datasets presentes, volta ao dado real.
 
 ## 📊 Dados
 
@@ -253,7 +467,8 @@ curl http://localhost:8000/api/weather/farm/1
 ## 🧪 Suíte de testes automatizados (pytest)
 
 A suíte versionada em `tests/` cobre as 4 frentes exigidas + ownership/migrações/paridade de
-schema e assets autenticados — **165 testes** (1 skip por dataset Sentinel-2 ausente fora do git):
+schema, assets autenticados e o **pipeline 3D (PR #4 ↔ PR #5h)** — **285 testes** (1 skip por
+dataset Sentinel-2 ausente fora do git):
 
 | Módulo | Testes | Abrangência |
 |---|---|---|
@@ -262,6 +477,22 @@ schema e assets autenticados — **165 testes** (1 skip por dataset Sentinel-2 a
 | `test_farms_sim.py` | 28 | Contratos Pydantic (criação + resposta + What-If exatos a 9 campos), 422 parametrizados, 404, texturas dinâmicas em disco (rota autenticada), datas Sentinel-2, matemática da simulação (constantes por crop), analytics (série temporal, zoneamento, safras), laudo PDF |
 | `test_dem.py` | 17 | Nomenclatura SRTM/Copernicus, bounds (KML e por área), seleção de tile, endpoint de heightmap: recorte → normalização → PNG 256×256 servido por rota autenticada, `size`, 422, 404, indisponível com orientação |
 | `test_services.py` | 36 | Cache de clima (hit, por coordenadas, TTL, fallback em erro, fallback cacheado), regras de negócio do what-if, estimativa de safra, zoneamento espectral, paletas espectrais |
+| `test_3d_pipeline.py` | 15 | **PR #4** — pipeline 3D: demo sem dataset Sentinel (metadados/PNG/analytics com `data_origin`), fazenda dinâmica autenticada, owner/admin/401/404, assets fora do mount público, `PUBLIC_BASE_URL`, heightmap `available=false` + motivo, contrato What-If, frontend servido pelo backend e higiene (`.env` não exposto) |
+| `test_frontend_3d_pipeline.py` | 1 | **PR #4 ↔ #5d** — helpers do `index.html` executados em VM Node: classificação de erro HTTP, normalização de URL relativa/absoluta, token no fetch, atribuição real de textura ao material, pixel What-If, polígono KML → plano 3D e fallback de asset (material nunca sem `map`) |
+| `test_3d_player_state.py` | 1 | **PR #5d** — máquina de estados da timeline executada em VM Node: Play não avança durante loading, data só muda após aplicar, generationId descarta resposta antiga, Pause durante loading não retoma, troca manual invalida carga anterior, layer swap congela e retoma, falha → error+pause+retry, Real/What-If sincronizados, metadados da textura aplicada, status real/fallback e proveniência compacta + Detalhes |
+| `test_3d_load_scene_wiring.py` | 1 | **PR #5d ↔ #5e** — wiring real do `loadScene` em VM Node: commit só após o fetch, race de resposta atrasada, Pause, falha+retry, layer swap e, no PR #5e: cena pronta no cache aplica **sem nenhum fetch**, preload em background **não altera** a cena aplicada, Play avança para cena pré-carregada sem request e textura descartada da VRAM invalida a cena |
+| `test_3d_scene_cache_preload.py` | 1 | **PR #5e/#5g** — cache/preload/terreno puros em VM Node: chave `farmId|talhao|data|layer` (sem colisão), LRU com evicção, plano ≤ 12 → todas / > 12 → janela 5 + background, limites documentados, estados discreto da timeline, escala real metros→unidades, amostragem bilinear, DEM desloca vértices + normais, 1×/2×/3×/5× só visual, altitude relativa (mín = 0), fallback plano e `CAMERA_PRESET` |
+| `test_3d_calendar_timeline.py` | 2 | **PR #5e (correção)** — calendário STAC real × demonstração em VM Node: decisão pura (real só com `source=sentinel-cdse` + cenas; datas STAC diferentes da config; `latest_date`; `no_scene`/`not_configured`/HTTP 500/rede/401 → demo rotulada com motivo) e wiring do `refreshRealTimeline` (resposta real substitui completamente a timeline; fallback identificado "Calendário demonstrativo"; erro de endpoint nunca apresenta demo como real; 'Buscando datas Sentinel-2…' + seleção da mais recente) |
+| `test_3d_bootstrap_order.py` | 2 | **PR #5g (P0)** — ordem REAL de inicialização do bootstrap em VM Node: executa o script inline INTEIRO na ordem do navegador (stubs DOM/THREE/Leaflet/Chart) e exige que a avaliação chegue ao último statement, sem ReferenceError/TypeError/SyntaxError (pega o TDZ `Cannot access 'terrainGeometry' before initialization' que abortava Dashboard/clima/gráficos) e valida `updateGroundGrid` no estado inicial (fallback seguro) e com o bloco pronto (grade abaixo da base) |
+| `test_3d_terrain_volume.py` | 3 | **PR #5g — VOLUME 3D** em VM Node: escala explícita m↔unidades (1× = proporção física real;
+  `relativeHeight` mín = 0; 1×<2×<3×<5×; finito com relief=0/DEM faltante), geometria NÃO coplanar
+  (maxY>minY, estatísticas/bbox com relevo), lateral+base (baseY<minY, contagens exatas, contorno
+  acompanha o DEM), máscara do polígono real (triângulos fora removidos), paredes do contorno,
+  hillshade (plano = 1,0; encostas 0,8–1,2), câmera 35–50°, fit determinístico, Real×What-If
+  compartilham os MESMOS helpers e o contrato de código (textura no mesh, exagero sem fetch,
+  `?debug3d=1` nunca por padrão, grade abaixo da base) |
+| `test_3d_camera_chips.py` | 3 | **PR #5f** — VM Node: (1) **câmera** `computeCameraFit` pura (vista oblíqua 35–55° nunca rasante nem abaixo do plano, target = centro, distância proporcional à bbox pequena/grande, aspect, clamp, determinística → reset restaura) e (2) **chips da timeline** (exatamente 1 botão por data STAC, ordem desc, sem datas fixas/intermediárias, tooltip data completa + nuvens, 24 cenas) e (3) **DOM real** `renderDatePills` + estados discretos (aplicada só na cena comitada — preload vira `ready`, nunca seleção; clique → `selectDateIndex`; troca de período reconstrói sem sobras; loading/error) |
+| `test_3d_ui_polish.py` | 15 | **PR #5h — INTERFACE/UX** (VM Node + contrato de fonte): timeline é faixa PRÓPRIA fora do viewport 3D (irmã do `#viewport-3d`, nunca flutua sobre o terreno), viewport dominante (flex 1) × timeline `clamp(120px,21vh,152px)`, linhas da barra (status fina + Período/cenas + controles), alturas simuladas 1920×1080/1600×900/1366×768 (3D 60–90% do espaço), What-If recolhível que **preserva valores** (`setWhatIfCollapsed` só troca display, VM Node), proveniência compacta `Sentinel-2 L2A • data • nuvens • DEM m` + drawer com 13 linhas (product ID/provider/pixels/relevo/escala/exagero), **um único chip azul** da data aplicada (sem data duplicada/badge extra), controles presentes e ligados (▶ Play · 1,6s · camada · Relevo 1×/2×/3×/5× · Resetar · períodos · setas) e contratos 3D intactos (OrbitControls, volume, hillshade, sombras, cache por identidade, marcadores `[3D-*]`) |
 | `test_ownership.py` | 32 | **Ownership** (usuário cria/ler/edita/exclui a própria farm; `owner_id` correto; payload `owner_id` ignorado), **admin global**, **privacidade** (GETs exigem token → 401; analytics/clima/textura/heightmap/PDF não expõem farm alheia → 404), **migração Alembic** (adiciona `owner_id`/`is_shared` + backfill seguro em SQLite legado) |
 | `test_schema_parity.py` | 3 | Paridade banco novo × legado migrado: colunas, tipos, nullable, defaults, PK, índices, FKs, `alembic_version`, idempotência, preservação de dados e enforcement SQLite |
 | `test_frontend_texture_urls.py` | 1 | Fluxo frontend de texture.png/heightmap.png relativos e absolutos: classificação, Bearer no fetch, respostas 401/403/404 e revogação do Blob URL após o TextureLoader |

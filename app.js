@@ -1,6 +1,19 @@
 // app.js - Camada de Integração Front-end <-> Back-end FastAPI (Orion Agro)
 // As URLs usam base relativa a `API_URL` (única constante de ambiente do front).
-const API_URL = "http://localhost:8000/api";
+//
+// PR #4 — resolução da base da API:
+//   1. `window.ORION_API_URL` (se definido antes deste script) tem prioridade —
+//      permite deploy/preview sem editar arquivos;
+//   2. página servida pelo próprio backend (FastAPI, mesma origem) → URL
+//      RELATIVA (sem localhost hardcoded; funciona no preview/deploy);
+//   3. página servida por servidor estático separado (dev local, :5501) →
+//      `http://localhost:8000/api` (comportamento histórico preservado).
+const API_URL = (
+  window.ORION_API_URL ||
+  (["localhost", "127.0.0.1"].indexOf(window.location.hostname) >= 0
+    ? "http://localhost:8000/api"
+    : "/api")
+).replace(/\/+$/, "");
 
 // ---------------------------------------------------------------------------
 // Autenticação (JWT)
@@ -264,13 +277,17 @@ const SatelliteService = {
   // Obter heightmap topográfico (Copernicus DEM GL-30) do talhão.
   // available=false → o 3D mantém o deslocamento via NDVI (fallback).
   // (PR #3 — exige Bearer token)
-  getTalhaoHeightmap: async (farmId) => {
+  getTalhaoHeightmap: async (farmId, signal = undefined) => {
     try {
-      const res = await fetch(`${API_URL}/talhao/${farmId}/heightmap`, { headers: { ...authHeaders() } });
+      const res = await fetch(`${API_URL}/talhao/${farmId}/heightmap`, { headers: { ...authHeaders() }, signal });
       if (res.status === 401) { AuthService.logout(); throw new Error("Sessão expirada — faça login novamente (auth.html)."); }
       if (res.status === 403) throw new Error("Sem permissão para o heightmap desta fazenda.");
       if (!res.ok) throw new Error("Erro ao obter heightmap do talhão.");
-      return await res.json();
+      const info = await res.json();
+      // PR #4b — fonte do DEM: copernicus_30/copernicus_90 (CDSE real),
+      // copernicus_gl30/local_geotiff (tile local) ou none (aproximado).
+      console.info(`heightmap: source=${info.source || 'none'} available=${info.available}`);
+      return info;
     } catch (e) {
       console.warn("Erro no SatelliteService.getTalhaoHeightmap:", e);
       return null;
