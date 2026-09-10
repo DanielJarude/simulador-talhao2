@@ -1563,6 +1563,11 @@
     let climateChartTemp = null;
     let climateCurrentPreset = '30d';
     let climateCustomMode = false;
+    // PR #7-FIX.2 — proteção contra race condition: token da requisição mais
+    // recente + AbortController da que está em voo. Uma resposta tardia de
+    // uma requisição ANTERIOR nunca pode sobrescrever a tela da atual.
+    let climateRequestSeq = 0;
+    let climateAborter = null;
 
     function climateFmtDate(iso) {
       if (!iso) return '--';
@@ -1601,9 +1606,16 @@
     }
 
     function applyClimateCustomRange() {
+      // PR #7-FIX.2 — validação client-side ANTES de qualquer requisição:
+      // (1) ambas as datas preenchidas; (2) start <= end; (3) intervalo <= 366 dias.
       const s = document.getElementById('climate-custom-start');
       const e = document.getElementById('climate-custom-end');
-      if (!s || !e || !s.value || !e.value) return;
+      const stateEl = document.getElementById('climate-state');
+      const say = (msg) => { if (stateEl) stateEl.innerHTML = `<div class="climate-state-box">${msg}</div>`; };
+      if (!s || !e || !s.value || !e.value) { say('Informe as datas de início E fim do período personalizado.'); return; }
+      if (s.value > e.value) { say('A data de início deve ser anterior ou igual à data de fim.'); return; }
+      const days = (new Date(e.value) - new Date(s.value)) / 86400000;
+      if (!isFinite(days) || days > 366) { say('O intervalo personalizado deve ter no máximo 366 dias.'); return; }
       climateSetPillActive('custom');
       loadClimatePanel();
     }
@@ -1612,6 +1624,15 @@
       const stateEl = document.getElementById('climate-state');
       const ctxEl = document.getElementById('climate-context');
       if (!stateEl) return;
+      // PR #7-FIX.2 — token incremental + AbortController: quem chega DEPOIS
+      // anula quem está em voo, e só a resposta da requisição MAIS RECENTE
+      // pode ser renderizada (resposta tardia de preset=30d não pode
+      // sobrescrever um período personalizado aplicado depois — e vice-versa).
+      const seq = ++climateRequestSeq;
+      if (climateAborter) { try { climateAborter.abort(); } catch (_) { /* já encerrada */ } }
+      const aborter = new AbortController();
+      climateAborter = aborter;
+      const stale = () => (seq !== climateRequestSeq);
       stateEl.innerHTML = '<div class="climate-state-box"><span class="spinner"></span>&nbsp; Consultando dados climáticos (API Orion → NASA POWER)…</div>';
       // Contexto FAZENDA → TALHÃO → LOCALIZAÇÃO (hierarquia do produto)
       const loc = (activeFarm.latitude && activeFarm.longitude) ?
@@ -1638,7 +1659,8 @@
         } else {
           params.set('preset', climateCurrentPreset);
         }
-        const res = await fetch(`${API_URL}/climate/farm/${activeFarm.id || 1}?${params.toString()}`, { headers: { ...authHeaders() } });
+        const res = await fetch(`${API_URL}/climate/farm/${activeFarm.id || 1}?${params.toString()}`, { headers: { ...authHeaders() }, signal: aborter.signal });
+        if (stale()) return; // requisição mais recente já substituiu esta
         if (res.status === 401) { AuthService.logout(); return; }
         if (res.status === 404) {
           stateEl.innerHTML = '<div class="climate-state-box error">Sem acesso aos dados climáticos desta fazenda.</div>';
@@ -1656,8 +1678,11 @@
           return;
         }
         const data = await res.json();
+        if (stale()) return; // resposta antiga — nunca sobrescreve a tela atual
         renderClimatePanel(data);
       } catch (err) {
+        if (stale()) return; // foi substituída/abortada por uma requisição nova
+        if (err && err.name === 'AbortError') return;
         console.error("Erro ao carregar o painel de clima:", err);
         stateEl.innerHTML =
           '<div class="climate-state-box error">⚠ Dados climáticos temporariamente indisponíveis.' +

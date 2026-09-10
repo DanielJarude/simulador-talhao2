@@ -252,6 +252,26 @@ class TestPeriods:
         assert r["period"] == {"start": "2026-01-01", "end": "2026-01-31", "days": 31}
         assert len(r["daily"]["dates"]) == 31
 
+    def test_personalizado_19_dias_janela_unico_e_inclusiva(self, nasa):
+        # FIX.2 — 20/08/2026 → 07/09/2026 = 19 dias (contagem inclusiva).
+        # UMA única regra de janela: period, coverage, séries, baseline e
+        # data_quality devem concordar entre si.
+        r = report(start=dt.date(2026, 8, 20), end=dt.date(2026, 9, 7))
+        assert r["period"] == {"start": "2026-08-20", "end": "2026-09-07", "days": 19}
+        assert r["coverage"]["requested_days"] == 19
+        assert r["data_quality"]["requested_days"] == 19
+        dates = r["daily"]["dates"]
+        assert len(dates) == 19
+        assert dates[0] == "2026-08-20" and dates[-1] == "2026-09-07"
+        for m in ("precipitation", "temperature", "humidity", "radiation", "wind"):
+            assert r["metrics"][m]["requested_days"] == 19
+        # baseline: 1 janela atual + 5 anteriores, TODAS 20/08–07/09
+        windows = [c["window"] for c in nasa[0]]
+        assert len(windows) == 6
+        for s, e in windows:
+            assert (s.month, s.day) == (8, 20)
+            assert (e.month, e.day) == (9, 7)
+
 
 # ---------------------------------------------------------------------------
 # FIX.1 — Cobertura: três conceitos formais e distintos

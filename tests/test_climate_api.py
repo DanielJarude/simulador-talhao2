@@ -228,6 +228,111 @@ class TestPeriods:
 
 
 # ---------------------------------------------------------------------------
+# PR #7-FIX.2 — Período personalizado: prioridade start/end, contagem
+# inclusiva, baseline na mesma janela, cache sem colisão com preset.
+# ---------------------------------------------------------------------------
+class TestCustomPeriod:
+    # Janela exata do playtest: 20/08/2026 → 07/09/2026 = 19 dias (inclusiva)
+    CUSTOM = "start=2026-08-20&end=2026-09-07"
+
+    def test_personalizado_19_dias_janela_exata(self, client, nasa, farm_and_token):
+        fid, token = farm_and_token
+        r = client.get(f"/api/climate/farm/{fid}?{self.CUSTOM}", headers=auth(token))
+        assert r.status_code == 200, r.text
+        body = r.json()
+        # period exato, contagem inclusiva (19 dias), sem preset
+        assert body["period"]["start"] == "2026-08-20"
+        assert body["period"]["end"] == "2026-09-07"
+        assert body["period"]["days"] == 19
+        assert body["period"]["preset"] is None
+        # cobertura usa o total correto do período
+        assert body["coverage"]["requested_days"] == 19
+        assert body["coverage"]["overall_days"] <= 19
+        assert body["coverage"]["complete_days"] <= 19
+        for m in ("precipitation", "temperature", "humidity", "radiation", "wind"):
+            assert body["coverage"]["by_metric"][m]["available_days"] <= 19
+        assert body["data_quality"]["requested_days"] == 19
+        # gráficos/séries retornam SOMENTE as datas do intervalo (inclusivo)
+        dates = body["daily"]["dates"]
+        assert len(dates) == 19
+        assert dates[0] == "2026-08-20"
+        assert dates[-1] == "2026-09-07"
+        assert all(d >= "2026-08-20" and d <= "2026-09-07" for d in dates)
+
+    def test_start_end_precedem_preset(self, client, nasa, farm_and_token):
+        # REGRA DE PRIORIDADE: se start E end vierem (mesmo com preset),
+        # o período personalizado é usado — nunca misturar.
+        fid, token = farm_and_token
+        r = client.get(
+            f"/api/climate/farm/{fid}?preset=30d&{self.CUSTOM}", headers=auth(token)
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["period"]["start"] == "2026-08-20"
+        assert body["period"]["end"] == "2026-09-07"
+        assert body["period"]["days"] == 19
+        assert body["period"]["preset"] is None
+
+    def test_baseline_usa_mesma_janela_personalizada(self, client, nasa, farm_and_token):
+        fid, token = farm_and_token
+        client.get(f"/api/climate/farm/{fid}?{self.CUSTOM}", headers=auth(token))
+        captured, _ = nasa
+        windows = [c["window"] for c in captured]
+        # 1 janela atual + 5 de baseline = 6 consultas
+        assert len(windows) == 6
+        # TODAS (atual + baseline) usam a mesma janela do calendário 20/08–07/09
+        for s, e in windows:
+            assert (s.month, s.day) == (8, 20), (s, e)
+            assert (e.month, e.day) == (9, 7), (s, e)
+        # a atual é 2026; as de baseline são anos anteriores
+        assert windows[0][0].year == 2026
+        assert all(w[0].year < 2026 for w in windows[1:])
+
+    def test_somente_end_422(self, client, nasa, farm_and_token):
+        fid, token = farm_and_token
+        r = client.get(f"/api/climate/farm/{fid}?end=2026-09-07", headers=auth(token))
+        assert r.status_code == 422
+
+    def test_somente_start_422(self, client, nasa, farm_and_token):
+        fid, token = farm_and_token
+        r = client.get(f"/api/climate/farm/{fid}?start=2026-08-20", headers=auth(token))
+        assert r.status_code == 422
+
+    def test_start_apos_end_422(self, client, nasa, farm_and_token):
+        fid, token = farm_and_token
+        r = client.get(
+            f"/api/climate/farm/{fid}?start=2026-09-07&end=2026-08-20", headers=auth(token)
+        )
+        assert r.status_code == 422
+
+    def test_cache_diferencia_preset30d_de_custom(self, client, nasa, farm_and_token):
+        # uma resposta 09/08→07/09 (30d) NUNCA pode servir 20/08→07/09 (custom)
+        fid, token = farm_and_token
+        h = auth(token)
+        client.get(f"/api/climate/farm/{fid}?preset=30d", headers=h)
+        n_after_30d = len(nasa[0])
+        client.get(f"/api/climate/farm/{fid}?{self.CUSTOM}", headers=h)
+        windows = [c["window"] for c in nasa[0]]
+        # a janela custom (20/08→07/09) precisou ser consultada de fato
+        assert (dt.date(2026, 8, 20), dt.date(2026, 9, 7)) in windows
+        # a janela 30d (dinâmica: hoje − NRT) é distinta e não serviu de cache
+        end30 = dt.date.today() - dt.timedelta(days=cs.settings.nasa_power_nrt_lag_days)
+        start30 = end30 - dt.timedelta(days=29)
+        assert (start30, end30) in windows
+        assert (start30, end30) != (dt.date(2026, 8, 20), dt.date(2026, 9, 7))
+        assert len(windows) > n_after_30d  # houve nova consulta (sem colisão)
+
+    def test_cache_diferencia_dois_intervalos_custom(self, client, nasa, farm_and_token):
+        fid, token = farm_and_token
+        h = auth(token)
+        client.get(f"/api/climate/farm/{fid}?start=2026-08-20&end=2026-09-07", headers=h)
+        client.get(f"/api/climate/farm/{fid}?start=2026-08-01&end=2026-08-31", headers=h)
+        windows = [c["window"] for c in nasa[0]]
+        assert (dt.date(2026, 8, 20), dt.date(2026, 9, 7)) in windows
+        assert (dt.date(2026, 8, 1), dt.date(2026, 8, 31)) in windows
+
+
+# ---------------------------------------------------------------------------
 # Resposta estruturada (Fase 3/8/11)
 # ---------------------------------------------------------------------------
 class TestResponseContract:

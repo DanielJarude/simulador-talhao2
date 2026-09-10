@@ -211,3 +211,90 @@ mensagem parcial explícita; nenhuma imputação (NULL nunca vira 0); 7d
 insufficient / 15d ok / 30d parcial; e as regressões pré-existentes.
 Suíte completa: **424 testes (423 passando + 1 skip** por dataset Sentinel-2
 fora do git).
+
+---
+
+## Anexo — PR #7-FIX.2 (correção do período personalizado)
+
+> Data: 10/09/2026 · Motivo: playtest humano na Fazenda Orion (Ponta Porã-MS).
+> Com o FIX.1 aprovado, selecionar o período personalizado **20/08/2026 →
+> 07/09/2026** e clicar "Aplicar" fazia o painel responder
+> "CONDIÇÕES DO PERÍODO · 09/08/2026 → 07/09/2026 (30 DIAS)" — a janela do
+> preset de 30 dias em vez da janela personalizada. Correção aplicada **na
+> mesma branch/PR #7** — sem novo PR, sem merge.
+
+### Auditoria do fluxo (item por item)
+
+| Item auditado | Veredito |
+|---|---|
+| `selectClimateCustom()` | OK — ativa modo custom e mostra os campos; **não** dispara análise |
+| `applyClimateCustomRange()` | Parcial — lia os inputs corretos, mas **sem validação** (start>end, vazio, >366 dias) |
+| `climateCustomMode` | OK — preservado; apenas `selectClimatePreset` o zera |
+| `climateCurrentPreset` | OK — não prevalece na construção da URL (custom é verificado primeiro) |
+| start/end lidos de inputs errados | NÃO — IDs `climate-custom-start/end` únicos e corretos (sem IDs duplicados no DOM) |
+| Botão "Aplicar" dispara outro handler | NÃO — `onclick="applyClimateCustomRange()"`, `type="button"` |
+| Backend ignora start/end | NÃO — `start`/`end` têm precedência sobre `preset`; só um dos dois → 422 |
+| Cache colide com preset 30d | NÃO — a chave é `(lat, lon, start.iso, end.iso, parâmetros)`; 09/08→07/09 e 20/08→07/09 têm chaves distintas |
+| Resposta antiga de 30d reaproveitada | **SIM — CAUSA RAIZ** (abaixo) |
+| Frontend renderiza period antigo | **SIM — consequência da causa raiz**: `renderClimatePanel(data)` pintava qualquer resposta que chegasse |
+| Race condition preset × custom | **SIM — confirmada**: `loadClimatePanel()` sem AbortController/token |
+| Duas requisições concorrentes, antiga sobrescreve nova | **SIM — o defeito exato do playtest** |
+
+### Causa raiz
+
+`loadActiveFarm()` (executado no load da página) chama `loadClimatePanel()`
+com o preset padrão (`30d`). Com a NASA POWER real, essa requisição é lenta
+(janela atual + 5 janelas de baseline em sequência — dezenas de segundos). Se
+o usuário clica "Personalizado" → preenche as datas → "Aplicar" **antes** da
+requisição de 30d terminar, as duas correm em paralelo; a resposta do 30d
+chega **depois** e `renderClimatePanel()` — sem nenhuma guarda —
+sobrescrevia o painel de 19 dias com a janela de 30 dias. O backend, o cache
+e a construção da URL personalizados estavam corretos; o defeito era
+exclusivamente a ausência de proteção contra resposta tardia no frontend.
+
+### Correção (frontend, `index.html`)
+
+1. **Token incremental** `climateRequestSeq`: cada chamada a
+   `loadClimatePanel()` recebe um `seq`; antes de **qualquer** renderização
+   (sucesso, erro ou `json()`), só prossegue se `seq === climateRequestSeq`
+   (a requisição mais recente). Resposta antiga é descartada em silêncio.
+2. **`AbortController`**: nova requisição aborta a anterior (`signal` no
+   `fetch`) — além de não renderizar, a rede deixa de esperar a resposta
+   obsoleta; `AbortError` é tratado como "substituída" (sem caixa de erro).
+3. **Validação client-side** em `applyClimateCustomRange()`: ambas as datas
+   preenchidas · `start <= end` · intervalo ≤ 366 dias — com mensagens
+   explicativas e **sem** disparar requisição.
+4. **Modos puros**: modo preset envia somente `?preset=`; modo personalizado
+   envia somente `?start=&end=` — nunca juntos.
+
+### Regras mantidas/documentadas
+
+- **Prioridade na API**: start E end → personalizado (mesmo com `preset`
+  presente); nenhum → preset; apenas um → **422**.
+- **Contagem inclusiva única**: `period.days = (end − start) + 1` →
+  20/08/2026 → 07/09/2026 = **19 dias**; `period`, `coverage`,
+  `data_quality`, séries diárias (gráficos), baseline (mesma janela do
+  calendário nos anos anteriores) e interpretações usam a mesma janela.
+- **Cache**: sem colisão — chave inclui coordenadas + `start` + `end` +
+  parâmetros.
+
+### Testes (FIX.2)
+
+- `tests/test_frontend_climate_panel.py` — novo teste **comportamental em VM
+  Node** executando o bloco REAL de controle do clima extraído do
+  `index.html`: cenário exato do playtest (30d em voo → custom aplicado →
+  resposta tardia de 30d **não** sobrescreve), URL com start/end e sem
+  preset, "Personalizado" não dispara análise, validações, abort da
+  requisição anterior, alternância 30d→custom→15d→custom.
+- `tests/test_climate_api.py` — `TestCustomPeriod` (8 testes): janela exata
+  de 19 dias (period/coverage/séries só com as datas do intervalo),
+  start/end precedem preset, baseline na mesma janela (6 consultas), 422
+  (só end / só start / start>end), cache diferencia 30d × custom e dois
+  customs distintos.
+- `tests/test_climate_service.py` — janela única e contagem inclusiva
+  (period/coverage/data_quality/séries/métricas e as 6 janelas NASA todas
+  20/08–07/09).
+
+Suíte completa: **434 testes (433 passando + 1 skip** por dataset Sentinel-2
+fora do git). FIX.1 integralmente preservado (todos os seus testes seguem
+verdes).
