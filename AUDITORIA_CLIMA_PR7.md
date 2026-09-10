@@ -298,3 +298,215 @@ exclusivamente a ausência de proteção contra resposta tardia no frontend.
 Suíte completa: **434 testes (433 passando + 1 skip** por dataset Sentinel-2
 fora do git). FIX.1 integralmente preservado (todos os seus testes seguem
 verdes).
+
+---
+---
+
+# Anexo — PR #7-FIX.3 (2026-09-10)
+
+**Sintoma reportado (playtest real, reproduzível de forma determinística
+após `git pull` + restart + Ctrl+F5):** Dashboard → 30 dias → botão
+"Personalizado" → Início 20/08/2026 / Fim 07/09/2026 → "Aplicar" → a
+interface mostra o intervalo personalizado e o botão "Personalizado" ativo,
+mas o painel responde/continua exibindo
+**"09/08/2026 → 07/09/2026 (30 DIAS)"**.
+
+## 1. Auditoria do ciclo de vida COMPLETO (antes de qualquer correção)
+
+Referências de todos os identificadores do clima no frontend inteiro
+(`index.html`; `app.js` não contém nenhum):
+
+| Identificador | Declaração | Escrita/Chamadas (todas) |
+|---|---|---|
+| `loadClimatePanel()` | `index.html` (bloco clima) | `loadActiveFarm` **1×** (carga da página, modo padrão 30d) · `selectClimatePreset` (clique em 7/15/30d) · `applyClimateCustomRange` (botão "Aplicar" do clima) · 2 botões "Tentar novamente" (só após erro) |
+| `selectClimatePreset(p)` | idem | somente os 3 botões de preset do painel (`onclick`) |
+| `selectClimateCustom()` | idem | somente o botão "Personalizado" do painel (`onclick`) |
+| `applyClimateCustomRange()` | idem | somente o botão "Aplicar" do painel (`onclick`) |
+| `climateCustomMode` / `climateCurrentPreset` | idem | escritas apenas em `selectClimatePreset`/`selectClimateCustom`/`applyClimateCustomRange`/`loadClimatePanel` (leitura) |
+| `climateRequestSeq` / `climateAborter` | idem | apenas em `loadClimatePanel` (FIX.2) |
+
+Conferido: **nenhum** `selectClimatePreset('30d')` hardcoded, **nenhum**
+timer/`setInterval`/listener (DOMContentLoaded, window.onload, mudança de
+aba, seleção de fazenda, analytics, weather legado, Sentinel/3D) que
+re-dispare ou mude o modo do clima. `loadActiveFarm` tem guarda
+`isFetchingFarm` (executa uma única vez na vida da página) e chama
+`loadClimatePanel()` **exatamente uma vez**, sem alterar modo.
+`switchScreen` (navegação entre abas) não chama nada do clima.
+
+**Conclusão da auditoria de rotinas:** com o código do FIX.2, não existe
+rotina que, após um "Aplicar" correto no painel de clima, re-dispare
+`preset=30d`. Ou seja: se o playtest clicasse no "Aplicar" **do painel de
+clima**, o painel deveria ficar em 19 dias. Logo a causa raiz estava
+fora da ordem das requisições — e a auditoria da **tela** encontrou.
+
+## 2. CAUSA RAIZ REAL — dois controles "Personalizado + Aplicar" idênticos na mesma tela
+
+O dashboard contém **dois** grupos de controles com aparência
+praticamente idêntica (rótulo "Período:", 2 campos de data e botão
+"Aplicar"):
+
+1. **Painel de clima** (`#climate-custom-start` / `#climate-custom-end` +
+   botão `onclick="applyClimateCustomRange()"` dentro da caixa
+   "🌦️ Clima & Condições Agronômicas") → dispara
+   `GET /api/climate/farm/1?start=…&end=…` → **atualiza o painel de clima**.
+2. **Timeline 3D Sentinel** (`#custom-start` / `#custom-end` + botão
+   `#custom-apply` → `applyCustomPeriod()` → `refreshRealTimeline('custom', …)`
+   → `GET /api/talhao/1/dates?start=…&end=…`) → **atualiza apenas o
+   calendário de cenas Sentinel-2 da aba 3D; NUNCA toca o painel de clima**.
+
+No playtest, o período 20/08/2026→07/09/2026 foi aplicado ao controle
+**certo ou ao errado sem o usuário conseguir distinguir qual era** — e, no
+caso da timeline 3D, o painel de clima simplesmente **nunca recebeu a
+requisição custom**: ficou exibindo a janela de 30 dias que a carga da
+página tinha carregado. Isso explica:
+
+- a **determinística** (não depende de timing — não era race);
+- por que a resposta "30 DIAS" persistia (era a janela original da carga,
+  nunca substituída);
+- por que o botão "Personalizado" aparecia ativo e os campos com as datas
+  (o controle usado era o da timeline, com seu próprio estado `currentPeriod='custom'`).
+
+### Fatores de contribuição (confirmados e corrigidos)
+
+- **Estado ambíguo:** `climateCustomMode` + `climateCurrentPreset` (dois
+  booleanos/textos que precisavam concordar) — substituído por estado único.
+- **`switchScreen` remove `.active` de TODOS os `.tab-btn`** a cada troca de
+  aba — incluindo as pílulas do clima: o usuário que saía e voltava da
+  aba via o painel "desmarcado" (o modo JS continuava vivo), agravando a
+  confusão sobre qual controle estava ativo.
+- **Sem validação semântica da resposta:** o painel renderizava qualquer
+  resposta 200, sem conferir se o período coberto era o período pedido.
+
+## 3. Por que o FIX.2 não resolveu
+
+O FIX.2 corrigiu uma race condition **real e necessária** (resposta tardia
+de 30d não pode sobrescrever custom aplicado depois — proteção por token
+sequencial + AbortController). Mas no fluxo do playtest **nenhuma terceira
+requisição a `/api/climate` era disparada**: o clique "Aplicar" que
+importava para o usuário podia estar indo para o outro controle (timeline
+3D), que nem consulta o clima. Nenhuma proteção de race muda o resultado
+quando a requisição custom simplesmente não é enviada ao endpoint de
+clima. A correção exigia atacar a **ambiguidade da UI** e blindar o estado
+do modo — o que o FIX.2 não fazia.
+
+## 4. Correção aplicada (FIX.3) — 4 camadas + diagnóstico
+
+### (a) Desambiguação dos dois "Aplicar" (causa raiz)
+- Painel de clima: rótulo **"Período da análise climática:"**, botão
+  **"Aplicar período do clima"** + nota "altera apenas o painel de clima".
+- Timeline 3D: botão **"Aplicar à timeline 3D"** + tooltip "Período da
+  TIMELINE 3D (cenas Sentinel-2) — não afeta o painel de clima, que tem
+  seu próprio período acima". **Zero mudança de comportamento da timeline
+  3D** (apenas rótulos/tooltip).
+
+### (b) Estado único e explícito (elimina ambiguidade de estado)
+```js
+let climateMode = { type: 'preset', preset: '30d', start: null, end: null };
+// ou { type: 'custom', preset: null, start: 'YYYY-MM-DD', end: 'YYYY-MM-DD' }
+```
+- Só os 3 controles do painel escrevem em `climateMode` (coberto por teste
+  estático: qualquer escrita fora deles falha a suíte).
+- `loadClimatePanel` deriva o período EXCLUSIVAMENTE de `climateMode`
+  (custom → `start`/`end`, sem `preset`; preset → `preset`, sem datas).
+- Após "Aplicar" custom, o estado `{type:'custom', start:'2026-08-20',
+  end:'2026-09-07'}` **persiste** até o usuário clicar explicitamente em
+  7/15/30 dias (ou aplicar outro custom). "Tentar novamente" reenvia o MESMO
+  modo; reabrir "Personalizado" reprefilcha as datas aplicadas.
+
+### (c) Proteção semântica do período (2ª camada além do `requestSeq`)
+Antes de renderizar, a resposta é conferida contra o contexto da
+requisição:
+- `custom` → `data.period.start === pedido.start && data.period.end ===
+  pedido.end && !data.period.preset`;
+- `preset` → `data.period.preset === pedido.preset`.
+Incompatível → **descartada** (log `[CLIMATE] response_discarded_mismatch`),
+nunca renderizada.
+
+### (d) Comportamento de navegação DEFINIDO e DOCUMENTADO
+Regra: **o modo do clima é PRESERVADO ao sair/voltar das telas** (dashboard
+→ mapa/3D → dashboard). Nunca há reset silencioso nem recarga implícita com
+o usuário na tela. Como `switchScreen` remove `.active` de todos os
+`.tab-btn`, ao voltar ao dashboard a pílula correspondente a `climateMode`
+é **restaurada** (`climateSetPillActive`) — o estado visual volta a
+corresponder ao modo (e ao dado já renderizado).
+
+### (e) Log de diagnóstico permanente `[CLIMATE]`
+`console.debug('[CLIMATE]', …)` em: `load_start`, `fetch` (URL final),
+`abort_previous`, `response_discarded_stale`, `response_discarded_mismatch`,
+`render`, `aborted`, `error`, `select_preset`, `select_custom`,
+`apply_custom`, `load_blocked`. DevTools → Console, filtro `[CLIMATE]`.
+
+## 5. Sequência EXATA esperada no DevTools (Network, filtro "climate")
+
+Playtest: carregar dashboard → clicar "Personalizado" **do painel de clima**
+(caixa 🌦️) → 20/08/2026 / 07/09/2026 → **"Aplicar período do clima"**:
+
+| # | Request | Quando |
+|---|---|---|
+| 1 | `GET /api/climate/farm/1?preset=30d` | carga da página (e é ABORTED se o usuário aplicar antes da resposta) |
+| 2 | `GET /api/climate/farm/1?start=2026-08-20&end=2026-09-07` | "Aplicar período do clima" |
+
+**NÃO existe terceira requisição `preset=30d` depois do Aplicar.** O painel
+fica em **"20/08/2026 → 07/09/2026 (19 DIAS)"**.
+
+Console esperado (filtro `[CLIMATE]`):
+```
+[CLIMATE] {action:'load_start', seq:1, mode:{type:'preset',preset:'30d',…}}
+[CLIMATE] {action:'fetch', seq:1, url:'…/api/climate/farm/1?preset=30d', …}
+[CLIMATE] {action:'select_custom', mode:{type:'custom',…}, seq:1}
+[CLIMATE] {action:'apply_custom', ok:true, mode:{type:'custom',start:'2026-08-20',end:'2026-09-07'},…}
+[CLIMATE] {action:'abort_previous', abortedSeq:1, currentSeq:2}
+[CLIMATE] {action:'load_start', seq:2, mode:{type:'custom',…}}
+[CLIMATE] {action:'fetch', seq:2, url:'…/api/climate/farm/1?start=2026-08-20&end=2026-09-07', …}
+[CLIMATE] {action:'render', seq:2, period:{start:'2026-08-20', end:'2026-09-07', days:19, preset:null}}
+```
+(se a 30d responder depois do Aplicar: `response_discarded_stale` — tela
+intocada)
+
+## 6. Testes (os 10 pontos exigidos)
+
+`tests/test_frontend_climate_panel.py` (14 → **20** testes):
+
+1. **Fluxo completo loadActiveFarm → 30d → custom (fluxo real de init, não
+   duas promises isoladas):** `test_fluxo_completo_custom_no_playtest_real`
+   executa o bloco real do clima + a função REAL `switchScreen` em VM Node,
+   no MESMO contexto: carga 30d em voo → custom → 19d → 30d tardia
+   descartada.
+2. **Nenhum terceiro `preset=30d`:** idem — `no30dAfterCustom` varre TODAS
+   as chamadas depois do Aplicar.
+3. **Persistência do estado custom:** idem — `modeAfterApply` exato, retry
+   ("Tentar novamente") reenvia o mesmo custom, reprefill das datas ao
+   reabrir "Personalizado".
+4. **Resposta incompatível descartada (camada semântica):** idem — pedido
+   custom × resposta 30d → nada renderizado; pedido 7d × resposta 30d →
+   nada renderizado.
+5. **Resposta compatível renderizada:** idem — 19d custom e 15d preset
+   renderizam.
+6. **Custom 19 dias inclusivos:** idem — `days:19` em 20/08→07/09.
+7. **Custom → 15d:** idem — `preset=15d` (sem start/end), modo
+   `{type:'preset',preset:'15d'}`.
+8. **15d → custom:** idem — volta a start/end.
+9. **Navegação entre telas:** idem (switchScreen REAL) +
+   `test_switch_screen_preserva_modo_e_restaura_pillulas` — modo preservado,
+   zero requisições, pílula custom restaurada ao voltar.
+10. **Regressão FIX.1 + FIX.2:** todos os 14 testes anteriores mantidos
+    (estáticos + comportamental) + suíte completa (83 service / 24 api /
+    demais módulos intactos).
+
+Novos testes estáticos de blindagem: `test_estado_unico_explícito_climate_mode`
+(apenas `climateMode` decide o período),
+`test_load_active_farm_chama_clima_uma_vez_sem_mudar_modo`,
+`test_nenhuma_outra_rotina_altera_o_modo_clima` (escrita fora dos controles
+do painel falha a suíte), `test_aplicars_desambiguados`,
+`test_log_diagnostico_climate_presente`.
+
+## 7. Estado final
+
+Suíte completa: **440 testes (439 passando + 1 skip** por dataset
+Sentinel-2 fora do git). FIX.1 e FIX.2 integralmente preservados. Backend
+intocado neste fix (prioridade start/end, 422, cache por janela e
+contagem inclusiva já auditados). Regra final garantida: **após aplicar
+20/08/2026 → 07/09/2026, o painel permanece "20/08/2026 → 07/09/2026 (19
+DIAS)" até o usuário explicitamente escolher outro modo/período** — e
+nenhuma rotina (carga, analytics, timeline, weather legado, Sentinel,
+navegação) o altera em silêncio.

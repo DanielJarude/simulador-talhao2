@@ -567,10 +567,11 @@
                 </span>
               </div>
               <div id="climate-custom-row" hidden style="display:flex; gap:8px; align-items:center; margin-bottom:10px; flex-wrap:wrap;">
-                <span style="font-size:0.75rem; color:#8b949e;">Período:</span>
+                <span style="font-size:0.75rem; color:#8b949e;">Período da análise climática:</span>
                 <input type="date" id="climate-custom-start" style="background:#0d1117; color:#f0f6fc; border:1px solid #30363d; border-radius:6px; padding:4px 8px;">
                 <input type="date" id="climate-custom-end" style="background:#0d1117; color:#f0f6fc; border:1px solid #30363d; border-radius:6px; padding:4px 8px;">
-                <button class="tab-btn" type="button" onclick="applyClimateCustomRange()">Aplicar</button>
+                <button class="tab-btn" type="button" onclick="applyClimateCustomRange()">Aplicar período do clima</button>
+                <span style="font-size:0.68rem; color:#8b949e;" title="A timeline 3D abaixo tem controle de período próprio (cenas Sentinel-2) e não afeta o painel de clima.">altera apenas o painel de clima</span>
               </div>
               <div id="climate-context" class="climate-context">Carregando contexto da fazenda…</div>
               <div id="climate-state"></div>
@@ -775,10 +776,10 @@
         <div class="timeline-row">
           <span class="tl-label">Período:</span>
           <span id="period-pills"></span>
-          <span id="custom-period-row" hidden>
+          <span id="custom-period-row" hidden title="Período da TIMELINE 3D (cenas Sentinel-2) — não afeta o painel de clima, que tem seu próprio período acima.">
             <input type="date" id="custom-start">
             <input type="date" id="custom-end">
-            <button id="custom-apply" type="button">Aplicar</button>
+            <button id="custom-apply" type="button">Aplicar à timeline 3D</button>
           </span>
           <button id="btn-latest" type="button" title="Selecionar a aquisição válida mais recente do catálogo">⇥ Mais recente</button>
           <button id="tl-prev" class="tl-arrow" type="button" title="Cenas anteriores" aria-label="Cenas anteriores">‹</button>
@@ -1561,13 +1562,23 @@
     // =====================================================================
     let climateChartPrecip = null;
     let climateChartTemp = null;
-    let climateCurrentPreset = '30d';
-    let climateCustomMode = false;
+    // PR #7-FIX.3 — estado ÚNICO e explícito do modo climático (elimina o par
+    // ambíguo climateCustomMode/climateCurrentPreset):
+    //   { type: 'preset', preset: '7d'|'15d'|'30d', start: null, end: null }
+    //   { type: 'custom', preset: null, start: 'YYYY-MM-DD', end: 'YYYY-MM-DD' }
+    // Só os controles do PRÓPRIO painel mudam este estado; nenhuma rotina de
+    // carregamento, timeline, analytics, weather ou navegação o altera.
+    let climateMode = { type: 'preset', preset: '30d', start: null, end: null };
     // PR #7-FIX.2 — proteção contra race condition: token da requisição mais
     // recente + AbortController da que está em voo. Uma resposta tardia de
     // uma requisição ANTERIOR nunca pode sobrescrever a tela da atual.
     let climateRequestSeq = 0;
     let climateAborter = null;
+
+    // PR #7-FIX.3 — log de diagnóstico (DevTools → Console; filtro "[CLIMATE]")
+    function climateLog(payload) {
+      try { console.debug('[CLIMATE]', payload); } catch (_) { /* log nunca quebra o fluxo */ }
+    }
 
     function climateFmtDate(iso) {
       if (!iso) return '--';
@@ -1590,33 +1601,57 @@
     }
 
     function selectClimatePreset(p) {
-      climateCurrentPreset = p;
-      climateCustomMode = false;
+      // PR #7-FIX.3 — troca explícita do estado para preset (custom é abandonado).
+      climateMode = { type: 'preset', preset: p, start: null, end: null };
       const row = document.getElementById('climate-custom-row');
       if (row) row.hidden = true;
       climateSetPillActive(p);
+      climateLog({ action: 'select_preset', mode: { ...climateMode }, seq: climateRequestSeq });
       loadClimatePanel();
     }
 
     function selectClimateCustom() {
-      climateCustomMode = true;
+      // PR #7-FIX.3 — ativa o modo custom e mantém as datas já aplicadas (se
+      // houver), reaproveitadas nos campos; NÃO dispara análise (o usuário
+      // decide quando, com "Aplicar período do clima").
+      climateMode = { type: 'custom', preset: null, start: climateMode.start, end: climateMode.end };
       const row = document.getElementById('climate-custom-row');
       if (row) row.hidden = false;
+      const s = document.getElementById('climate-custom-start');
+      const e = document.getElementById('climate-custom-end');
+      if (s && !s.value && climateMode.start) s.value = climateMode.start;
+      if (e && !e.value && climateMode.end) e.value = climateMode.end;
       climateSetPillActive('custom');
+      climateLog({ action: 'select_custom', mode: { ...climateMode }, seq: climateRequestSeq });
     }
 
     function applyClimateCustomRange() {
-      // PR #7-FIX.2 — validação client-side ANTES de qualquer requisição:
+      // PR #7-FIX.2/3 — validação client-side ANTES de qualquer requisição:
       // (1) ambas as datas preenchidas; (2) start <= end; (3) intervalo <= 366 dias.
+      // Só após validar, o estado vira custom com as datas do Aplicar.
       const s = document.getElementById('climate-custom-start');
       const e = document.getElementById('climate-custom-end');
       const stateEl = document.getElementById('climate-state');
       const say = (msg) => { if (stateEl) stateEl.innerHTML = `<div class="climate-state-box">${msg}</div>`; };
-      if (!s || !e || !s.value || !e.value) { say('Informe as datas de início E fim do período personalizado.'); return; }
-      if (s.value > e.value) { say('A data de início deve ser anterior ou igual à data de fim.'); return; }
+      if (!s || !e || !s.value || !e.value) {
+        climateLog({ action: 'apply_custom', ok: false, reason: 'datas_vazias', seq: climateRequestSeq });
+        say('Informe as datas de início E fim do período personalizado.');
+        return;
+      }
+      if (s.value > e.value) {
+        climateLog({ action: 'apply_custom', ok: false, reason: 'inicio_apos_fim', start: s.value, end: e.value, seq: climateRequestSeq });
+        say('A data de início deve ser anterior ou igual à data de fim.');
+        return;
+      }
       const days = (new Date(e.value) - new Date(s.value)) / 86400000;
-      if (!isFinite(days) || days > 366) { say('O intervalo personalizado deve ter no máximo 366 dias.'); return; }
+      if (!isFinite(days) || days > 366) {
+        climateLog({ action: 'apply_custom', ok: false, reason: 'intervalo_maior_366', days, seq: climateRequestSeq });
+        say('O intervalo personalizado deve ter no máximo 366 dias.');
+        return;
+      }
+      climateMode = { type: 'custom', preset: null, start: s.value, end: e.value };
       climateSetPillActive('custom');
+      climateLog({ action: 'apply_custom', ok: true, mode: { ...climateMode }, seq: climateRequestSeq });
       loadClimatePanel();
     }
 
@@ -1629,7 +1664,10 @@
       // pode ser renderizada (resposta tardia de preset=30d não pode
       // sobrescrever um período personalizado aplicado depois — e vice-versa).
       const seq = ++climateRequestSeq;
-      if (climateAborter) { try { climateAborter.abort(); } catch (_) { /* já encerrada */ } }
+      if (climateAborter) {
+        try { climateAborter.abort(); } catch (_) { /* já encerrada */ }
+        climateLog({ action: 'abort_previous', abortedSeq: seq - 1, currentSeq: seq });
+      }
       const aborter = new AbortController();
       climateAborter = aborter;
       const stale = () => (seq !== climateRequestSeq);
@@ -1645,22 +1683,54 @@
           `Talhão <b>${activeFarm.crop || 'Principal'}</b> &nbsp;→&nbsp; ` +
           `Localização <b>${activeFarm.city || '--'}</b> (${loc} · fonte: ${locSrc} · ${locStatus})`;
       }
+      climateLog({ action: 'load_start', seq, mode: { ...climateMode } });
+
       try {
         const params = new URLSearchParams();
-        if (climateCustomMode) {
-          const s = document.getElementById('climate-custom-start');
-          const e = document.getElementById('climate-custom-end');
-          if (!s || !e || !s.value || !e.value) {
-            stateEl.innerHTML = '<div class="climate-state-box">Informe as datas de início e fim do período.</div>';
+        // PR #7-FIX.3 — período derivado EXCLUSIVAMENTE do estado explícito
+        // `climateMode` (personalizado tem prioridade quando type='custom').
+        // Nunca misturar preset com start/end.
+        let reqCtx; // contexto semântico da requisição (validação da resposta)
+        if (climateMode.type === 'custom') {
+          let sv = climateMode.start, ev = climateMode.end;
+          // fallback defensivo: valores digitados nos campos (ex.: "Tentar novamente")
+          if (!sv || !ev) {
+            const s = document.getElementById('climate-custom-start');
+            const e = document.getElementById('climate-custom-end');
+            sv = sv || (s ? s.value : '');
+            ev = ev || (e ? e.value : '');
+          }
+          if (!sv || !ev) {
+            climateLog({ action: 'load_blocked', reason: 'custom_sem_datas', seq });
+            stateEl.innerHTML = '<div class="climate-state-box">Informe as datas de início E fim do período da análise climática.</div>';
             return;
           }
-          params.set('start', s.value);
-          params.set('end', e.value);
+          if (sv > ev) {
+            climateLog({ action: 'load_blocked', reason: 'inicio_apos_fim', seq, start: sv, end: ev });
+            stateEl.innerHTML = '<div class="climate-state-box">A data de início deve ser anterior ou igual à data de fim.</div>';
+            return;
+          }
+          const d = (new Date(ev) - new Date(sv)) / 86400000;
+          if (!isFinite(d) || d > 366) {
+            climateLog({ action: 'load_blocked', reason: 'intervalo_maior_366', seq, days: d });
+            stateEl.innerHTML = '<div class="climate-state-box">O intervalo personalizado deve ter no máximo 366 dias.</div>';
+            return;
+          }
+          params.set('start', sv);
+          params.set('end', ev);
+          reqCtx = { kind: 'custom', start: sv, end: ev, preset: null };
         } else {
-          params.set('preset', climateCurrentPreset);
+          params.set('preset', climateMode.preset);
+          reqCtx = { kind: 'preset', preset: climateMode.preset, start: null, end: null };
         }
-        const res = await fetch(`${API_URL}/climate/farm/${activeFarm.id || 1}?${params.toString()}`, { headers: { ...authHeaders() }, signal: aborter.signal });
-        if (stale()) return; // requisição mais recente já substituiu esta
+
+        const url = `${API_URL}/climate/farm/${activeFarm.id || 1}?${params.toString()}`;
+        climateLog({ action: 'fetch', seq, url, mode: { ...climateMode } });
+        const res = await fetch(url, { headers: { ...authHeaders() }, signal: aborter.signal });
+        if (stale()) {
+          climateLog({ action: 'response_discarded_stale', seq, currentSeq: climateRequestSeq, status: res.status });
+          return; // requisição mais recente já substituiu esta
+        }
         if (res.status === 401) { AuthService.logout(); return; }
         if (res.status === 404) {
           stateEl.innerHTML = '<div class="climate-state-box error">Sem acesso aos dados climáticos desta fazenda.</div>';
@@ -1678,11 +1748,39 @@
           return;
         }
         const data = await res.json();
-        if (stale()) return; // resposta antiga — nunca sobrescreve a tela atual
+        if (stale()) {
+          climateLog({ action: 'response_discarded_stale', seq, currentSeq: climateRequestSeq });
+          return; // resposta antiga — nunca sobrescreve a tela atual
+        }
+
+        // PR #7-FIX.3 — validação SEMÂNTICA do período (2ª camada, além do seq):
+        // a resposta só é renderizada se o PERÍODO QUE ELA COBRE for exatamente
+        // o período pedido. custom → start/end iguais e sem preset;
+        // preset  → period.preset igual ao pedido. Caso contrário → DESCARTAR.
+        const per = data.period || {};
+        let compatible;
+        if (reqCtx.kind === 'custom') {
+          compatible = (per.start === reqCtx.start) && (per.end === reqCtx.end) && (!per.preset);
+        } else {
+          compatible = (per.preset === reqCtx.preset);
+        }
+        if (!compatible) {
+          climateLog({ action: 'response_discarded_mismatch', seq, requested: reqCtx, received: per });
+          return;
+        }
+
+        climateLog({ action: 'render', seq, period: { start: per.start, end: per.end, days: per.days, preset: per.preset } });
         renderClimatePanel(data);
       } catch (err) {
-        if (stale()) return; // foi substituída/abortada por uma requisição nova
-        if (err && err.name === 'AbortError') return;
+        if (stale()) {
+          climateLog({ action: 'error_discarded_stale', seq, currentSeq: climateRequestSeq });
+          return; // foi substituída/abortada por uma requisição nova
+        }
+        if (err && err.name === 'AbortError') {
+          climateLog({ action: 'aborted', seq });
+          return;
+        }
+        climateLog({ action: 'error', seq, error: String(err && err.message || err) });
         console.error("Erro ao carregar o painel de clima:", err);
         stateEl.innerHTML =
           '<div class="climate-state-box error">⚠ Dados climáticos temporariamente indisponíveis.' +
@@ -1946,6 +2044,16 @@
         startRenderLoop(); // inicia (ou retoma) o rAF apenas aqui
       } else {
         stopRenderLoop();
+        // PR #7-FIX.3 — comportamento de navegação (DOCUMENTADO): o modo
+        // climático (climateMode) é PRESERVADO ao sair/voltar das telas —
+        // NUNCA há reset silencioso nem recarga implícita enquanto o usuário
+        // está na tela. Este switchScreen remove `.active` de TODOS os
+        // .tab-btn (incluindo as pílulas do painel de clima); ao voltar ao
+        // dashboard, restauramos o estado VISUAL das pílulas para corresponder
+        // ao modo preservado (o dado renderizado já está na tela).
+        if (screenId === 'dash' && typeof climateSetPillActive === 'function') {
+          climateSetPillActive(climateMode.type === 'custom' ? 'custom' : climateMode.preset);
+        }
       }
     }
 
