@@ -94,6 +94,33 @@ def test_dash_legacy_rotulada_como_demonstrativa():
     assert "Ciclo Completo (NASA)" not in DASH
 
 
+# ---------------------------------------------------------------------------
+# PR #7-FIX.1 — cobertura explícita no frontend
+# ---------------------------------------------------------------------------
+def test_painel_exibe_dados_do_periodo_por_variavel():
+    # bloco "DADOS DO PERÍODO": dias solicitados × disponíveis por variável
+    assert "Dados do período — disponibilidade por variável" in INDEX
+    assert "Dias completos:" in INDEX
+    # tags "X/Y dias" por métrica
+    assert "dias com dados" in INDEX or "/ dias" in INDEX or " dias</span>" in INDEX
+
+
+def test_banner_dados_parciais_sem_percentual_genérico():
+    # banner "DADOS PARCIAIS" + dias por variável; a mensagem vem do backend
+    assert "DADOS PARCIAIS" in INDEX
+    assert "nenhum valor foi estimado ou preenchido" in INDEX
+
+
+def test_delta_omitido_com_explicacao():
+    # FIX.4 — sem comparação calculada não existe "desvio"; mostra o motivo
+    assert "comparação omitida (cobertura insuficiente)" in INDEX
+
+
+def test_indicador_nulo_exibe_motivo():
+    # FIX.2 — indicador nulo (ex.: sequência seca com lacunas) mostra "—" + razão
+    assert "OMITIDO: " in INDEX
+
+
 def test_app_js_climate_service():
     assert "ClimateService" in APP
     assert "getFarmClimate" in APP

@@ -130,3 +130,84 @@
 - **Frontend**: seção "Clima & Condições Agronômicas" integrada ao Dashboard de `index.html` (mesmo `screen-dash`, mesmos estilos), com presets de período, métricas com delta vs. referência histórica, indicadores calculados, interpretação conservadora, 2 gráficos diários (precipitação e temperatura, com linha de referência histórica) e rodapé de proveniência/confiança. Sem nova dependência (Chart.js existente).
 - **Sem nova migration** (nada é persistido; o clima é derivado sob demanda).
 - **Preparação PR #8/#9**: toda série diária usa datas ISO-8601 absolutas e `period` com `start/end`, permitindo junção temporal (não causal) com o calendário Sentinel-2 por data; o painel não faz correlação clima×espectro neste PR.
+
+---
+
+## Anexo — PR #7-FIX.1 (correção de cobertura, lacunas e confiabilidade)
+
+> Data: 10/09/2026 · Motivo: playtest humano na Fazenda Orion (`-22.7182, -55.5421`)
+> com presets 7d/15d/30d. Os comportamentos de 7d (`insufficient_data`) e 15d
+> foram aprovados e **preservados**; 6 defeitos no cenário de 30 dias com
+> precipitação ainda não consolidada (defasagem NRT da fonte) bloquearam o merge.
+> Correção aplicada **na mesma branch/PR #7** — sem novo PR, sem merge.
+
+### Causa raiz dos 6 defeitos
+
+| # | Sintoma no playtest | Causa raiz |
+|---|---|---|
+| 1+6 | Painel mostrava simultaneamente "1% dos dias completos" e "cobertura de 70%" | Duas linhas do serviço formatavam a **mesma razão** de modos distintos: a mensagem parcial usava `f"{0.70:.0f}%"` → **"1%"** (razão tratada como inteiro), enquanto a leitura de qualidade usava `f"{0.70:.0%}"` → **"70%"** (correto). O conceito único e ambíguo de "cobertura" escondia que dois percentuais diferentes estavam sendo calculados (dias completos × cobertura da variável). |
+| 2 | "Maior sequência seca: 17 dias" com dias faltando no meio | O valor era calculado apenas sobre os dias **conhecidos** (limite inferior) e apresentado como fato do período completo. Regra imposta: **dado ausente não é zero e não é "sem chuva"** — com lacunas, o indicador vira `null` + razão. |
+| 3 | Agregações (acumulado, médias) pareciam representar o período inteiro | Falta de declaração de *sobre quantos dias* cada agregado foi calculado. Agora cada métrica declara `available_days`/`requested_days`/`complete` e a UI lê "25,0 mm (21/30 dias c/ dados)". |
+| 4 | Desvio de chuva −91,4% (4,7 mm atual × 54,41 mm referência) | Comparação de período **parcial** contra baseline **completo** como se fossem equivalentes. Metodologia adotada (documentada em `baseline.methodology`): **A** comparar apenas as datas com observação atual (mesmas posições da janela) + **B** omitir o desvio se a cobertura da variável for < 50%. |
+| 5 | Confiança única "média/limitada" para todas as métricas | A confiança era geral, não refletia a cobertura da variável usada por cada interpretação. Agora: confiança **por métrica** (100% → alta; 75–99,9% → média; <75% → limitada; −1 degrau se referência < 3 anos) + confiança **geral** (dias completos ≥98% e ≥3 anos → alta; 90–98% ou 1–2 anos → média; <90% ou 0 anos → limitada), cada interpretação declarando `confidence` + `confidence_basis`. |
+
+### Definição formal de cobertura (campo `coverage` da API)
+
+1. **Cobertura geral** — `overall_days`/`overall_pct`: dias com o conjunto
+   **mínimo** para a análise geral = `T2M` + `PRECTOTCORR` (definição declarada
+   em `overall_definition`). Se `overall_days == 0` → `insufficient_data`.
+2. **Cobertura por variável** — `by_metric{precipitation, temperature,
+   humidity, radiation, wind}`: `available_days` + `pct` de cada variável
+   individual.
+3. **Dias completos** — `complete_days`/`complete_days_pct`: dias com **todas**
+   as 7 variáveis simultâneas. `complete_days < total` → `partial` (com
+   mensagem de contagem explícita "N de M dias … (pct%)").
+
+Percentuais sempre são **razão × 100** arredondados (nunca `.0f` sobre razão).
+
+### Mudanças de API (payload)
+
+- `coverage` (novo, top-level) — os três conceitos acima.
+- `metrics[*]` — ganham `available_days`, `requested_days`, `complete`;
+  precipitação ganha `accumulated_over_days`.
+- `metrics[<m>].baseline` — bloco por métrica: `compared`, `compared_days`,
+  `total_days`, `current_value`, `reference_value`, `deviation`,
+  `deviation_pct`, `classification`, `classification_label`, `reference_years`,
+  `reason` (ometido → `compared=false` + `reason`).
+- `metrics.precipitation.longest_dry_streak_days` — `null` +
+  `longest_dry_streak_reason` quando há lacunas de precipitação.
+- `indicators` — ganham `over_days`/`total_days`, `reason` (cálculo omitido) e
+  `compared_days` (desvios).
+- `interpretations` — cada uma com `confidence` + `confidence_basis`
+  (cobertura da variável usada + anos de referência); nova interpretação
+  "Qualidade dos dados" no estado parcial.
+- `confidence` — `scope`, `level`, `complete_days_pct`, `valid_baseline_years`,
+  `by_metric`, `criteria`, `reasons`.
+- `data_quality` — `complete_days(_pct)`, `by_metric_days`,
+  `missing_days(_total)`, `omitted_calculations`.
+- `status` — `insufficient_data` (sem conjunto mínimo), `partial` (qualquer
+  dia incompleto), `ok`.
+
+### O que NÃO mudou (preserva aprovado no playtest)
+
+- 7d sem dados consolidados → `insufficient_data` explícito, **sem fallback**
+  e sem dado inventado;
+- 15d completo → `ok` com baseline;
+- defasagem NRT: NULL continua NULL (dias recentes ausentes nunca viram
+  0 mm / 0 °C / 0%);
+- localização canônica (PR #6), Sentinel/DEM/3D, auth/ownership, PDF,
+  endpoint legado, ausência de ET (sem metodologia inventada).
+
+### Testes (FIX.1)
+
+`tests/test_climate_service.py` (45 → 82) e
+`tests/test_frontend_climate_panel.py` (9 → 13) cobrem os 20 cenários
+obrigatórios: os três conceitos de cobertura; regressão ratio × percentage
+(21/30 → "21 de 30 … 70%", nunca "1%"); cenário 21/30 ponta a ponta;
+precipitação com lacuna (acumulado "nos N dias"); sequência seca interrompida
+por NULL (unit + relatório + interpretação); baseline parcial (A: mesmas
+datas; B: omissão < 50%); confiança por métrica × geral e `confidence_basis`;
+mensagem parcial explícita; nenhuma imputação (NULL nunca vira 0); 7d
+insufficient / 15d ok / 30d parcial; e as regressões pré-existentes.
+Suíte completa: **424 testes (423 passando + 1 skip** por dataset Sentinel-2
+fora do git).

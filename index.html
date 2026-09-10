@@ -1666,8 +1666,11 @@
     }
 
     function climateDeltaHtml(baseline) {
-      if (!baseline || baseline.classification === null || baseline.classification === undefined) {
-        return '<small>Sem referência histórica suficiente</small>';
+      // FIX.4 — comparação só aparece quando efetivamente calculada
+      // (sobre os dias com observação). Omitida → diz o porquê, sem número.
+      if (!baseline || baseline.compared === false || baseline.compared === undefined) {
+        const why = baseline && baseline.reason ? baseline.reason : 'sem referência histórica';
+        return `<small style="color:#8b949e;" title="${String(why).replace(/"/g, '&quot;')}">comparação omitida (cobertura insuficiente)</small>`;
       }
       const pct = baseline.deviation_pct;
       const cls = baseline.classification === 'abaixo_da_referencia' ? 'climate-delta-down'
@@ -1675,7 +1678,16 @@
       const arrow = (pct === null || pct === undefined) ? '≈' : (pct < 0 ? '↓' : (pct > 0 ? '↑' : '≈'));
       const sign = (pct !== null && pct > 0) ? '+' : '';
       const pctTxt = (pct === null || pct === undefined) ? '' : `${sign}${String(pct).replace('.', ',')}%`;
-      return `<small class="${cls}">${arrow} ${pctTxt} · ${baseline.classification_label}</small>`;
+      const daysNote = (baseline.compared_days != null && baseline.total_days != null && baseline.compared_days < baseline.total_days)
+        ? ` (sobre ${baseline.compared_days}/${baseline.total_days} dias)` : '';
+      return `<small class="${cls}" title="Comparação feita apenas sobre as datas com observação atual vs. média histórica das mesmas datas.">${arrow} ${pctTxt} · ${baseline.classification_label}${daysNote}</small>`;
+    }
+
+    function climateDaysTag(metric) {
+      // FIX.1 — cada métrica mostra seus dias disponíveis (X/Y)
+      if (!metric || metric.available_days == null || metric.requested_days == null) return '';
+      const cls = metric.complete ? '' : ' style="color:#fbbf24;"';
+      return `<span${cls}> ${metric.available_days}/${metric.requested_days} dias</span>`;
     }
 
     function climateConfChip(level) {
@@ -1701,34 +1713,87 @@
       const wind = m.wind || {};
       const period = data.period || {};
       const conf = data.confidence || {};
+      const cov = data.coverage || {};
+      const byMetric = cov.by_metric || {};
       const source = data.source || {};
       const base = data.baseline || null;
       const farmInfo = data.farm || {};
       const loc = data.farm_location || {};
+      const isPartial = data.status === 'partial';
 
       let html = '';
-      if (data.status === 'partial' && data.message) {
-        html += `<div class="climate-state-box" style="margin-bottom:10px;">⚠ ${data.message}</div>`;
+
+      // --- ESTADO PARCIAL (FIX.1/6) — "DADOS PARCIAIS" + dias por variável ---
+      if (isPartial) {
+        const req = cov.requested_days != null ? cov.requested_days : (period.days || '--');
+        const comp = cov.complete_days != null ? cov.complete_days : '--';
+        const rows = [
+          ['Precipitação', byMetric.precipitation],
+          ['Temperatura', byMetric.temperature],
+          ['Umidade', byMetric.humidity],
+          ['Radiação', byMetric.radiation],
+          ['Vento', byMetric.wind]
+        ].filter(r => r[1]);
+        const list = rows.map(r => `${r[0]}: <b>${r[1].available_days}/${req} dias</b>`).join(' · ');
+        html += `<div class="climate-state-box" style="margin-bottom:10px; text-align:left; color:#fbbf24; border-color:#d97706;">
+          <b>⚠ DADOS PARCIAIS</b> — algumas métricas ainda não possuem dados para todos os dias do período.
+          <div style="margin-top:6px; font-size:0.75rem; color:#c9d1d9;">
+            Dias com <b>todas</b> as variáveis: <b>${comp}/${req}</b>
+            ${list ? `<div style="margin-top:3px;">${list}</div>` : ''}
+          </div>
+          <div style="margin-top:6px; font-size:0.72rem; color:#8b949e;">Cálculos usam apenas os dias com dados — nenhum valor foi estimado ou preenchido.</div>
+        </div>`;
       }
 
       // --- CONDIÇÕES DO PERÍODO (dado observado/reanalisado — fonte NASA) ---
+      // FIX.3 — cada métrica declara seus dias disponíveis (X/Y); o acumulado
+      // de chuva indica "nos N dias com dados" quando o período é parcial.
       html += `<div class="climate-section-title">Condições do período · ${climateFmtDate(period.start)} → ${climateFmtDate(period.end)} (${period.days || '--'} dias)</div>`;
       html += '<div class="climate-metrics">';
-      html += `<div class="climate-metric"><span>🌧️ Chuva</span><strong>${climateFmtNum(prec.accumulated_mm)} mm</strong>${climateDeltaHtml(prec.baseline)}<small>média diária ${climateFmtNum(prec.daily_mean_mm, 2)} mm · ${prec.rainy_days != null ? prec.rainy_days : '--'} dias com chuva</small></div>`;
-      html += `<div class="climate-metric"><span>🌡️ Temperatura média</span><strong>${climateFmtNum(temp.mean_c)} °C</strong>${climateDeltaHtml(temp.baseline)}<small>mín ${climateFmtNum(temp.min_c)} °C · máx ${climateFmtNum(temp.max_c)} °C</small></div>`;
-      html += `<div class="climate-metric"><span>💧 Umidade média</span><strong>${climateFmtNum(hum.mean_pct)}%</strong><small>extremos ${climateFmtNum(hum.min_pct)}% a ${climateFmtNum(hum.max_pct)}%</small></div>`;
-      html += `<div class="climate-metric"><span>☀️ Radiação</span><strong>${climateFmtNum(rad.daily_mean_mj_m2, 2)} MJ/m²/dia</strong>${climateDeltaHtml(rad.baseline)}<small>acumulado ${climateFmtNum(rad.accumulated_mj_m2)} MJ/m² no período</small></div>`;
-      html += `<div class="climate-metric"><span>💨 Vento médio</span><strong>${climateFmtNum(wind.mean_kmh)} km/h</strong><small>maior média diária: ${climateFmtNum(wind.max_daily_mean_kmh)} km/h</small></div>`;
+      const precPartial = (prec.available_days != null && prec.requested_days != null && prec.available_days < prec.requested_days);
+      const precAccumNote = precPartial ? ` <span style="color:#fbbf24;">(${prec.available_days}/${prec.requested_days} dias c/ dados)</span>` : '';
+      html += `<div class="climate-metric"><span>🌧️ Chuva${climateDaysTag(prec)}</span><strong>${climateFmtNum(prec.accumulated_mm)} mm${precAccumNote}</strong>${climateDeltaHtml(prec.baseline)}<small>média diária ${climateFmtNum(prec.daily_mean_mm, 2)} mm · ${prec.rainy_days != null ? prec.rainy_days : '--'} dias com chuva</small></div>`;
+      html += `<div class="climate-metric"><span>🌡️ Temperatura média${climateDaysTag(temp)}</span><strong>${climateFmtNum(temp.mean_c)} °C</strong>${climateDeltaHtml(temp.baseline)}<small>mín ${climateFmtNum(temp.min_c)} °C · máx ${climateFmtNum(temp.max_c)} °C</small></div>`;
+      html += `<div class="climate-metric"><span>💧 Umidade média${climateDaysTag(hum)}</span><strong>${climateFmtNum(hum.mean_pct)}%</strong><small>extremos ${climateFmtNum(hum.min_pct)}% a ${climateFmtNum(hum.max_pct)}%</small></div>`;
+      html += `<div class="climate-metric"><span>☀️ Radiação${climateDaysTag(rad)}</span><strong>${climateFmtNum(rad.daily_mean_mj_m2, 2)} MJ/m²/dia</strong>${climateDeltaHtml(rad.baseline)}<small>acumulado ${climateFmtNum(rad.accumulated_mj_m2)} MJ/m² nos dias c/ dados</small></div>`;
+      html += `<div class="climate-metric"><span>💨 Vento médio${climateDaysTag(wind)}</span><strong>${climateFmtNum(wind.mean_kmh)} km/h</strong><small>maior média diária: ${climateFmtNum(wind.max_daily_mean_kmh)} km/h</small></div>`;
+      html += '</div>';
+
+      // --- DADOS DO PERÍODO (FIX.1) — dias solicitados vs. disponíveis, por variável ---
+      const covReq = cov.requested_days != null ? cov.requested_days : (period.days || '--');
+      const covRows = [
+        ['Precipitação', byMetric.precipitation],
+        ['Temperatura', byMetric.temperature],
+        ['Umidade', byMetric.humidity],
+        ['Radiação', byMetric.radiation],
+        ['Vento', byMetric.wind]
+      ];
+      html += '<div class="climate-section-title">Dados do período — disponibilidade por variável</div>';
+      html += '<div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px;">';
+      covRows.forEach(r => {
+        const mm = r[1];
+        if (!mm) return;
+        const ok = (mm.available_days === covReq);
+        const badge = ok ? 'style="border-color:#2ea04333; color:#7ee787;"' : 'style="border-color:#d9770655; color:#fbbf24;"';
+        html += `<span style="font-size:0.72rem; background:#0d1117; border:1px solid #21262d; border-radius:12px; padding:3px 9px;" ${badge}>${r[0]}: <b>${mm.available_days}/${covReq}</b></span>`;
+      });
+      html += `<span style="font-size:0.72rem; background:#0d1117; border:1px solid ${cov.complete_days === covReq ? '#2ea04333' : '#d9770655'}; border-radius:12px; padding:3px 9px; color:${cov.complete_days === covReq ? '#7ee787' : '#fbbf24'};" title="Dias em que TODAS as variáveis estão disponíveis ao mesmo tempo.">Dias completos: <b>${cov.complete_days != null ? cov.complete_days : '--'}/${covReq}</b></span>`;
       html += '</div>';
 
       // --- INDICADORES CALCULADOS (derivados, fórmula declarada) ---
+      // FIX.2 — indicador nulo exibe "—" + o MOTIVO (ex.: sequência seca com
+      // lacunas), nunca um número que pudesse sugerir período completo.
       const inds = data.indicators || [];
       if (inds.length) {
         html += '<div class="climate-section-title">Indicadores calculados</div>';
         html += '<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:6px; margin-bottom:4px;">';
         inds.forEach((i) => {
-          const v = (i.value === null || i.value === undefined) ? '--' : climateFmtNum(i.value, 2) + (i.unit ? ` ${i.unit}` : '');
-          html += `<div style="background:#0d1117; border:1px solid #21262d; border-radius:6px; padding:6px 10px;" title="${(i.formula || '').replace(/"/g, '&quot;')}"><span style="font-size:0.68rem; color:#8b949e;">${i.name}</span><div style="font-size:0.85rem; font-weight:700;">${v}</div></div>`;
+          const isNull = (i.value === null || i.value === undefined);
+          const overNote = (i.over_days != null && i.total_days != null && i.over_days < i.total_days) ? ` <span style="color:#fbbf24; font-size:0.7rem;">(${i.over_days}/${i.total_days} dias)</span>` : '';
+          const v = isNull ? '—' : climateFmtNum(i.value, 2) + (i.unit ? ` ${i.unit}` : '');
+          const tip = ((i.formula || '') + (i.reason ? `\n\nOMITIDO: ${i.reason}` : '')).replace(/"/g, '&quot;');
+          const color = isNull ? '#8b949e' : '#f0f6fc';
+          html += `<div style="background:#0d1117; border:1px solid #21262d; border-radius:6px; padding:6px 10px;" title="${tip}"><span style="font-size:0.68rem; color:#8b949e;">${i.name}</span><div style="font-size:0.85rem; font-weight:700; color:${color};">${v}${overNote}</div></div>`;
         });
         html += '</div>';
       }
@@ -1746,13 +1811,25 @@
       html += '<div class="climate-charts"><div class="chart-box-inner"><h4>🌧️ Precipitação diária (mm) × referência histórica</h4><canvas id="climate-precip-chart" height="150"></canvas></div>';
       html += '<div class="chart-box-inner"><h4>🌡️ Temperatura diária (°C) × referência histórica</h4><canvas id="climate-temp-chart" height="150"></canvas></div></div>';
 
-      // --- PROVENIÊNCIA / CONFIANÇA (Fase 8) ---
+      // --- PROVENIÊNCIA / CONFIANÇA (Fase 8 + FIX.5) ---
       const apiVer = source.api_version ? ` ${source.api_version}` : '';
       const baseYears = base ? base.years : null;
+      const lvl = conf.level || 'media';
+      const lvlTxt = lvl === 'alta' ? 'Alta' : (lvl === 'media' ? 'Média' : 'Limitada');
+      const covPct = conf.complete_days_pct != null ? String(conf.complete_days_pct).replace('.', ',') : '--';
+      const byConf = conf.by_metric || {};
+      const confList = ['precipitation','temperature','humidity','radiation','wind']
+        .filter(k => byConf[k]).map(k => {
+          const nm = { precipitation: 'chuva', temperature: 'temp.', humidity: 'umidade', radiation: 'radiação', wind: 'vento' }[k];
+          const lc = { alta: 'alta', media: 'média', limitada: 'limitada' }[byConf[k]] || byConf[k];
+          return `${nm} ${lc}`;
+        });
+      const confDetail = confList.length ? `<br><span style="font-size:0.72rem; color:#8b949e;"><b>Confiança por métrica:</b> ${confList.join(' · ')}</span>` : '';
       html += `<div class="climate-provenance">
         <b>Fonte:</b> ${source.name || 'NASA POWER'} (Daily API${apiVer}, comunidade ${source.community || 'AG'}) — ${source.data_nature || 'reanálise/modelo'}<br>
         <b>Período:</b> ${climateFmtDate(period.start)} → ${climateFmtDate(period.end)} · <b>Local:</b> ${loc.latitude}, ${loc.longitude} (localização canônica da fazenda${farmInfo.location_status ? ` · ${farmInfo.location_status}` : ''})<br>
-        <b>Confiança:</b> ${(conf.level || 'media') === 'alta' ? 'Alta' : ((conf.level || 'media') === 'media' ? 'Média' : 'Limitada')} (cobertura ${conf.coverage_pct != null ? String(conf.coverage_pct).replace('.', ',') : '--'}% dos dias) · <b>Referência histórica:</b> ${baseYears != null ? `média de ${baseYears} ano(s), mesma janela do calendário` : 'indisponível'} — não é normal climatológica oficial<br>
+        <b>Confiança:</b> geral da análise do período = ${lvlTxt} (baseada em ${covPct}% de dias completos — dias com TODAS as variáveis)${confDetail}<br>
+        <b>Referência histórica:</b> ${baseYears != null ? `média de ${baseYears} ano(s), mesma janela do calendário` : 'indisponível'} — não é normal climatológica oficial<br>
         <b>Nota:</b> defasagem ~${source.nrt_lag_days != null ? source.nrt_lag_days : 3} dias na fonte · valores ausentes aparecem como lacunas (nunca imputados) · ${data.disclaimer || ''}
       </div>`;
 

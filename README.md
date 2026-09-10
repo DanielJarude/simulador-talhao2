@@ -434,7 +434,7 @@ spinner discreto + "Preparando cenas: 3/7".
 - **Sentinel-2**: 13 passagens em `sentinel-21KXQ-<data>/` (PNGs coloridos por índice).
 - **Topografia**: Copernicus DEM GL-30 — tiles GeoTIFF em `backend/data/dem/` (fora do Git).
 - **Contornos**: `contorno_kml` / `contorno_shp` (talhão 01 de exemplo).
-- **Clima**: NASA POWER Daily (comunidade AG) — reanálise/modelo (MERRA-2/FLASHFlux), grade ~0,5°, defasagem NRT ~3 dias. PR #7: análise por período (7d/15d/30d/personalizado) + baseline histórico + indicadores + interpretações conservadoras + confiança; falha da fonte → 503 explícito (nunca dado inventado). O endpoint legado (12 meses + janela de pulverização) mantém o contrato e rotula o fallback como dado demonstrativo.
+- **Clima**: NASA POWER Daily (comunidade AG) — reanálise/modelo (MERRA-2/FLASHFlux), grade ~0,5°, defasagem NRT ~3 dias. PR #7: análise por período (7d/15d/30d/personalizado) + baseline histórico + indicadores + interpretações conservadoras + confiança; PR #7-FIX.1: cobertura com três conceitos formais (geral/por variável/dias completos), agregações parciais honestas, sequência seca nula com lacunas, baseline "mesmas datas" com omissão abaixo de 50% e confiança por métrica; falha da fonte → 503 explícito (nunca dado inventado). O endpoint legado (12 meses + janela de pulverização) mantém o contrato e rotula o fallback como dado demonstrativo.
 
 ## 🌦️ Clima & Inteligência Agronômica (PR #7)
 
@@ -466,13 +466,17 @@ Bioinsumos) vão consumir. Auditoria completa em `AUDITORIA_CLIMA_PR7.md`.
   nem diagnóstico ("os dados indicam", "é compatível com", "não há dados
   suficientes"). **Evapotranspiração não é calculada** (a fonte não entrega;
   sem metodologia inventada).
-- **Confiança objetiva**: Alta (cobertura ≥98% e ≥3 anos de referência) /
-  Média (90–98% ou 1–2 anos) / Limitada (<90% ou sem anos válidos) — critérios
-  na própria resposta.
+- **Confiança objetiva (FIX.5)**: **duas camadas** — (a) *geral* (escopo da
+  análise, baseada nos dias COMPLETOS, com TODAS as variáveis): Alta ≥98% e ≥3
+  anos de referência / Média 90–98% ou 1–2 anos / Limitada <90% ou sem anos;
+  (b) *por variável*: Alta 100% dos dias / Média 75–99,9% / Limitada <75%
+  (rebaixada 1 degrau se a referência tem <3 anos) — cada interpretação declara
+  a confiança da variável que usa (`confidence` + `confidence_basis`), nunca
+  uma confiança única para todas as métricas. Critérios na própria resposta.
 - **Falhas explícitas**: timeout/HTTP/parse → **503** "Dados climáticos
   temporariamente indisponíveis."; sem dados na fonte → `status=
-  "insufficient_data"` "Não há dados suficientes para este período." Lacunas
-  viram `null` + `data_quality.coverage_pct` (nunca imputação).
+  "insufficient_data"` "Não há dados suficientes para este período."; lacunas
+  viram `null` + `coverage` (três conceitos formais, abaixo) (nunca imputação).
 - **Cache**: série diária por `(lat, lon, start, end, parâmetros)`, TTL
   configurável (`NASA_CLIMATE_CACHE_HOURS`, padrão 6 h), LRU 128; falha não
   é cacheada.
@@ -485,6 +489,53 @@ Bioinsumos) vão consumir. Auditoria completa em `AUDITORIA_CLIMA_PR7.md`.
 - **Preparação PR #8/#9**: séries diárias com datas ISO-8601 absolutas e
   período `start/end` → junção **temporal** (não causal) futura com o
   calendário Sentinel-2 e com eventos de manejo/bioinsumos.
+
+### PR #7-FIX.1 — cobertura, lacunas e confiabilidade
+
+Correção dos 6 defeitos do playtest (Fazenda Orion, presets 7d/15d/30d).
+Regra central: **ausência de dado NUNCA é lida como condição meteorológica**
+(dia sem dado de chuva ≠ dia sem chuva; nunca imputar, interpolar ou zerar).
+
+- **Cobertura com três conceitos formais e distintos** (campo `coverage`):
+  1. `overall_days`/`overall_pct` — **cobertura geral**: dias com o conjunto
+     mínimo para a análise geral (T2M + PRECTOTCORR — declarado em
+     `overall_definition`);
+  2. `by_metric{precipitation,temperature,humidity,radiation,wind}` —
+     **cobertura por variável** (`available_days` + `pct`);
+  3. `complete_days`/`complete_days_pct` — **dias completos**: TODAS as 7
+     variáveis simultâneas.
+  Nunca existe "cobertura" genérica não explicada (causa do bug "1% × 70%":
+  uma razão 0,70 formatada com `:.0f` virava "1%").
+- **Estados**: `insufficient_data` (0 dias do conjunto mínimo — preservado,
+  ex.: 7d sem dados consolidados), `partial` (qualquer dia incompleto, com
+  mensagem de contagem explícita "N de M dias … (pct%)"), `ok`.
+- **Agregações parciais honestas** (FIX.3): toda métrica declara
+  `available_days`/`requested_days`/`complete`; a UI lê "25,0 mm (21/30 dias c/
+  dados)". O acumulado é **somente** dos dias com dados (`accumulated_over_days`).
+- **Sequência seca com lacunas** (FIX.2): o valor só é afirmado com 100% de
+  cobertura de precipitação; com lacunas → `null` + `reason` ("dia sem dados
+  não pode ser tratado como dia sem chuva") e o cálculo vai a
+  `data_quality.omitted_calculations`.
+- **Baseline com lacunas** (FIX.4 — metodologia A+B, documentada em
+  `baseline.methodology`): (A) a comparação atual × referência histórica é feita
+  **apenas sobre as datas com observação atual** (mesmas posições da janela;
+  referência = média dos anos nas mesmas posições); (B) se a cobertura da
+  variável for < 50%, o desvio é **omitido** (`compared=false` + `reason`) —
+  nunca "período parcial × baseline completo". Cada métrica tem seu próprio
+  bloco `metrics[<m>].baseline` com `compared_days/total_days` e
+  `current_value/reference_value/deviation(_pct)/classification`.
+- **Confiança por métrica + geral** (FIX.5): ver bullet acima; `confidence`
+  ganha `scope`, `complete_days_pct`, `by_metric` e `criteria`.
+- **`data_quality`**: `by_metric_days`, `missing_days(_total)`,
+  `complete_days(_pct)` e `omitted_calculations` (lista de cálculos omitidos e
+  por quê).
+- **Frontend**: banner **DADOS PARCIAIS** (dias por variável; "nenhum valor foi
+  estimado ou preenchido"); bloco **DADOS DO PERÍODO — disponibilidade por
+  variável** (X/Y badges + dias completos); cards de métrica com "X/Y dias";
+  acumulado de chuva "(21/30 dias c/ dados)"; chip de desvio vira
+  "comparação omitida (cobertura insuficiente)" quando não há comparação
+  calculada; indicadores nulos exibem "—" + motivo (tooltip "OMITIDO: …");
+  proveniência com confiança geral + por métrica.
 
 ### Endpoints do PR #7
 
@@ -540,7 +591,7 @@ curl -H "Authorization: Bearer $TOKEN" "http://localhost:8000/api/climate/farm/1
 
 A suíte versionada em `tests/` cobre as 4 frentes exigidas + ownership/migrações/paridade de
 schema, assets autenticados, o **pipeline 3D (PR #4 ↔ PR #5h)** e a **camada climática
-consolidada (PR #7)** — **381 testes** (380 passing + 1 skip por dataset Sentinel-2 ausente fora do git):
+consolidada (PR #7 / PR #7-FIX.1)** — **424 testes** (423 passing + 1 skip por dataset Sentinel-2 ausente fora do git):
 
 | Módulo | Testes | Abrangência |
 |---|---|---|
@@ -549,9 +600,9 @@ consolidada (PR #7)** — **381 testes** (380 passing + 1 skip por dataset Senti
 | `test_farms_sim.py` | 28 | Contratos Pydantic (criação + resposta + What-If exatos a 9 campos), 422 parametrizados, 404, texturas dinâmicas em disco (rota autenticada), datas Sentinel-2, matemática da simulação (constantes por crop), analytics (série temporal, zoneamento, safras), laudo PDF |
 | `test_dem.py` | 17 | Nomenclatura SRTM/Copernicus, bounds (KML e por área), seleção de tile, endpoint de heightmap: recorte → normalização → PNG 256×256 servido por rota autenticada, `size`, 422, 404, indisponível com orientação |
 | `test_services.py` | 36 | Cache de clima (hit, por coordenadas, TTL, fallback em erro, fallback cacheado), regras de negócio do what-if, estimativa de safra, zoneamento espectral, paletas espectrais |
-| `test_climate_service.py` | 45 | **PR #7** — serviço climático: consulta NASA POWER (URL/parâmetros/comunidade AG/período/coordenadas), parsing (fill −999 → null, unidades m/s e MJ/m²/dia), períodos inválidos/máx./pré-1981, agregações (chuva/dias de chuva/sequência seca, temperatura/amplitude, radiação, umidade, vento m/s→km/h), baseline (mesma janela do calendário, ano inválido excluído, sem imputação), cache (chave local+período+parâmetros, TTL, falha não cacheada), timeout/HTTP 502/parse_error, dados ausentes/parciais, coordenada inválida, confiança (alta/média/limitada por critérios objetivos), interpretações conservadoras (sem causalidade/diagnóstico), ausência de ET, tags `is_real`/`data_origin` do legado |
+| `test_climate_service.py` | 82 | **PR #7 + FIX.1** — serviço climático: consulta NASA POWER (URL/parâmetros/comunidade AG/período/coordenadas), parsing (fill −999 → null, unidades m/s e MJ/m²/dia), períodos inválidos/máx./pré-1981, **cobertura com 3 conceitos formais** (geral T2M+PREC / por variável / dias completos), agregações com `available_days` declarados (chuva/sequência seca/temperatura/radiação/umidade/vento), **sequência seca nula com lacunas** (NULL interrompe a contagem; "dia sem dados ≠ dia sem chuva"), **baseline metodologia A+B** (mesmas datas com observação; omissão < 50%; ano inválido excluído), **regressão ratio × percentage** ("21 de 30 … 70%" e nunca "1%"), cenário 21/30 de ponta a ponta, presets 7d (insufficient preservado) / 15d (ok) / 30d parcial, confiança **geral + por métrica** + `confidence_basis`, interpretações conservadoras (sem causalidade/diagnóstico), **sem imputação** (NULL nunca vira 0), ausência de ET, cache, timeout/HTTP 502/parse_error, coordenada inválida, tags `is_real`/`data_origin` do legado |
 | `test_climate_api.py` | 16 | **PR #7** — endpoint `/api/climate/farm/{id}`: ownership (401 anônimo / 404 alheia / 200 dono / 200 admin), **localização canônica** enviada à NASA, presets 7d/15d/30d + personalizado, 422 (start>end, só start, >366 dias), **503 explícito** com fonte fora (sem dado fake), `insufficient_data` explícito, cache em nível de API, contrato legado `/api/weather/farm/{id}` intacto |
-| `test_frontend_climate_panel.py` | 9 | **PR #7** — painel integrado ao Dashboard (FAZENDA→TALHÃO→LOCALIZAÇÃO), presets 7d/15d/30d + personalizado, **frontend nunca chama a NASA diretamente**, estados explícitos (indisponível/sem dados/Tentar novamente), separação dado/calculado/interpretação, proveniência + confiança visíveis, baseline rotulado "não é normal climatológica oficial", dashboard legada como DADOS DEMONSTRATIVOS, `ClimateService` no app.js |
+| `test_frontend_climate_panel.py` | 13 | **PR #7 + FIX.1** — painel integrado ao Dashboard (FAZENDA→TALHÃO→LOCALIZAÇÃO), presets 7d/15d/30d + personalizado, **frontend nunca chama a NASA diretamente**, estados explícitos (indisponível/sem dados/Tentar novamente), separação dado/calculado/interpretação, proveniência + confiança visíveis, baseline rotulado "não é normal climatológica oficial", dashboard legada como DADOS DEMONSTRATIVOS, `ClimateService` no app.js, **FIX.1**: bloco "Dados do período — disponibilidade por variável" + "Dias completos", banner **DADOS PARCIAIS** ("nenhum valor foi estimado"), chip "comparação omitida (cobertura insuficiente)", indicador nulo com motivo "OMITIDO:" |
 | `test_3d_pipeline.py` | 15 | **PR #4** — pipeline 3D: demo sem dataset Sentinel (metadados/PNG/analytics com `data_origin`), fazenda dinâmica autenticada, owner/admin/401/404, assets fora do mount público, `PUBLIC_BASE_URL`, heightmap `available=false` + motivo, contrato What-If, frontend servido pelo backend e higiene (`.env` não exposto) |
 | `test_frontend_3d_pipeline.py` | 1 | **PR #4 ↔ #5d** — helpers do `index.html` executados em VM Node: classificação de erro HTTP, normalização de URL relativa/absoluta, token no fetch, atribuição real de textura ao material, pixel What-If, polígono KML → plano 3D e fallback de asset (material nunca sem `map`) |
 | `test_3d_player_state.py` | 1 | **PR #5d** — máquina de estados da timeline executada em VM Node: Play não avança durante loading, data só muda após aplicar, generationId descarta resposta antiga, Pause durante loading não retoma, troca manual invalida carga anterior, layer swap congela e retoma, falha → error+pause+retry, Real/What-If sincronizados, metadados da textura aplicada, status real/fallback e proveniência compacta + Detalhes |
