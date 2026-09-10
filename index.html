@@ -124,6 +124,29 @@
     .charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px; }
     @media(max-width: 750px) { .charts-grid { grid-template-columns: 1fr; } }
 
+    /* PR #7 — CLIMA & CONDIÇÕES AGRONÔMICAS */
+    .climate-context { font-size: 0.72rem; color: #8b949e; margin-bottom: 10px; line-height: 1.5; }
+    .climate-context b { color: #f0f6fc; }
+    .climate-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-bottom: 12px; }
+    .climate-metric { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 10px 12px; }
+    .climate-metric span { font-size: 0.68rem; color: #8b949e; text-transform: uppercase; font-weight: 700; display: block; }
+    .climate-metric strong { font-size: 1.15rem; color: #f0f6fc; display: block; margin: 2px 0; }
+    .climate-metric small { font-size: 0.7rem; color: #8b949e; display: block; line-height: 1.35; }
+    .climate-delta-down { color: #ff7b72; } .climate-delta-up { color: #fbbf24; } .climate-delta-flat { color: #7ee787; }
+    .climate-section-title { font-size: 0.72rem; color: #8b949e; text-transform: uppercase; font-weight: 700; margin: 12px 0 6px 0; letter-spacing: 0.04em; }
+    .climate-interp { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border: 1px solid #21262d; border-radius: 8px; margin-bottom: 6px; background: #0d1117; font-size: 0.78rem; line-height: 1.45; color: #c9d1d9; }
+    .climate-interp .chip { flex-shrink: 0; font-size: 0.62rem; font-weight: 700; padding: 2px 6px; border-radius: 4px; margin-top: 1px; }
+    .chip-conf-alta { background: rgba(35,134,54,0.25); color: #7ee787; border: 1px solid #2ea043; }
+    .chip-conf-media { background: rgba(217,119,6,0.25); color: #fbbf24; border: 1px solid #d97706; }
+    .chip-conf-limitada { background: rgba(218,54,51,0.25); color: #ff7b72; border: 1px solid #da3633; }
+    .climate-state-box { padding: 18px; text-align: center; color: #8b949e; font-size: 0.85rem; border: 1px dashed #30363d; border-radius: 8px; }
+    .climate-state-box.error { color: #ff7b72; border-color: #da3633; }
+    .climate-provenance { margin-top: 12px; padding-top: 10px; border-top: 1px solid #21262d; font-size: 0.68rem; color: #7d8590; line-height: 1.6; }
+    .climate-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 12px; }
+    @media(max-width: 750px) { .climate-charts { grid-template-columns: 1fr; } }
+    .climate-charts .chart-box-inner { background: #0d1117; border: 1px solid #21262d; border-radius: 8px; padding: 10px; }
+    .climate-charts h4 { margin: 0 0 8px 0; font-size: 0.78rem; color: #8b949e; }
+
     /* ZONEAMENTO */
     .zones-grid {
       display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 16px;
@@ -514,7 +537,7 @@
           <div class="kpi-card" style="border-left: 4px solid #58a6ff;">
             <span>Chuva Acumulada</span>
             <strong id="kpi-rain">Carregando...</strong>
-            <small>Total 12 Meses (NASA POWER)</small>
+            <small id="kpi-rain-sub">Total 12 Meses (NASA POWER)</small>
           </div>
           <div class="kpi-card" style="border-left: 4px solid #d29922;">
             <span>Temperatura Média</span>
@@ -530,6 +553,30 @@
 
         <div class="dash-layout">
           <div>
+            <!-- PR #7 — CLIMA & CONDIÇÕES AGRONÔMICAS (NASA POWER real,
+                 localização canônica da fazenda; o frontend NUNCA consulta
+                 a NASA diretamente — sempre via /api/climate/farm/{id}). -->
+            <div class="chart-box" id="climate-panel" style="border-left: 4px solid #a371f7;">
+              <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
+                <h3 style="margin:0;">🌦️ Clima &amp; Condições Agronômicas <span style="font-size:0.68rem; color:#8b949e; font-weight:400;">· Fonte: NASA POWER</span></h3>
+                <span id="climate-period-pills" style="display:flex; gap:6px; flex-wrap:wrap;">
+                  <button class="tab-btn" id="climate-preset-7d" type="button" onclick="selectClimatePreset('7d')">7 dias</button>
+                  <button class="tab-btn" id="climate-preset-15d" type="button" onclick="selectClimatePreset('15d')">15 dias</button>
+                  <button class="tab-btn active" id="climate-preset-30d" type="button" onclick="selectClimatePreset('30d')">30 dias</button>
+                  <button class="tab-btn" id="climate-preset-custom" type="button" onclick="selectClimateCustom()">Personalizado</button>
+                </span>
+              </div>
+              <div id="climate-custom-row" hidden style="display:flex; gap:8px; align-items:center; margin-bottom:10px; flex-wrap:wrap;">
+                <span style="font-size:0.75rem; color:#8b949e;">Período da análise climática:</span>
+                <input type="date" id="climate-custom-start" style="background:#0d1117; color:#f0f6fc; border:1px solid #30363d; border-radius:6px; padding:4px 8px;">
+                <input type="date" id="climate-custom-end" style="background:#0d1117; color:#f0f6fc; border:1px solid #30363d; border-radius:6px; padding:4px 8px;">
+                <button class="tab-btn" type="button" onclick="applyClimateCustomRange()">Aplicar período do clima</button>
+                <span style="font-size:0.68rem; color:#8b949e;" title="A timeline 3D abaixo tem controle de período próprio (cenas Sentinel-2) e não afeta o painel de clima.">altera apenas o painel de clima</span>
+              </div>
+              <div id="climate-context" class="climate-context">Carregando contexto da fazenda…</div>
+              <div id="climate-state"></div>
+            </div>
+
             <!-- Zoneamento da Data Escolhida -->
             <div class="chart-box" style="border-left: 4px solid #58a6ff;">
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
@@ -729,10 +776,10 @@
         <div class="timeline-row">
           <span class="tl-label">Período:</span>
           <span id="period-pills"></span>
-          <span id="custom-period-row" hidden>
+          <span id="custom-period-row" hidden title="Período da TIMELINE 3D (cenas Sentinel-2) — não afeta o painel de clima, que tem seu próprio período acima.">
             <input type="date" id="custom-start">
             <input type="date" id="custom-end">
-            <button id="custom-apply" type="button">Aplicar</button>
+            <button id="custom-apply" type="button">Aplicar à timeline 3D</button>
           </span>
           <button id="btn-latest" type="button" title="Selecionar a aquisição válida mais recente do catálogo">⇥ Mais recente</button>
           <button id="tl-prev" class="tl-arrow" type="button" title="Cenas anteriores" aria-label="Cenas anteriores">‹</button>
@@ -1158,6 +1205,9 @@
       renderPeriodPills();
       loadAnalyticsData();
       loadLiveWeather();
+      // PR #7 — painel Clima & Condições Agronômicas (NASA POWER real,
+      // localização canônica). Estado próprio; falha não afeta o 3D.
+      loadClimatePanel();
       loadHeightmap(); // Copernicus DEM GL-30 (fire-and-forget; falha → aproximado)
       await refreshRealTimeline(currentPeriod); // STAC real como fonte principal
     }
@@ -1420,6 +1470,19 @@
           document.getElementById('kpi-temp-sub').innerText = `Mín ${wData.summary.min_temp_c}°C / Máx ${wData.summary.max_temp_c}°C`;
         }
 
+        // PR #7 — o fallback climatológico É dado demonstrativo: rotulado
+        // explicitamente, nunca se passando por NASA POWER real (Fase 9).
+        const rainSub = document.getElementById('kpi-rain-sub');
+        if (rainSub) {
+          if (wData.is_real === false) {
+            rainSub.innerHTML = '⚠ DADOS DEMONSTRATIVOS (fonte indisponível)';
+            rainSub.style.color = '#ff7b72';
+          } else {
+            rainSub.innerHTML = 'Total 12 Meses (NASA POWER)';
+            rainSub.style.color = '#7ee787';
+          }
+        }
+
         const tbody = document.getElementById('table-body');
         tbody.innerHTML = '';
         if (wData.recent_applications && wData.recent_applications.length > 0) {
@@ -1487,6 +1550,481 @@
       });
     }
 
+    // =====================================================================
+    // PR #7 — CLIMA & CONDIÇÕES AGRONÔMICAS (NASA POWER real via backend)
+    // O frontend NUNCA consulta a NASA POWER diretamente: só
+    // /api/climate/farm/{id}. As categorias ficam separadas na UI:
+    //   CONDIÇÕES DO PERÍODO → dado observado/reanalisado (fonte NASA);
+    //   INDICADORES CALCULADOS → derivados (fórmula declarada);
+    //   INTERPRETAÇÃO → texto conservador (nunca diagnóstico/causalidade).
+    // Estados explícitos: carregando / ok / parcial / indisponível /
+    // sem dados — nunca valor inventado no lugar de dado real.
+    // =====================================================================
+    let climateChartPrecip = null;
+    let climateChartTemp = null;
+    // PR #7-FIX.3 — estado ÚNICO e explícito do modo climático (elimina o par
+    // ambíguo climateCustomMode/climateCurrentPreset):
+    //   { type: 'preset', preset: '7d'|'15d'|'30d', start: null, end: null }
+    //   { type: 'custom', preset: null, start: 'YYYY-MM-DD', end: 'YYYY-MM-DD' }
+    // Só os controles do PRÓPRIO painel mudam este estado; nenhuma rotina de
+    // carregamento, timeline, analytics, weather ou navegação o altera.
+    let climateMode = { type: 'preset', preset: '30d', start: null, end: null };
+    // PR #7-FIX.2 — proteção contra race condition: token da requisição mais
+    // recente + AbortController da que está em voo. Uma resposta tardia de
+    // uma requisição ANTERIOR nunca pode sobrescrever a tela da atual.
+    let climateRequestSeq = 0;
+    let climateAborter = null;
+
+    // PR #7-FIX.3 — log de diagnóstico (DevTools → Console; filtro "[CLIMATE]")
+    function climateLog(payload) {
+      try { console.debug('[CLIMATE]', payload); } catch (_) { /* log nunca quebra o fluxo */ }
+    }
+
+    function climateFmtDate(iso) {
+      if (!iso) return '--';
+      const p = iso.split('-');
+      return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : iso;
+    }
+
+    function climateFmtNum(v, dec) {
+      if (v === null || v === undefined) return '--';
+      const d = (dec === undefined) ? 1 : dec;
+      return String(v).replace('.', ',');
+    }
+
+    function climateSetPillActive(mode) {
+      const pills = { '7d': 'climate-preset-7d', '15d': 'climate-preset-15d', '30d': 'climate-preset-30d', custom: 'climate-preset-custom' };
+      Object.keys(pills).forEach((k) => {
+        const el = document.getElementById(pills[k]);
+        if (el) el.classList[k === mode ? 'add' : 'remove']('active');
+      });
+    }
+
+    function selectClimatePreset(p) {
+      // PR #7-FIX.3 — troca explícita do estado para preset (custom é abandonado).
+      climateMode = { type: 'preset', preset: p, start: null, end: null };
+      const row = document.getElementById('climate-custom-row');
+      if (row) row.hidden = true;
+      climateSetPillActive(p);
+      climateLog({ action: 'select_preset', mode: { ...climateMode }, seq: climateRequestSeq });
+      loadClimatePanel();
+    }
+
+    function selectClimateCustom() {
+      // PR #7-FIX.3 — ativa o modo custom e mantém as datas já aplicadas (se
+      // houver), reaproveitadas nos campos; NÃO dispara análise (o usuário
+      // decide quando, com "Aplicar período do clima").
+      climateMode = { type: 'custom', preset: null, start: climateMode.start, end: climateMode.end };
+      const row = document.getElementById('climate-custom-row');
+      if (row) row.hidden = false;
+      const s = document.getElementById('climate-custom-start');
+      const e = document.getElementById('climate-custom-end');
+      if (s && !s.value && climateMode.start) s.value = climateMode.start;
+      if (e && !e.value && climateMode.end) e.value = climateMode.end;
+      climateSetPillActive('custom');
+      climateLog({ action: 'select_custom', mode: { ...climateMode }, seq: climateRequestSeq });
+    }
+
+    function applyClimateCustomRange() {
+      // PR #7-FIX.2/3 — validação client-side ANTES de qualquer requisição:
+      // (1) ambas as datas preenchidas; (2) start <= end; (3) intervalo <= 366 dias.
+      // Só após validar, o estado vira custom com as datas do Aplicar.
+      const s = document.getElementById('climate-custom-start');
+      const e = document.getElementById('climate-custom-end');
+      const stateEl = document.getElementById('climate-state');
+      const say = (msg) => { if (stateEl) stateEl.innerHTML = `<div class="climate-state-box">${msg}</div>`; };
+      if (!s || !e || !s.value || !e.value) {
+        climateLog({ action: 'apply_custom', ok: false, reason: 'datas_vazias', seq: climateRequestSeq });
+        say('Informe as datas de início E fim do período personalizado.');
+        return;
+      }
+      if (s.value > e.value) {
+        climateLog({ action: 'apply_custom', ok: false, reason: 'inicio_apos_fim', start: s.value, end: e.value, seq: climateRequestSeq });
+        say('A data de início deve ser anterior ou igual à data de fim.');
+        return;
+      }
+      const days = (new Date(e.value) - new Date(s.value)) / 86400000;
+      if (!isFinite(days) || days > 366) {
+        climateLog({ action: 'apply_custom', ok: false, reason: 'intervalo_maior_366', days, seq: climateRequestSeq });
+        say('O intervalo personalizado deve ter no máximo 366 dias.');
+        return;
+      }
+      climateMode = { type: 'custom', preset: null, start: s.value, end: e.value };
+      climateSetPillActive('custom');
+      climateLog({ action: 'apply_custom', ok: true, mode: { ...climateMode }, seq: climateRequestSeq });
+      loadClimatePanel();
+    }
+
+    async function loadClimatePanel() {
+      const stateEl = document.getElementById('climate-state');
+      const ctxEl = document.getElementById('climate-context');
+      if (!stateEl) return;
+      // PR #7-FIX.2 — token incremental + AbortController: quem chega DEPOIS
+      // anula quem está em voo, e só a resposta da requisição MAIS RECENTE
+      // pode ser renderizada (resposta tardia de preset=30d não pode
+      // sobrescrever um período personalizado aplicado depois — e vice-versa).
+      const seq = ++climateRequestSeq;
+      if (climateAborter) {
+        try { climateAborter.abort(); } catch (_) { /* já encerrada */ }
+        climateLog({ action: 'abort_previous', abortedSeq: seq - 1, currentSeq: seq });
+      }
+      const aborter = new AbortController();
+      climateAborter = aborter;
+      const stale = () => (seq !== climateRequestSeq);
+      stateEl.innerHTML = '<div class="climate-state-box"><span class="spinner"></span>&nbsp; Consultando dados climáticos (API Orion → NASA POWER)…</div>';
+      // Contexto FAZENDA → TALHÃO → LOCALIZAÇÃO (hierarquia do produto)
+      const loc = (activeFarm.latitude && activeFarm.longitude) ?
+        `${activeFarm.latitude}, ${activeFarm.longitude}` : '--';
+      const locSrc = activeFarm.location_source || 'legado';
+      const locStatus = activeFarm.location_status || 'não verificada';
+      if (ctxEl) {
+        ctxEl.innerHTML =
+          `Fazenda <b>${activeFarm.name || '--'}</b> &nbsp;→&nbsp; ` +
+          `Talhão <b>${activeFarm.crop || 'Principal'}</b> &nbsp;→&nbsp; ` +
+          `Localização <b>${activeFarm.city || '--'}</b> (${loc} · fonte: ${locSrc} · ${locStatus})`;
+      }
+      climateLog({ action: 'load_start', seq, mode: { ...climateMode } });
+
+      try {
+        const params = new URLSearchParams();
+        // PR #7-FIX.3 — período derivado EXCLUSIVAMENTE do estado explícito
+        // `climateMode` (personalizado tem prioridade quando type='custom').
+        // Nunca misturar preset com start/end.
+        let reqCtx; // contexto semântico da requisição (validação da resposta)
+        if (climateMode.type === 'custom') {
+          let sv = climateMode.start, ev = climateMode.end;
+          // fallback defensivo: valores digitados nos campos (ex.: "Tentar novamente")
+          if (!sv || !ev) {
+            const s = document.getElementById('climate-custom-start');
+            const e = document.getElementById('climate-custom-end');
+            sv = sv || (s ? s.value : '');
+            ev = ev || (e ? e.value : '');
+          }
+          if (!sv || !ev) {
+            climateLog({ action: 'load_blocked', reason: 'custom_sem_datas', seq });
+            stateEl.innerHTML = '<div class="climate-state-box">Informe as datas de início E fim do período da análise climática.</div>';
+            return;
+          }
+          if (sv > ev) {
+            climateLog({ action: 'load_blocked', reason: 'inicio_apos_fim', seq, start: sv, end: ev });
+            stateEl.innerHTML = '<div class="climate-state-box">A data de início deve ser anterior ou igual à data de fim.</div>';
+            return;
+          }
+          const d = (new Date(ev) - new Date(sv)) / 86400000;
+          if (!isFinite(d) || d > 366) {
+            climateLog({ action: 'load_blocked', reason: 'intervalo_maior_366', seq, days: d });
+            stateEl.innerHTML = '<div class="climate-state-box">O intervalo personalizado deve ter no máximo 366 dias.</div>';
+            return;
+          }
+          params.set('start', sv);
+          params.set('end', ev);
+          reqCtx = { kind: 'custom', start: sv, end: ev, preset: null };
+        } else {
+          params.set('preset', climateMode.preset);
+          reqCtx = { kind: 'preset', preset: climateMode.preset, start: null, end: null };
+        }
+
+        const url = `${API_URL}/climate/farm/${activeFarm.id || 1}?${params.toString()}`;
+        climateLog({ action: 'fetch', seq, url, mode: { ...climateMode } });
+        const res = await fetch(url, { headers: { ...authHeaders() }, signal: aborter.signal });
+        if (stale()) {
+          climateLog({ action: 'response_discarded_stale', seq, currentSeq: climateRequestSeq, status: res.status });
+          return; // requisição mais recente já substituiu esta
+        }
+        if (res.status === 401) { AuthService.logout(); return; }
+        if (res.status === 404) {
+          stateEl.innerHTML = '<div class="climate-state-box error">Sem acesso aos dados climáticos desta fazenda.</div>';
+          return;
+        }
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          const detail = (body && body.detail) || {};
+          const msg = (typeof detail === 'string') ? detail : (detail.message || 'Dados climáticos temporariamente indisponíveis.');
+          const hint = (typeof detail === 'object') ? (detail.hint || '') : '';
+          stateEl.innerHTML =
+            `<div class="climate-state-box error">⚠ ${msg}` +
+            (hint ? `<div style="margin-top:6px; font-size:0.75rem; color:#8b949e;">${hint}</div>` : '') +
+            `<div style="margin-top:10px;"><button class="tab-btn" type="button" onclick="loadClimatePanel()">Tentar novamente</button></div></div>`;
+          return;
+        }
+        const data = await res.json();
+        if (stale()) {
+          climateLog({ action: 'response_discarded_stale', seq, currentSeq: climateRequestSeq });
+          return; // resposta antiga — nunca sobrescreve a tela atual
+        }
+
+        // PR #7-FIX.3 — validação SEMÂNTICA do período (2ª camada, além do seq):
+        // a resposta só é renderizada se o PERÍODO QUE ELA COBRE for exatamente
+        // o período pedido. custom → start/end iguais e sem preset;
+        // preset  → period.preset igual ao pedido. Caso contrário → DESCARTAR.
+        const per = data.period || {};
+        let compatible;
+        if (reqCtx.kind === 'custom') {
+          compatible = (per.start === reqCtx.start) && (per.end === reqCtx.end) && (!per.preset);
+        } else {
+          compatible = (per.preset === reqCtx.preset);
+        }
+        if (!compatible) {
+          climateLog({ action: 'response_discarded_mismatch', seq, requested: reqCtx, received: per });
+          return;
+        }
+
+        climateLog({ action: 'render', seq, period: { start: per.start, end: per.end, days: per.days, preset: per.preset } });
+        renderClimatePanel(data);
+      } catch (err) {
+        if (stale()) {
+          climateLog({ action: 'error_discarded_stale', seq, currentSeq: climateRequestSeq });
+          return; // foi substituída/abortada por uma requisição nova
+        }
+        if (err && err.name === 'AbortError') {
+          climateLog({ action: 'aborted', seq });
+          return;
+        }
+        climateLog({ action: 'error', seq, error: String(err && err.message || err) });
+        console.error("Erro ao carregar o painel de clima:", err);
+        stateEl.innerHTML =
+          '<div class="climate-state-box error">⚠ Dados climáticos temporariamente indisponíveis.' +
+          '<div style="margin-top:10px;"><button class="tab-btn" type="button" onclick="loadClimatePanel()">Tentar novamente</button></div></div>';
+      }
+    }
+
+    function climateDeltaHtml(baseline) {
+      // FIX.4 — comparação só aparece quando efetivamente calculada
+      // (sobre os dias com observação). Omitida → diz o porquê, sem número.
+      if (!baseline || baseline.compared === false || baseline.compared === undefined) {
+        const why = baseline && baseline.reason ? baseline.reason : 'sem referência histórica';
+        return `<small style="color:#8b949e;" title="${String(why).replace(/"/g, '&quot;')}">comparação omitida (cobertura insuficiente)</small>`;
+      }
+      const pct = baseline.deviation_pct;
+      const cls = baseline.classification === 'abaixo_da_referencia' ? 'climate-delta-down'
+        : (baseline.classification === 'acima_da_referencia' ? 'climate-delta-up' : 'climate-delta-flat');
+      const arrow = (pct === null || pct === undefined) ? '≈' : (pct < 0 ? '↓' : (pct > 0 ? '↑' : '≈'));
+      const sign = (pct !== null && pct > 0) ? '+' : '';
+      const pctTxt = (pct === null || pct === undefined) ? '' : `${sign}${String(pct).replace('.', ',')}%`;
+      const daysNote = (baseline.compared_days != null && baseline.total_days != null && baseline.compared_days < baseline.total_days)
+        ? ` (sobre ${baseline.compared_days}/${baseline.total_days} dias)` : '';
+      return `<small class="${cls}" title="Comparação feita apenas sobre as datas com observação atual vs. média histórica das mesmas datas.">${arrow} ${pctTxt} · ${baseline.classification_label}${daysNote}</small>`;
+    }
+
+    function climateDaysTag(metric) {
+      // FIX.1 — cada métrica mostra seus dias disponíveis (X/Y)
+      if (!metric || metric.available_days == null || metric.requested_days == null) return '';
+      const cls = metric.complete ? '' : ' style="color:#fbbf24;"';
+      return `<span${cls}> ${metric.available_days}/${metric.requested_days} dias</span>`;
+    }
+
+    function climateConfChip(level) {
+      const map = { alta: ['chip-conf-alta', 'confiança alta'], media: ['chip-conf-media', 'confiança média'], limitada: ['chip-conf-limitada', 'confiança limitada'] };
+      const m = map[level] || map.media;
+      return `<span class="chip ${m[0]}">${m[1]}</span>`;
+    }
+
+    function renderClimatePanel(data) {
+      const stateEl = document.getElementById('climate-state');
+      if (!stateEl) return;
+
+      if (data.status === 'insufficient_data') {
+        stateEl.innerHTML = `<div class="climate-state-box">⚠ ${data.message || 'Não há dados suficientes para este período.'}<div style="margin-top:6px; font-size:0.72rem;">Os dados não foram encontrados na fonte para a janela solicitada (período futuro ou sem dados consolidados). Nenhum valor foi estimado.</div></div>`;
+        return;
+      }
+
+      const m = data.metrics || {};
+      const prec = m.precipitation || {};
+      const temp = m.temperature || {};
+      const hum = m.humidity || {};
+      const rad = m.radiation || {};
+      const wind = m.wind || {};
+      const period = data.period || {};
+      const conf = data.confidence || {};
+      const cov = data.coverage || {};
+      const byMetric = cov.by_metric || {};
+      const source = data.source || {};
+      const base = data.baseline || null;
+      const farmInfo = data.farm || {};
+      const loc = data.farm_location || {};
+      const isPartial = data.status === 'partial';
+
+      let html = '';
+
+      // --- ESTADO PARCIAL (FIX.1/6) — "DADOS PARCIAIS" + dias por variável ---
+      if (isPartial) {
+        const req = cov.requested_days != null ? cov.requested_days : (period.days || '--');
+        const comp = cov.complete_days != null ? cov.complete_days : '--';
+        const rows = [
+          ['Precipitação', byMetric.precipitation],
+          ['Temperatura', byMetric.temperature],
+          ['Umidade', byMetric.humidity],
+          ['Radiação', byMetric.radiation],
+          ['Vento', byMetric.wind]
+        ].filter(r => r[1]);
+        const list = rows.map(r => `${r[0]}: <b>${r[1].available_days}/${req} dias</b>`).join(' · ');
+        html += `<div class="climate-state-box" style="margin-bottom:10px; text-align:left; color:#fbbf24; border-color:#d97706;">
+          <b>⚠ DADOS PARCIAIS</b> — algumas métricas ainda não possuem dados para todos os dias do período.
+          <div style="margin-top:6px; font-size:0.75rem; color:#c9d1d9;">
+            Dias com <b>todas</b> as variáveis: <b>${comp}/${req}</b>
+            ${list ? `<div style="margin-top:3px;">${list}</div>` : ''}
+          </div>
+          <div style="margin-top:6px; font-size:0.72rem; color:#8b949e;">Cálculos usam apenas os dias com dados — nenhum valor foi estimado ou preenchido.</div>
+        </div>`;
+      }
+
+      // --- CONDIÇÕES DO PERÍODO (dado observado/reanalisado — fonte NASA) ---
+      // FIX.3 — cada métrica declara seus dias disponíveis (X/Y); o acumulado
+      // de chuva indica "nos N dias com dados" quando o período é parcial.
+      html += `<div class="climate-section-title">Condições do período · ${climateFmtDate(period.start)} → ${climateFmtDate(period.end)} (${period.days || '--'} dias)</div>`;
+      html += '<div class="climate-metrics">';
+      const precPartial = (prec.available_days != null && prec.requested_days != null && prec.available_days < prec.requested_days);
+      const precAccumNote = precPartial ? ` <span style="color:#fbbf24;">(${prec.available_days}/${prec.requested_days} dias c/ dados)</span>` : '';
+      html += `<div class="climate-metric"><span>🌧️ Chuva${climateDaysTag(prec)}</span><strong>${climateFmtNum(prec.accumulated_mm)} mm${precAccumNote}</strong>${climateDeltaHtml(prec.baseline)}<small>média diária ${climateFmtNum(prec.daily_mean_mm, 2)} mm · ${prec.rainy_days != null ? prec.rainy_days : '--'} dias com chuva</small></div>`;
+      html += `<div class="climate-metric"><span>🌡️ Temperatura média${climateDaysTag(temp)}</span><strong>${climateFmtNum(temp.mean_c)} °C</strong>${climateDeltaHtml(temp.baseline)}<small>mín ${climateFmtNum(temp.min_c)} °C · máx ${climateFmtNum(temp.max_c)} °C</small></div>`;
+      html += `<div class="climate-metric"><span>💧 Umidade média${climateDaysTag(hum)}</span><strong>${climateFmtNum(hum.mean_pct)}%</strong><small>extremos ${climateFmtNum(hum.min_pct)}% a ${climateFmtNum(hum.max_pct)}%</small></div>`;
+      html += `<div class="climate-metric"><span>☀️ Radiação${climateDaysTag(rad)}</span><strong>${climateFmtNum(rad.daily_mean_mj_m2, 2)} MJ/m²/dia</strong>${climateDeltaHtml(rad.baseline)}<small>acumulado ${climateFmtNum(rad.accumulated_mj_m2)} MJ/m² nos dias c/ dados</small></div>`;
+      html += `<div class="climate-metric"><span>💨 Vento médio${climateDaysTag(wind)}</span><strong>${climateFmtNum(wind.mean_kmh)} km/h</strong><small>maior média diária: ${climateFmtNum(wind.max_daily_mean_kmh)} km/h</small></div>`;
+      html += '</div>';
+
+      // --- DADOS DO PERÍODO (FIX.1) — dias solicitados vs. disponíveis, por variável ---
+      const covReq = cov.requested_days != null ? cov.requested_days : (period.days || '--');
+      const covRows = [
+        ['Precipitação', byMetric.precipitation],
+        ['Temperatura', byMetric.temperature],
+        ['Umidade', byMetric.humidity],
+        ['Radiação', byMetric.radiation],
+        ['Vento', byMetric.wind]
+      ];
+      html += '<div class="climate-section-title">Dados do período — disponibilidade por variável</div>';
+      html += '<div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px;">';
+      covRows.forEach(r => {
+        const mm = r[1];
+        if (!mm) return;
+        const ok = (mm.available_days === covReq);
+        const badge = ok ? 'style="border-color:#2ea04333; color:#7ee787;"' : 'style="border-color:#d9770655; color:#fbbf24;"';
+        html += `<span style="font-size:0.72rem; background:#0d1117; border:1px solid #21262d; border-radius:12px; padding:3px 9px;" ${badge}>${r[0]}: <b>${mm.available_days}/${covReq}</b></span>`;
+      });
+      html += `<span style="font-size:0.72rem; background:#0d1117; border:1px solid ${cov.complete_days === covReq ? '#2ea04333' : '#d9770655'}; border-radius:12px; padding:3px 9px; color:${cov.complete_days === covReq ? '#7ee787' : '#fbbf24'};" title="Dias em que TODAS as variáveis estão disponíveis ao mesmo tempo.">Dias completos: <b>${cov.complete_days != null ? cov.complete_days : '--'}/${covReq}</b></span>`;
+      html += '</div>';
+
+      // --- INDICADORES CALCULADOS (derivados, fórmula declarada) ---
+      // FIX.2 — indicador nulo exibe "—" + o MOTIVO (ex.: sequência seca com
+      // lacunas), nunca um número que pudesse sugerir período completo.
+      const inds = data.indicators || [];
+      if (inds.length) {
+        html += '<div class="climate-section-title">Indicadores calculados</div>';
+        html += '<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:6px; margin-bottom:4px;">';
+        inds.forEach((i) => {
+          const isNull = (i.value === null || i.value === undefined);
+          const overNote = (i.over_days != null && i.total_days != null && i.over_days < i.total_days) ? ` <span style="color:#fbbf24; font-size:0.7rem;">(${i.over_days}/${i.total_days} dias)</span>` : '';
+          const v = isNull ? '—' : climateFmtNum(i.value, 2) + (i.unit ? ` ${i.unit}` : '');
+          const tip = ((i.formula || '') + (i.reason ? `\n\nOMITIDO: ${i.reason}` : '')).replace(/"/g, '&quot;');
+          const color = isNull ? '#8b949e' : '#f0f6fc';
+          html += `<div style="background:#0d1117; border:1px solid #21262d; border-radius:6px; padding:6px 10px;" title="${tip}"><span style="font-size:0.68rem; color:#8b949e;">${i.name}</span><div style="font-size:0.85rem; font-weight:700; color:${color};">${v}${overNote}</div></div>`;
+        });
+        html += '</div>';
+      }
+
+      // --- INTERPRETAÇÃO (conservadora — nunca diagnóstico) ---
+      const interps = data.interpretations || [];
+      if (interps.length) {
+        html += '<div class="climate-section-title">Interpretação (conservadora)</div>';
+        interps.forEach((it) => {
+          html += `<div class="climate-interp">${climateConfChip(it.confidence)}<div><b>${it.topic}:</b> ${it.text}</div></div>`;
+        });
+      }
+
+      // --- GRÁFICOS (precipitação e temperatura ao longo do tempo + baseline) ---
+      html += '<div class="climate-charts"><div class="chart-box-inner"><h4>🌧️ Precipitação diária (mm) × referência histórica</h4><canvas id="climate-precip-chart" height="150"></canvas></div>';
+      html += '<div class="chart-box-inner"><h4>🌡️ Temperatura diária (°C) × referência histórica</h4><canvas id="climate-temp-chart" height="150"></canvas></div></div>';
+
+      // --- PROVENIÊNCIA / CONFIANÇA (Fase 8 + FIX.5) ---
+      const apiVer = source.api_version ? ` ${source.api_version}` : '';
+      const baseYears = base ? base.years : null;
+      const lvl = conf.level || 'media';
+      const lvlTxt = lvl === 'alta' ? 'Alta' : (lvl === 'media' ? 'Média' : 'Limitada');
+      const covPct = conf.complete_days_pct != null ? String(conf.complete_days_pct).replace('.', ',') : '--';
+      const byConf = conf.by_metric || {};
+      const confList = ['precipitation','temperature','humidity','radiation','wind']
+        .filter(k => byConf[k]).map(k => {
+          const nm = { precipitation: 'chuva', temperature: 'temp.', humidity: 'umidade', radiation: 'radiação', wind: 'vento' }[k];
+          const lc = { alta: 'alta', media: 'média', limitada: 'limitada' }[byConf[k]] || byConf[k];
+          return `${nm} ${lc}`;
+        });
+      const confDetail = confList.length ? `<br><span style="font-size:0.72rem; color:#8b949e;"><b>Confiança por métrica:</b> ${confList.join(' · ')}</span>` : '';
+      html += `<div class="climate-provenance">
+        <b>Fonte:</b> ${source.name || 'NASA POWER'} (Daily API${apiVer}, comunidade ${source.community || 'AG'}) — ${source.data_nature || 'reanálise/modelo'}<br>
+        <b>Período:</b> ${climateFmtDate(period.start)} → ${climateFmtDate(period.end)} · <b>Local:</b> ${loc.latitude}, ${loc.longitude} (localização canônica da fazenda${farmInfo.location_status ? ` · ${farmInfo.location_status}` : ''})<br>
+        <b>Confiança:</b> geral da análise do período = ${lvlTxt} (baseada em ${covPct}% de dias completos — dias com TODAS as variáveis)${confDetail}<br>
+        <b>Referência histórica:</b> ${baseYears != null ? `média de ${baseYears} ano(s), mesma janela do calendário` : 'indisponível'} — não é normal climatológica oficial<br>
+        <b>Nota:</b> defasagem ~${source.nrt_lag_days != null ? source.nrt_lag_days : 3} dias na fonte · valores ausentes aparecem como lacunas (nunca imputados) · ${data.disclaimer || ''}
+      </div>`;
+
+      stateEl.innerHTML = html;
+      renderClimateCharts(data);
+    }
+
+    function renderClimateCharts(data) {
+      const d = (data && data.daily) || {};
+      const dates = d.dates || [];
+      const labels = dates.map((iso) => {
+        const p = String(iso).split('-');
+        return (p.length === 3) ? `${p[2]}/${p[1]}` : iso;
+      });
+      const has = (arr) => Array.isArray(arr) && arr.some((v) => v !== null && v !== undefined);
+
+      if (climateChartPrecip) { climateChartPrecip.destroy(); climateChartPrecip = null; }
+      if (climateChartTemp) { climateChartTemp.destroy(); climateChartTemp = null; }
+      const precipCanvas = document.getElementById('climate-precip-chart');
+      const tempCanvas = document.getElementById('climate-temp-chart');
+      if (!precipCanvas || !tempCanvas || !dates.length || typeof Chart === 'undefined') return;
+
+      if (has(d.precip_mm) || has(d.baseline_precip_mm)) {
+        climateChartPrecip = new Chart(precipCanvas, {
+          data: {
+            labels: labels,
+            datasets: [
+              { type: 'bar', label: 'Chuva diária (mm)', data: d.precip_mm || [], backgroundColor: 'rgba(31,111,235,0.75)', borderRadius: 2, yAxisID: 'y' },
+              { type: 'line', label: 'Referência histórica — média diária (mm)', data: d.baseline_precip_mm || [], borderColor: '#fbbf24', borderDash: [6, 3], pointRadius: 0, tension: 0.25, yAxisID: 'y' }
+            ]
+          },
+          options: {
+            responsive: true, animation: false,
+            plugins: { legend: { labels: { color: '#8b949e', font: { size: 10 }, boxWidth: 14 } },
+              tooltip: { callbacks: { label: (ctx) => ` ${ctx.dataset.label}: ${ctx.parsed.y != null ? String(ctx.parsed.y).replace('.', ',') : '--'} mm` } } },
+            scales: {
+              x: { grid: { color: '#21262d' }, ticks: { color: '#8b949e', font: { size: 9 }, maxTicksLimit: 10 } },
+              y: { title: { display: true, text: 'mm', color: '#8b949e', font: { size: 10 } }, grid: { color: '#21262d' }, ticks: { color: '#8b949e', font: { size: 9 } } }
+            }
+          }
+        });
+      } else {
+        precipCanvas.parentNode && (precipCanvas.parentNode.innerHTML = '<h4 style="margin:0 0 8px 0; font-size:0.78rem; color:#8b949e;">🌧️ Precipitação diária (mm)</h4><div style="color:#8b949e; font-size:0.75rem; padding:14px 0;">Sem dados para o gráfico.</div>');
+      }
+
+      if (has(d.temp_mean_c) || has(d.baseline_temp_mean_c)) {
+        climateChartTemp = new Chart(tempCanvas, {
+          type: 'line',
+          data: {
+            labels: labels,
+            datasets: [
+              { label: 'Média atual (°C)', data: d.temp_mean_c || [], borderColor: '#58a6ff', borderWidth: 2, pointRadius: 0, tension: 0.25 },
+              { label: 'Máx atual (°C)', data: d.temp_max_c || [], borderColor: 'rgba(218,54,51,0.55)', borderWidth: 1, pointRadius: 0, tension: 0.25 },
+              { label: 'Mín atual (°C)', data: d.temp_min_c || [], borderColor: 'rgba(46,160,67,0.55)', borderWidth: 1, pointRadius: 0, tension: 0.25 },
+              { label: 'Referência histórica — média (°C)', data: d.baseline_temp_mean_c || [], borderColor: '#fbbf24', borderDash: [6, 3], pointRadius: 0, tension: 0.25 }
+            ]
+          },
+          options: {
+            responsive: true, animation: false,
+            plugins: { legend: { labels: { color: '#8b949e', font: { size: 10 }, boxWidth: 14 } },
+              tooltip: { callbacks: { label: (ctx) => ` ${ctx.dataset.label}: ${ctx.parsed.y != null ? String(ctx.parsed.y).replace('.', ',') : '--'} °C` } } },
+            scales: {
+              x: { grid: { color: '#21262d' }, ticks: { color: '#8b949e', font: { size: 9 }, maxTicksLimit: 10 } },
+              y: { title: { display: true, text: '°C', color: '#8b949e', font: { size: 10 } }, grid: { color: '#21262d' }, ticks: { color: '#8b949e', font: { size: 9 } } }
+            }
+          }
+        });
+      } else {
+        tempCanvas.parentNode && (tempCanvas.parentNode.innerHTML = '<h4 style="margin:0 0 8px 0; font-size:0.78rem; color:#8b949e;">🌡️ Temperatura diária (°C)</h4><div style="color:#8b949e; font-size:0.75rem; padding:14px 0;">Sem dados para o gráfico.</div>');
+      }
+    }
+
     function switchScreen(screenId) {
       currentScreen = screenId;
       document.querySelectorAll('.screen-view').forEach(el => el.classList.remove('active'));
@@ -1506,6 +2044,16 @@
         startRenderLoop(); // inicia (ou retoma) o rAF apenas aqui
       } else {
         stopRenderLoop();
+        // PR #7-FIX.3 — comportamento de navegação (DOCUMENTADO): o modo
+        // climático (climateMode) é PRESERVADO ao sair/voltar das telas —
+        // NUNCA há reset silencioso nem recarga implícita enquanto o usuário
+        // está na tela. Este switchScreen remove `.active` de TODOS os
+        // .tab-btn (incluindo as pílulas do painel de clima); ao voltar ao
+        // dashboard, restauramos o estado VISUAL das pílulas para corresponder
+        // ao modo preservado (o dado renderizado já está na tela).
+        if (screenId === 'dash' && typeof climateSetPillActive === 'function') {
+          climateSetPillActive(climateMode.type === 'custom' ? 'custom' : climateMode.preset);
+        }
       }
     }
 

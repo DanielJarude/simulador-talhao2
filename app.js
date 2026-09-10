@@ -260,6 +260,29 @@ const WeatherService = {
   }
 };
 
+/**
+ * SERVIÇO DE CLIMA & CONDIÇÕES AGRONÔMICAS (PR #7)
+ * O frontend NUNCA consulta a NASA POWER diretamente: sempre via backend
+ * (GET /api/climate/farm/{id}). A resposta traz dados da fonte,
+ * indicadores calculados e interpretações conservadoras já separados.
+ */
+const ClimateService = {
+  // query: string já montada (ex.: "?preset=30d" ou "?start=2026-07-01&end=2026-07-30")
+  getFarmClimate: async (farmId, query = '') => {
+    try {
+      const res = await fetch(`${API_URL}/climate/farm/${farmId}${query}`, { headers: { ...authHeaders() } });
+      if (res.status === 401) { AuthService.logout(); throw new Error("Sessão expirada — faça login novamente (auth.html)."); }
+      if (res.status === 403) throw new Error("Sem permissão para os dados desta fazenda.");
+      if (res.status === 503) throw new Error("Dados climáticos temporariamente indisponíveis (fonte NASA POWER).");
+      if (!res.ok) throw new Error("Erro ao consultar dados climáticos.");
+      return await res.json();
+    } catch (e) {
+      console.warn("Erro no ClimateService.getFarmClimate:", e);
+      return null;
+    }
+  }
+};
+
 const SatelliteService = {
   // Obter rota da textura dinâmica ou padrão do talhão
   // (PR #3 — exige Bearer token; a textura é privada por fazenda)

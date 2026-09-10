@@ -1,11 +1,21 @@
 """
-Agrometeorologia via NASA POWER (série diária de 12 meses).
+Agrometeorologia via NASA POWER (série diária de 12 meses) — MÓDULO LEGADO.
+
+STATUS (PR #7): este módulo mantém o contrato histórico
+(`GET /api/weather/farm/{farm_id}` + KPIs mensais + janela de pulverização
++ laudo PDF). A análise climática por período, baseline, indicadores e
+interpretações vive agora em `services/climate_service.py`
+(`GET /api/climate/farm/{farm_id}`), que é a camada de referência para os
+PRs futuros (#8 Saúde da Lavoura, #9 Bioinsumos).
 
 Melhorias desta refatoração:
 - Cache in-memory com TTL (thread-safe) — evita disparar a mesma
   requisição de 365 dias à NASA a cada abertura de página.
 - `logging` estruturado no lugar de `print`.
 - Timeout configurável via `config.settings`.
+- PR #7 — o payload passou a carregar `data_origin`/`is_real`/`provenance`:
+  o fallback climatológico (fonte indisponível) é rotulado EXPLICITAMENTE
+  como dado demonstrativo — nunca se passa por NASA POWER real.
 """
 import datetime
 import logging
@@ -65,13 +75,37 @@ def fetch_live_nasa_weather(lat: float, lon: float) -> dict:
 
     try:
         payload = _fetch_and_process(lat, lon)
+        # PR #7 — proveniência explícita (aditiva; contrato legado intacto):
+        # o consumidor sabe se está vendo dado REAL da NASA ou fallback.
+        _tag_provenance(payload, is_real=True, lat=lat, lon=lon)
         logger.info("NASA POWER: série ao vivo processada (%.3f, %.3f)", *key)
     except Exception:  # rede/timeout/payload malformado -> fallback conhecido
         logger.exception("NASA POWER indisponível (%.3f, %.3f); usando fallback.", *key)
         payload = generate_fallback_weather(lat, lon)
+        # PR #7 — o fallback É dado demonstrativo: rotulado explicitamente
+        # (Fase 9) para a UI nunca apresentá-lo como NASA POWER real.
+        _tag_provenance(payload, is_real=False, lat=lat, lon=lon)
 
     _cache_set(key, payload)
     return payload
+
+
+def _tag_provenance(payload: dict, is_real: bool, lat: float, lon: float) -> None:
+    """Adiciona campos de origem (PR #7) sem alterar o contrato legado."""
+    payload["data_origin"] = "nasa_power" if is_real else "climatology_demo"
+    payload["is_real"] = is_real
+    payload["provenance"] = {
+        "source": "NASA POWER (Daily API, comunidade AG)" if is_real
+        else "CLIMATOLOGIA DEMONSTRATIVA (região S. do PR) — NÃO é dado real",
+        "coordinates": {"latitude": lat, "longitude": lon},
+        "is_real": is_real,
+        "note": (
+            "Dados reais de reanálise/modelo (NASA POWER) para os últimos 12 meses "
+            "(defasagem ~3 dias)." if is_real else
+            "DADOS DEMONSTRATIVOS: a fonte NASA POWER está indisponível; valores "
+            "climatológicos genéricos para demonstração. Nunca misturar com dado real."
+        ),
+    }
 
 
 # ---------------------------------------------------------------------------
