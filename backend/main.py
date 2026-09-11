@@ -21,6 +21,13 @@ from services.climate_service import (
     ClimateSourceError,
     build_climate_report,
 )
+from services.crop_health_service import (
+    SUPPORTED_INDICES as CROP_HEALTH_INDICES,
+    compare_dates as compare_crop_health_dates,
+    difference_path_for,
+    get_health_timeline,
+    validate_index as validate_crop_health_index,
+)
 from services.copernicus_service import (
     CALENDAR_FALLBACK_SOURCE,
     CALENDAR_REAL_SOURCE,
@@ -821,6 +828,137 @@ def get_farm_analytics(
         talhao_id=talhao_id,
         real_calendar=real_calendar,
     )
+
+
+# ---------------------------------------------------------------------------
+# SAÚDE & EVOLUÇÃO DA LAVOURA (PR #8 — Sentinel-2 real)
+#
+# Esta camada é aditiva e não substitui `/api/analytics/farm/{farm_id}`.
+# O analytics legado preserva compatibilidade com o dashboard/PDF; estes
+# endpoints usam exclusivamente cenas STAC reais e nunca completam a série
+# com datas/configuração demonstrativas ou valores sintéticos.
+# ---------------------------------------------------------------------------
+def _crop_health_context(farm: models.Farm) -> dict:
+    talhao = farm.talhoes[0] if farm.talhoes else None
+    return {
+        "talhao_id": _resolve_talhao_id(farm),
+        "kml_coordinates": talhao.kml_coordinates if talhao else None,
+        "lat": farm.latitude,
+        "lon": farm.longitude,
+        "area_ha": farm.total_area,
+    }
+
+
+def _validate_crop_health_or_422(index: str) -> str:
+    try:
+        return validate_crop_health_index(index)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/farms/{farm_id}/crop-health/timeline")
+def get_crop_health_timeline(
+    farm_id: int,
+    index: str = Query(default="ndvi", description="Índice: ndvi, ndre, savi, evi, ndwi, gndvi ou ndmi."),
+    period_days: int = Query(default=730, ge=30, le=730, description="Janela de cenas reais STAC."),
+    start: date | None = Query(default=None, description="Início opcional (YYYY-MM-DD)."),
+    end: date | None = Query(default=None, description="Fim opcional (YYYY-MM-DD)."),
+    limit: int = Query(default=60, ge=1, le=120),
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    farm = _require_farm_access(db, farm_id, user)
+    index = _validate_crop_health_or_422(index)
+    if (start is None) != (end is None):
+        raise HTTPException(status_code=422, detail="Informe start e end juntos.")
+    ctx = _crop_health_context(farm)
+    try:
+        return get_health_timeline(
+            farm_id=farm.id, talhao_id=ctx["talhao_id"], lat=ctx["lat"], lon=ctx["lon"],
+            area_ha=ctx["area_ha"], kml_coordinates=ctx["kml_coordinates"], index=index,
+            period_days=period_days, start=start, end=end, limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/farms/{farm_id}/crop-health/current")
+def get_crop_health_current(
+    farm_id: int,
+    index: str = Query(default="ndvi"),
+    period_days: int = Query(default=180, ge=30, le=730),
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    farm = _require_farm_access(db, farm_id, user)
+    index = _validate_crop_health_or_422(index)
+    ctx = _crop_health_context(farm)
+    result = get_health_timeline(
+        farm_id=farm.id, talhao_id=ctx["talhao_id"], lat=ctx["lat"], lon=ctx["lon"],
+        area_ha=ctx["area_ha"], kml_coordinates=ctx["kml_coordinates"], index=index,
+        period_days=period_days, limit=60,
+    )
+    return {
+        "status": result.get("status"), "message": result.get("message"),
+        "index": result.get("index"), "index_definition": result.get("index_definition"),
+        "current": (result.get("metrics") or {}).get("current"),
+        "metrics": result.get("metrics"), "quality": result.get("quality"),
+        "source_data": result.get("source_data"),
+        "interpretation": result.get("interpretation"), "period": result.get("period"),
+    }
+
+
+@app.get("/api/farms/{farm_id}/crop-health/compare")
+def compare_crop_health(
+    farm_id: int,
+    date_a: date = Query(..., description="Data A real Sentinel-2 (YYYY-MM-DD)."),
+    date_b: date = Query(..., description="Data B real Sentinel-2 (YYYY-MM-DD)."),
+    index: str = Query(default="ndvi"),
+    include_climate: bool = Query(default=True, description="Adicionar contexto temporal NASA POWER sem causalidade."),
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    farm = _require_farm_access(db, farm_id, user)
+    index = _validate_crop_health_or_422(index)
+    ctx = _crop_health_context(farm)
+    try:
+        return compare_crop_health_dates(
+            farm_id=farm.id, talhao_id=ctx["talhao_id"], lat=ctx["lat"], lon=ctx["lon"],
+            area_ha=ctx["area_ha"], kml_coordinates=ctx["kml_coordinates"],
+            date_a=date_a.isoformat(), date_b=date_b.isoformat(), index=index,
+            include_climate=include_climate,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/farms/{farm_id}/crop-health/difference.png")
+def get_crop_health_difference_png(
+    farm_id: int,
+    date_a: date = Query(...),
+    date_b: date = Query(...),
+    index: str = Query(default="ndvi"),
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
+):
+    """Mapa delta privado; a imagem só é criada a partir de cenas reais A/B."""
+    farm = _require_farm_access(db, farm_id, user)
+    index = _validate_crop_health_or_422(index)
+    ctx = _crop_health_context(farm)
+    path = difference_path_for(farm.id, ctx["talhao_id"], index, date_a.isoformat(), date_b.isoformat())
+    if not os.path.exists(path):
+        try:
+            result = compare_crop_health_dates(
+                farm_id=farm.id, talhao_id=ctx["talhao_id"], lat=ctx["lat"], lon=ctx["lon"],
+                area_ha=ctx["area_ha"], kml_coordinates=ctx["kml_coordinates"],
+                date_a=date_a.isoformat(), date_b=date_b.isoformat(), index=index,
+                include_climate=False,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if result.get("status") != "ok" or not os.path.exists(path):
+            raise HTTPException(status_code=404, detail="Mapa de diferença indisponível: cenas reais A/B não processadas.")
+    return StreamingResponse(open(path, "rb"), media_type="image/png")
 
 
 # ---------------------------------------------------------------------------
