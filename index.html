@@ -147,6 +147,29 @@
     .climate-charts .chart-box-inner { background: #0d1117; border: 1px solid #21262d; border-radius: 8px; padding: 10px; }
     .climate-charts h4 { margin: 0 0 8px 0; font-size: 0.78rem; color: #8b949e; }
 
+    /* PR #8 — SAÚDE & EVOLUÇÃO DA LAVOURA */
+    .crop-health-panel { border-left: 4px solid #2ea043; }
+    .crop-health-toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px; }
+    .crop-health-toolbar label { font-size:0.72rem; color:#8b949e; font-weight:700; }
+    .crop-health-toolbar select, .crop-health-toolbar button { background:#0d1117; color:#c9d1d9; border:1px solid #30363d; border-radius:6px; padding:5px 8px; font-size:0.72rem; }
+    .crop-health-toolbar button { cursor:pointer; color:#9fc2e8; font-weight:700; }
+    .crop-health-toolbar button:hover { border-color:#58a6ff; }
+    .crop-health-kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(145px,1fr)); gap:8px; margin:10px 0; }
+    .crop-health-kpi { background:#0d1117; border:1px solid #30363d; border-radius:8px; padding:10px; min-height:70px; }
+    .crop-health-kpi span { display:block; color:#8b949e; font-size:0.66rem; text-transform:uppercase; font-weight:700; }
+    .crop-health-kpi strong { display:block; color:#f0f6fc; font-size:1.1rem; margin-top:4px; }
+    .crop-health-kpi small { color:#8b949e; font-size:0.68rem; }
+    .crop-health-state { color:#8b949e; font-size:0.78rem; line-height:1.45; padding:9px 10px; border:1px dashed #30363d; border-radius:7px; }
+    .crop-health-state.error { color:#ff7b72; border-color:#da3633; }
+    .crop-health-state.ok { color:#c9d1d9; border-style:solid; }
+    .crop-health-meta { color:#7d8590; font-size:0.68rem; line-height:1.55; margin-top:9px; }
+    .crop-health-compare { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px; }
+    @media(max-width:750px) { .crop-health-compare { grid-template-columns:1fr; } }
+    .crop-health-compare-card { background:#0d1117; border:1px solid #21262d; border-radius:8px; padding:10px; }
+    .crop-health-compare-card h4 { margin:0 0 7px; color:#8b949e; font-size:0.76rem; }
+    .crop-health-compare-card img { width:100%; min-height:150px; object-fit:contain; background:#161b22; border-radius:5px; }
+    .crop-health-legend { font-size:0.68rem; color:#8b949e; margin-top:5px; }
+
     /* ZONEAMENTO */
     .zones-grid {
       display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 16px;
@@ -498,10 +521,10 @@
             <h4>🛰️ Passagens do Satélite Sentinel-2</h4>
             <div class="layer-pill-group">
               <button class="layer-pill" onclick="setSpectralLayer('rgb')">RGB (True Color)</button>
-              <button class="layer-pill active" onclick="setSpectralLayer('ndvi')">NDVI (Biomassa)</button>
-              <button class="layer-pill" onclick="setSpectralLayer('evi')">EVI (Vigor Denso)</button>
-              <button class="layer-pill" onclick="setSpectralLayer('ndre')">NDRE (Nitrogênio/Clorofila)</button>
-              <button class="layer-pill" onclick="setSpectralLayer('ndmi')">NDMI (Umidade Foliar)</button>
+              <button class="layer-pill active" onclick="setSpectralLayer('ndvi')">NDVI (Vigor relativo)</button>
+              <button class="layer-pill" onclick="setSpectralLayer('evi')">EVI (Vigor relativo)</button>
+              <button class="layer-pill" onclick="setSpectralLayer('ndre')">NDRE (Contraste red edge)</button>
+              <button class="layer-pill" onclick="setSpectralLayer('ndmi')">NDMI (Sinal hídrico relativo)</button>
             </div>
           </div>
           <div class="timeline-dates-bar" id="dashboard-dates-bar">
@@ -577,6 +600,50 @@
               <div id="climate-state"></div>
             </div>
 
+            <!-- PR #8 — Saúde & Evolução da Lavoura (Sentinel-2 real) -->
+            <div class="chart-box crop-health-panel" id="crop-health-panel">
+              <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
+                <h3 style="margin:0;">🌱 Saúde &amp; Evolução da Lavoura <span style="font-size:0.68rem; color:#8b949e; font-weight:400;">· Sentinel-2 / Copernicus</span></h3>
+                <div class="crop-health-toolbar" style="margin:0;">
+                  <label for="crop-health-index">Índice</label>
+                  <select id="crop-health-index" aria-label="Índice da análise temporal">
+                    <option value="ndvi">NDVI</option>
+                    <option value="ndre">NDRE</option>
+                    <option value="savi">SAVI</option>
+                    <option value="evi">EVI</option>
+                    <option value="ndwi">NDWI (Gao)</option>
+                    <option value="gndvi">GNDVI</option>
+                    <option value="ndmi">NDMI</option>
+                  </select>
+                  <button type="button" id="crop-health-reload">Atualizar análise</button>
+                </div>
+              </div>
+              <div id="crop-health-state" class="crop-health-state">Carregando cenas Sentinel-2 reais…</div>
+              <div class="crop-health-kpis">
+                <div class="crop-health-kpi"><span>Vigor espectral atual</span><strong id="crop-health-current">—</strong><small id="crop-health-current-date">sem cena selecionada</small></div>
+                <div class="crop-health-kpi"><span>Tendência recente</span><strong id="crop-health-trend">—</strong><small id="crop-health-trend-detail">mínimo de cenas e qualidade</small></div>
+                <div class="crop-health-kpi"><span>Queda persistente</span><strong id="crop-health-persistent">—</strong><small id="crop-health-persistent-pct">não extrapolada para pixels sem dado</small></div>
+                <div class="crop-health-kpi"><span>Qualidade da análise</span><strong id="crop-health-quality">—</strong><small id="crop-health-quality-detail">cobertura válida e nuvens</small></div>
+              </div>
+              <div class="chart-box-inner" style="background:#0d1117; border:1px solid #21262d; border-radius:8px; padding:10px;">
+                <h4 style="margin:0 0 8px; color:#8b949e; font-size:0.78rem;">📈 Série temporal das aquisições reais</h4>
+                <canvas id="cropHealthChart" height="105"></canvas>
+              </div>
+              <div class="crop-health-toolbar" style="margin-top:10px;">
+                <label for="crop-health-date-a">Data A</label><select id="crop-health-date-a"></select>
+                <label for="crop-health-date-b">Data B</label><select id="crop-health-date-b"></select>
+                <button type="button" id="crop-health-compare">Comparar A/B</button>
+                <button type="button" id="crop-health-previous">Comparar com cena anterior</button>
+              </div>
+              <div id="crop-health-compare-state" class="crop-health-state">Escolha duas cenas reais para visualizar o delta.</div>
+              <div class="crop-health-compare">
+                <div class="crop-health-compare-card"><h4>O que mudou</h4><div id="crop-health-change-summary" class="crop-health-meta">—</div></div>
+                <div class="crop-health-compare-card"><h4>Onde mudou · mapa de diferença</h4><img id="crop-health-difference-image" alt="Mapa de diferença espectral entre duas cenas" hidden><div id="crop-health-difference-placeholder" class="crop-health-meta">O mapa será exibido após uma comparação real.</div><div class="crop-health-legend">Verde = aumento · cinza = estabilidade · laranja/vermelho = redução · cinza escuro = sem par válido</div></div>
+              </div>
+              <div id="crop-health-provenance" class="crop-health-meta">Fonte, bandas, cobertura válida e limitações serão exibidas quando houver dados reais.</div>
+              <div class="crop-health-meta">Índice espectral não é diagnóstico agronômico. Os dados não permitem determinar a causa da mudança; a área merece inspeção quando a evidência for persistente.</div>
+            </div>
+
             <!-- Zoneamento da Data Escolhida -->
             <div class="chart-box" style="border-left: 4px solid #58a6ff;">
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
@@ -585,26 +652,27 @@
               </div>
               <div class="zones-grid">
                 <div class="zone-card" style="border-top: 3px solid #da3633;">
-                  <span>Estresse / Solo</span>
+                  <span>Faixa inferior*</span>
                   <strong id="zone-stress-pct" style="color:#ff7b72;">--%</strong>
                   <small id="zone-stress-ha">-- ha</small>
                 </div>
                 <div class="zone-card" style="border-top: 3px solid #d97706;">
-                  <span>Vigor Médio</span>
+                  <span>Faixa intermediária*</span>
                   <strong id="zone-mid-pct" style="color:#fbbf24;">--%</strong>
                   <small id="zone-mid-ha">-- ha</small>
                 </div>
                 <div class="zone-card" style="border-top: 3px solid #2ea043;">
-                  <span>Bom Vigor</span>
+                  <span>Faixa superior*</span>
                   <strong id="zone-good-pct" style="color:#7ee787;">--%</strong>
                   <small id="zone-good-ha">-- ha</small>
                 </div>
                 <div class="zone-card" style="border-top: 3px solid #1f6feb;">
-                  <span>Biomassa Densa</span>
+                  <span>Faixa alta*</span>
                   <strong id="zone-dense-pct" style="color:#58a6ff;">--%</strong>
                   <small id="zone-dense-ha">-- ha</small>
                 </div>
               </div>
+              <div style="font-size:0.68rem; color:#8b949e;">* Faixas visuais do analytics legado; não são diagnóstico e não substituem a análise de mudança acima.</div>
             </div>
 
             <!-- Gráfico Interativo da Curva de Safra -->
@@ -835,6 +903,11 @@
     let rainChartInstance = null;
     let tempChartInstance = null;
     let cropCurveChartInstance = null;
+    let cropHealthChartInstance = null;
+    let cropHealthTimeline = [];
+    let cropHealthIndex = 'ndvi';
+    let cropHealthAborter = null;
+    let cropHealthDifferenceObjectUrl = null;
     let currentPolygon = null;
     let isFetchingFarm = false;
     let analyticsTimelineCache = [];
@@ -1208,6 +1281,9 @@
       // PR #7 — painel Clima & Condições Agronômicas (NASA POWER real,
       // localização canônica). Estado próprio; falha não afeta o 3D.
       loadClimatePanel();
+      // PR #8 — camada aditiva de evolução espectral; falha não interfere
+      // na timeline 3D, no clima PR #7 ou no What-If.
+      loadCropHealthPanel();
       loadHeightmap(); // Copernicus DEM GL-30 (fire-and-forget; falha → aproximado)
       await refreshRealTimeline(currentPeriod); // STAC real como fonte principal
     }
@@ -1455,6 +1531,172 @@
         }
       });
     }
+
+    // =====================================================================
+    // PR #8 — SAÚDE & EVOLUÇÃO DA LAVOURA
+    // A série abaixo usa somente cenas reais retornadas pelo STAC/CDSE. O
+    // analytics legado continua separado para não quebrar PDF/What-If/3D.
+    // =====================================================================
+    function cropHealthFmtDate(iso) {
+      if (!iso) return '—';
+      const p = String(iso).split('-');
+      return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : iso;
+    }
+
+    function cropHealthFmt(value, digits = 2) {
+      if (value === null || value === undefined || !Number.isFinite(Number(value))) return '—';
+      return Number(value).toLocaleString('pt-BR', { minimumFractionDigits: digits, maximumFractionDigits: digits });
+    }
+
+    function cropHealthSetState(message, kind = '') {
+      const el = document.getElementById('crop-health-state');
+      if (!el) return;
+      el.className = `crop-health-state ${kind}`;
+      el.innerText = message;
+    }
+
+    function cropHealthClearVisuals() {
+      ['crop-health-current', 'crop-health-current-date', 'crop-health-trend', 'crop-health-trend-detail', 'crop-health-persistent', 'crop-health-persistent-pct', 'crop-health-quality', 'crop-health-quality-detail'].forEach((id) => {
+        const el = document.getElementById(id); if (el) el.innerText = '—';
+      });
+      const selects = ['crop-health-date-a', 'crop-health-date-b'];
+      selects.forEach((id) => { const el = document.getElementById(id); if (el) el.innerHTML = ''; });
+      if (cropHealthChartInstance) { cropHealthChartInstance.destroy(); cropHealthChartInstance = null; }
+      const img = document.getElementById('crop-health-difference-image');
+      if (img) { img.hidden = true; if (typeof img.removeAttribute === 'function') img.removeAttribute('src'); else img.src = ''; }
+      const placeholder = document.getElementById('crop-health-difference-placeholder');
+      if (placeholder) placeholder.hidden = false;
+    }
+
+    function cropHealthPopulateDates() {
+      const valid = cropHealthTimeline.filter((item) => item && item.mean !== null && item.mean !== undefined);
+      ['crop-health-date-a', 'crop-health-date-b'].forEach((id) => {
+        const select = document.getElementById(id);
+        if (!select) return;
+        select.innerHTML = '';
+        valid.forEach((item) => {
+          const option = document.createElement('option');
+          option.value = item.date;
+          option.innerText = `${cropHealthFmtDate(item.date)} · ${item.quality_label || item.quality || 'qualidade'}`;
+          select.appendChild(option);
+        });
+      });
+      const a = document.getElementById('crop-health-date-a');
+      const b = document.getElementById('crop-health-date-b');
+      if (valid.length >= 2) {
+        a.value = valid[valid.length - 2].date;
+        b.value = valid[valid.length - 1].date;
+      } else if (valid.length === 1) {
+        a.value = valid[0].date; b.value = valid[0].date;
+      }
+    }
+
+    function renderCropHealthChart() {
+      const canvas = document.getElementById('cropHealthChart');
+      if (!canvas || typeof Chart === 'undefined') return;
+      if (cropHealthChartInstance) cropHealthChartInstance.destroy();
+      const labels = cropHealthTimeline.map((item) => cropHealthFmtDate(item.date));
+      const values = cropHealthTimeline.map((item) => item.mean);
+      const colors = cropHealthTimeline.map((item) => item.quality === 'alta' ? '#7ee787' : item.quality === 'media' ? '#fbbf24' : '#ff7b72');
+      cropHealthChartInstance = new Chart(canvas, {
+        type: 'line',
+        data: { labels, datasets: [{ label: `${cropHealthIndex.toUpperCase()} médio`, data: values, borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.12)', spanGaps: false, tension: 0.2, pointRadius: 4, pointBackgroundColor: colors, pointBorderColor: colors }] },
+        options: {
+          responsive: true, animation: false,
+          plugins: { legend: { labels: { color: '#8b949e', font: { size: 10 } } }, tooltip: { callbacks: { label: (ctx) => ` ${cropHealthFmt(ctx.parsed.y)} · ${cropHealthTimeline[ctx.dataIndex]?.quality_label || 'qualidade não informada'}` } } },
+          scales: { x: { grid: { color: '#21262d' }, ticks: { color: '#8b949e', font: { size: 9 }, maxTicksLimit: 12 } }, y: { grid: { color: '#21262d' }, ticks: { color: '#8b949e', font: { size: 9 } } } }
+        }
+      });
+    }
+
+    function renderCropHealthTimeline(data) {
+      cropHealthTimeline = Array.isArray(data && data.timeline) ? data.timeline.slice().sort((a, b) => String(a.date).localeCompare(String(b.date))) : [];
+      if (!cropHealthTimeline.length) { cropHealthClearVisuals(); return; }
+      const metrics = data.metrics || {};
+      const current = metrics.current || cropHealthTimeline[cropHealthTimeline.length - 1];
+      const trend = metrics.trend_detail || {};
+      const persistence = metrics.persistence || {};
+      const quality = data.quality || {};
+      document.getElementById('crop-health-current').innerText = `${data.index.toUpperCase()} ${cropHealthFmt(current.mean)}`;
+      document.getElementById('crop-health-current-date').innerText = `Cena ${cropHealthFmtDate(current.date)} · cobertura ${cropHealthFmt(current.valid_pixel_pct, 1)}%`;
+      document.getElementById('crop-health-trend').innerText = trend.label || metrics.trend_label || 'Dados insuficientes';
+      document.getElementById('crop-health-trend-detail').innerText = trend.delta !== null && trend.delta !== undefined ? `variação absoluta ${trend.delta > 0 ? '+' : ''}${cropHealthFmt(trend.delta)}` : (trend.text || 'mínimo de cenas e qualidade');
+      const persistentHa = persistence.status === 'ok' ? persistence.declining.ha : null;
+      document.getElementById('crop-health-persistent').innerText = persistentHa === null ? '—' : `${cropHealthFmt(persistentHa, 2)} ha`;
+      document.getElementById('crop-health-persistent-pct').innerText = persistentHa === null ? (persistence.message || 'dados insuficientes') : `${cropHealthFmt(persistence.declining.pct, 1)}% do talhão · ${persistence.scenes_used} cenas`;
+      document.getElementById('crop-health-quality').innerText = quality.label || '—';
+      document.getElementById('crop-health-quality-detail').innerText = `${quality.valid_scenes || 0} de ${quality.scenes || 0} cenas úteis · pixels válidos pós-máscara`;
+      cropHealthPopulateDates();
+      renderCropHealthChart();
+      const provenance = document.getElementById('crop-health-provenance');
+      if (provenance) provenance.innerText = `Fonte: ${data.source_data?.provider || 'Copernicus Sentinel-2'} · Coleção ${data.source_data?.collection || 'sentinel-2-l2a'} · índice ${data.index.toUpperCase()} · ${data.index_definition?.formula || ''}. A série usa datas reais STAC; cenas sem cobertura suficiente não sustentam tendência.`;
+    }
+
+    async function loadCropHealthPanel() {
+      if (!activeFarm || !activeFarm.id) return;
+      if (cropHealthAborter) cropHealthAborter.abort();
+      cropHealthAborter = new AbortController();
+      cropHealthIndex = (document.getElementById('crop-health-index')?.value || 'ndvi').toLowerCase();
+      cropHealthSetState('Carregando cenas Sentinel-2 reais…');
+      try {
+        const data = await CropHealthService.getTimeline(activeFarm.id, { index: cropHealthIndex, periodDays: 730, signal: cropHealthAborter.signal });
+        if (data.status === 'insufficient_data' || data.status === 'unavailable') {
+          cropHealthClearVisuals();
+          cropHealthSetState(data.message || 'Não há dados suficientes para avaliar tendência.', data.status === 'unavailable' ? 'error' : '');
+          return;
+        }
+        renderCropHealthTimeline(data);
+        cropHealthSetState('Série Sentinel-2 carregada. Qualidade por cena, valores ausentes e limitações permanecem explícitos.', 'ok');
+      } catch (err) {
+        if (err && err.name === 'AbortError') return;
+        cropHealthClearVisuals();
+        cropHealthSetState(err.message || 'Não foi possível carregar a evolução Sentinel-2.', 'error');
+      }
+    }
+
+    async function compareCropHealthSelection() {
+      const a = document.getElementById('crop-health-date-a')?.value;
+      const b = document.getElementById('crop-health-date-b')?.value;
+      const state = document.getElementById('crop-health-compare-state');
+      if (!a || !b || a === b) { if (state) state.innerText = 'Selecione duas datas Sentinel-2 diferentes.'; return; }
+      if (state) state.innerText = 'Processando diferença numérica das duas cenas…';
+      try {
+        const result = await CropHealthService.compare(activeFarm.id, a, b, cropHealthIndex, true);
+        if (!result || result.status !== 'ok') { if (state) state.innerText = result?.message || 'Não há dados suficientes para comparar as duas cenas.'; return; }
+        const c = result.comparison;
+        const z = c.zones || {};
+        const summary = document.getElementById('crop-health-change-summary');
+        if (summary) summary.innerText = `Δ${cropHealthIndex.toUpperCase()} = ${c.delta_mean > 0 ? '+' : ''}${cropHealthFmt(c.delta_mean)} · aumento: ${cropHealthFmt(z.improved?.ha, 2)} ha (${cropHealthFmt(z.improved?.pct, 1)}%) · estável: ${cropHealthFmt(z.stable?.ha, 2)} ha · redução: ${cropHealthFmt(z.declined?.ha, 2)} ha (${cropHealthFmt(z.declined?.pct, 1)}%) · sem par válido: ${cropHealthFmt(z.unobserved?.pct, 1)}%`;
+        const climate = result.climate_context;
+        const climateText = climate && climate.status === 'ok' ? ` No mesmo intervalo, a precipitação foi ${cropHealthFmt(climate.precipitation?.accumulated_mm, 1)} mm e a temperatura média ${cropHealthFmt(climate.temperature?.mean_c, 1)} °C; isso é contexto temporal e não estabelece causalidade.` : ' Contexto climático indisponível; a análise espectral continua funcionando sem ele.';
+        if (state) state.innerText = `Comparação ${cropHealthFmtDate(a)} → ${cropHealthFmtDate(b)} concluída. ${c.quality_a.label} / ${c.quality_b.label}.${climateText}`;
+        const prov = document.getElementById('crop-health-provenance');
+        if (prov) prov.innerText = `A: ${cropHealthFmtDate(a)} · nuvens ${cropHealthFmt(c.quality_a.cloud_cover, 1)}% · cobertura válida ${cropHealthFmt(c.quality_a.valid_pixel_pct, 1)}% · B: ${cropHealthFmtDate(b)} · nuvens ${cropHealthFmt(c.quality_b.cloud_cover, 1)}% · cobertura válida ${cropHealthFmt(c.quality_b.valid_pixel_pct, 1)}%. Bandas: ${result.source_data?.bands?.join(', ') || 'ver proveniência da cena'}.`;
+        const blob = await CropHealthService.getDifferenceBlob(activeFarm.id, a, b, cropHealthIndex);
+        if (cropHealthDifferenceObjectUrl) URL.revokeObjectURL(cropHealthDifferenceObjectUrl);
+        cropHealthDifferenceObjectUrl = URL.createObjectURL(blob);
+        const img = document.getElementById('crop-health-difference-image');
+        const placeholder = document.getElementById('crop-health-difference-placeholder');
+        if (img) { img.src = cropHealthDifferenceObjectUrl; img.hidden = false; }
+        if (placeholder) placeholder.hidden = true;
+      } catch (err) {
+        if (state) state.innerText = err.message || 'Mapa de diferença indisponível.';
+      }
+    }
+
+    function compareCropHealthPrevious() {
+      const b = document.getElementById('crop-health-date-b');
+      const a = document.getElementById('crop-health-date-a');
+      if (!b || !a || !cropHealthTimeline.length) return;
+      const datesValid = cropHealthTimeline.filter((x) => x.mean !== null && x.mean !== undefined).map((x) => x.date);
+      const idx = datesValid.indexOf(b.value);
+      if (idx > 0) { a.value = datesValid[idx - 1]; compareCropHealthSelection(); }
+    }
+
+    document.getElementById('crop-health-index')?.addEventListener('change', loadCropHealthPanel);
+    document.getElementById('crop-health-reload')?.addEventListener('click', loadCropHealthPanel);
+    document.getElementById('crop-health-compare')?.addEventListener('click', compareCropHealthSelection);
+    document.getElementById('crop-health-previous')?.addEventListener('click', compareCropHealthPrevious);
 
     async function loadLiveWeather() {
       try {

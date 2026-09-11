@@ -584,6 +584,98 @@ curl -s "http://localhost:8000/api/climate/farm/1?start=2026-07-01&end=2026-07-3
   -H "Authorization: Bearer $TOKEN"
 ```
 
+## 🌱 Saúde & Evolução da Lavoura (PR #8)
+
+Auditoria completa em `AUDITORIA_SAUDE_LAVOURA_PR8.md`. Esta camada acompanha
+mudanças espectrais entre aquisições Sentinel-2 reais e é independente do
+analytics legado de compatibilidade.
+
+### Contrato e fonte
+
+- **Fonte exclusiva da série:** catálogo STAC real `sentinel-2-l2a` do
+  Copernicus Data Space Ecosystem e Process API para o recorte do talhão.
+- **Sem preenchimento demonstrativo:** quando CDSE está sem credenciais, sem
+  cenas, sem pixels válidos ou indisponível, a resposta é explicitamente
+  `insufficient_data`/`unavailable`, sem usar `settings.sentinel_dates`, PNG
+  procedural ou valores fixos.
+- Cada resposta separa `source_data`, `metrics` e `interpretation`.
+- Cada aquisição informa data, produto, nuvens, cobertura válida após
+  SCL/dataMask, qualidade e bandas. As classes SCL 0, 1, 2, 3, 8, 9, 10 e 11
+  são excluídas.
+
+### Índices implementados
+
+| Índice | Fórmula | Bandas | Observação |
+|---|---|---|---|
+| NDVI | `(B08-B04)/(B08+B04)` | B08 NIR + B04 vermelho | vigor relativo |
+| NDRE | `(B08-B05)/(B08+B05)` | B08 + B05 red edge | contraste espectral; não prova nitrogênio |
+| SAVI | `((B08-B04)/(B08+B04+L))×(1+L)`, `L=0,5` | B08 + B04 | reduz influência do solo; L é documentado |
+| EVI | `2,5×(B08-B04)/(B08+6B04-7,5B02+1)` | B08 + B04 + B02 | vigor relativo em vegetação densa |
+| NDWI (Gao) | `(B08-B11)/(B08+B11)` | B08 + B11 | conteúdo hídrico da vegetação; não é NDWI de água superficial |
+| GNDVI | `(B08-B03)/(B08+B03)` | B08 + B03 | contraste NIR–verde |
+| NDMI | `(B08-B11)/(B08+B11)` | B08 + B11 | compatibilidade com o índice legado |
+
+B05 e B11 são bandas nativas de 20 m e são reamostradas pelo Process API na
+grade do recorte. NDWI (Gao) e NDMI têm a mesma combinação de bandas neste
+contrato, mas mantêm nomenclaturas documentadas. Índice espectral não é
+diagnóstico de doença, praga, deficiência, compactação, irrigação ou
+produtividade.
+
+### Evolução, zonas e persistência
+
+- A série retorna média, mediana, mínimo, máximo, P25/P75, percentual válido,
+  nuvens, qualidade, origem e deltas absoluto desde a cena anterior e de uma
+  referência aproximada de 30 dias.
+- Tendência exige pelo menos três cenas de qualidade alta/média, intervalo de
+  pelo menos 14 dias, direção consistente e mudança absoluta acumulada de pelo
+  menos 0,05. Resultado: melhoria, estável, queda ou dados insuficientes.
+- Comparação A/B calcula `Δíndice = B − A` sobre pixels válidos pareados e
+  dentro da geometria real do talhão. Zonas de aumento, estabilidade e redução
+  usam piso absoluto do índice + 2×MAD dos deltas, com limite superior 0,10.
+  Pixels sem par continuam separados como não observados.
+- Área é calculada pela proporção de pixels da máscara do polígono multiplicada
+  pela área cadastrada, em hectares e percentual; não é usado retângulo simples.
+- Persistência exige três cenas e duas transições na mesma direção. O alerta é
+  “nível de atenção elevado por persistência espectral”, nunca problema
+  agronômico confirmado.
+- Anomalia usa a mediana dos pixels válidos do próprio talhão e informa o
+  afastamento absoluto; não usa um limite universal como `NDVI < 0,4`.
+
+### Endpoints protegidos
+
+```text
+GET /api/farms/{farm_id}/crop-health/timeline
+    ?index=ndvi&period_days=730&limit=60
+    ou ?index=ndvi&start=YYYY-MM-DD&end=YYYY-MM-DD
+
+GET /api/farms/{farm_id}/crop-health/current?index=ndvi
+
+GET /api/farms/{farm_id}/crop-health/compare
+    ?date_a=YYYY-MM-DD&date_b=YYYY-MM-DD&index=ndvi&include_climate=true
+
+GET /api/farms/{farm_id}/crop-health/difference.png
+    ?date_a=YYYY-MM-DD&date_b=YYYY-MM-DD&index=ndvi
+```
+
+Todas as rotas validam JWT e ownership/shared/admin pelo mesmo mecanismo das
+rotas Sentinel existentes. O mapa delta é privado e carregado no frontend por
+`fetch` autenticado + Blob URL.
+
+### Contexto temporal com clima
+
+A comparação pode consultar o relatório NASA POWER do PR #7 para o intervalo
+entre as cenas A/B e retorna chuva, temperatura, radiação e cobertura quando a
+fonte responde. A camada espectral continua funcionando se o clima estiver
+indisponível. A UI usa “ocorreu no mesmo intervalo”/“é contexto temporal” e
+nunca afirma que clima causou a mudança.
+
+### Cache e performance
+
+A análise usa cache TTL de respostas por fazenda/talhão/geometria/índice/janela
+e cache numérico de Process API por fazenda/talhão/geometria/data/índice/tamanho.
+PNG normalizado não é reutilizado para cálculo de delta. A análise é sob
+solicitação e não interfere no preload da timeline 3D.
+
 ## 🧪 Teste rápido da API (fluxo JWT)
 
 ```bash
@@ -620,7 +712,7 @@ curl -H "Authorization: Bearer $TOKEN" "http://localhost:8000/api/climate/farm/1
 
 A suíte versionada em `tests/` cobre as 4 frentes exigidas + ownership/migrações/paridade de
 schema, assets autenticados, o **pipeline 3D (PR #4 ↔ PR #5h)** e a **camada climática
-consolidada (PR #7 / PR #7-FIX.1 / PR #7-FIX.2 / PR #7-FIX.3)** — **440 testes** (439 passing + 1 skip por dataset Sentinel-2 ausente fora do git):
+consolidada (PR #7 / PR #7-FIX.1 / PR #7-FIX.2 / PR #7-FIX.3) e **Saúde & Evolução PR #8** — **458 testes** (457 passing + 1 skip por dataset Sentinel-2 ausente fora do git):
 
 | Módulo | Testes | Abrangência |
 |---|---|---|
@@ -629,6 +721,8 @@ consolidada (PR #7 / PR #7-FIX.1 / PR #7-FIX.2 / PR #7-FIX.3)** — **440 testes
 | `test_farms_sim.py` | 28 | Contratos Pydantic (criação + resposta + What-If exatos a 9 campos), 422 parametrizados, 404, texturas dinâmicas em disco (rota autenticada), datas Sentinel-2, matemática da simulação (constantes por crop), analytics (série temporal, zoneamento, safras), laudo PDF |
 | `test_dem.py` | 17 | Nomenclatura SRTM/Copernicus, bounds (KML e por área), seleção de tile, endpoint de heightmap: recorte → normalização → PNG 256×256 servido por rota autenticada, `size`, 422, 404, indisponível com orientação |
 | `test_services.py` | 36 | Cache de clima (hit, por coordenadas, TTL, fallback em erro, fallback cacheado), regras de negócio do what-if, estimativa de safra, zoneamento espectral, paletas espectrais |
+| `test_crop_health_service.py` | 14 | **PR #8** — fórmulas NDVI/NDRE/SAVI/EVI/NDWI/GNDVI/NDMI, divisão por zero, qualidade por cobertura/nuvens, timeline STAC real, delta, zonas, hectares, tendência conservadora, anomalia interna, persistência, autenticação e ausência explícita de dados CDSE |
+| `test_frontend_crop_health_panel.py` | 5 | **PR #8** — painel integrado, endpoints privados/Bearer, sem chamada direta ao CDSE, série de cenas reais, legenda do delta e linguagem conservadora |
 | `test_climate_service.py` | 83 | **PR #7 + FIX.1 + FIX.2** — serviço climático: consulta NASA POWER (URL/parâmetros/comunidade AG/período/coordenadas), parsing (fill −999 → null, unidades m/s e MJ/m²/dia), períodos inválidos/máx./pré-1981, **cobertura com 3 conceitos formais** (geral T2M+PREC / por variável / dias completos), agregações com `available_days` declarados (chuva/sequência seca/temperatura/radiação/umidade/vento), **sequência seca nula com lacunas** (NULL interrompe a contagem; "dia sem dados ≠ dia sem chuva"), **baseline metodologia A+B** (mesmas datas com observação; omissão < 50%; ano inválido excluído), **regressão ratio × percentage** ("21 de 30 … 70%" e nunca "1%"), cenário 21/30 de ponta a ponta, presets 7d (insufficient preservado) / 15d (ok) / 30d parcial, **FIX.2: janela única e contagem inclusiva** (20/08→07/09 = 19 dias; period/coverage/data_quality/séries/métricas/baseline na mesma janela), confiança **geral + por métrica** + `confidence_basis`, interpretações conservadoras (sem causalidade/diagnóstico), **sem imputação** (NULL nunca vira 0), ausência de ET, cache, timeout/HTTP 502/parse_error, coordenada inválida, tags `is_real`/`data_origin` do legado |
 | `test_climate_api.py` | 24 | **PR #7 + FIX.2** — endpoint `/api/climate/farm/{id}`: ownership (401 anônimo / 404 alheia / 200 dono / 200 admin), **localização canônica** enviada à NASA, presets 7d/15d/30d + personalizado, 422 (start>end, só start, **só end**, >366 dias), **503 explícito** com fonte fora (sem dado fake), `insufficient_data` explícito, cache em nível de API, contrato legado `/api/weather/farm/{id}` intacto, **FIX.2: período personalizado** — janela exata 20/08→07/09 = 19 dias (period/coverage/séries só com as datas do intervalo), **start/end precedem preset** (nunca misturados), **baseline na mesma janela** (6 consultas, todas 20/08–07/09), **cache diferencia preset 30d de custom e dois customs distintos** |
 | `test_frontend_climate_panel.py` | 20 | **PR #7 + FIX.1 + FIX.2 + FIX.3** — painel integrado ao Dashboard (FAZENDA→TALHÃO→LOCALIZAÇÃO), presets 7d/15d/30d + personalizado, **frontend nunca chama a NASA diretamente**, estados explícitos (indisponível/sem dados/Tentar novamente), separação dado/calculado/interpretação, proveniência + confiança visíveis, baseline rotulado "não é normal climatológica oficial", dashboard legada como DADOS DEMONSTRATIVOS, `ClimateService` no app.js, **FIX.1**: bloco "Dados do período — disponibilidade por variável" + "Dias completos", banner **DADOS PARCIAIS** ("nenhum valor foi estimado"), chip "comparação omitida (cobertura insuficiente)", indicador nulo com motivo "OMITIDO:", **FIX.2: teste COMPORTAMENTAL em VM Node** do fluxo real do período personalizado (extraído do index.html) — URL com start/end e **nunca preset**, clicar "Personalizado" não dispara análise, **resposta tardia de 30d NÃO sobrescreve o custom (race condition)**, validações client-side (start>end/vazio/>366 dias não disparam requisição), alternância 30d→custom→15d→custom, **FIX.3: estado único explícito `climateMode`** (declaração única; `loadActiveFarm` chama o clima 1× e nunca muda o modo; nenhuma outra rotina escreve no modo), **switchScreen real em VM** (modo preservado ao sair/voltar, sem nova requisição, pílulas restauradas), **fluxo completo do playtest** (carga 30d em voo → custom 20/08→07/09 = 19 dias → 30d tardia descartada → nenhum 3º preset=30d), **validação semântica** (resposta com período ≠ pedido → descartada), retry reenvia o mesmo custom + reprefill das datas, botões "Aplicar" desambiguados (clima × timeline 3D), log [CLIMATE] nos pontos-chave |

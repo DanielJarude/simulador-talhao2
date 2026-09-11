@@ -65,7 +65,11 @@ CALENDAR_FALLBACK_SOURCE = "config_fallback"
 #: Bandas usadas no Process API (nomes oficiais do Sentinel-2 L2A no CDSE).
 #: B05 e B11 são de 20 m — o Process API entrega na grade pedida (10 m).
 BANDS = ["B02", "B03", "B04", "B05", "B08", "B11"]
-SUPPORTED_LAYERS = ("rgb", "ndvi", "evi", "ndre", "ndmi")
+# Camadas visuais legadas + índices que podem ser calculados para a análise
+# temporal. A camada de Saúde & Evolução usa apenas rasters numéricos reais;
+# não usa PNGs normalizados para calcular diferenças.
+SUPPORTED_LAYERS = ("rgb", "ndvi", "evi", "ndre", "ndmi", "savi", "gndvi", "ndwi")
+HEALTH_INDICES = ("ndvi", "ndre", "savi", "evi", "ndwi", "gndvi", "ndmi")
 
 #: Classes SCL tratadas como INVÁLIDAS para agricultura (nunca calcular índice
 #: sobre elas): nodata(0), saturado/defeito(1), pixels escuros/sombra(2),
@@ -659,6 +663,27 @@ def evi(nir, red, blue):
     return 2.5 * (nir - red) / (nir + 6.0 * red - 7.5 * blue + 1.0 + _EPS)
 
 
+def savi(nir, red, l: float = 0.5):
+    """SAVI com L=0,5, valor documentado para cobertura intermediária."""
+    return ((nir - red) / (nir + red + l + _EPS)) * (1.0 + l)
+
+
+def gndvi(nir, green):
+    """GNDVI: contraste NIR–verde (B08/B03)."""
+    return (nir - green) / (nir + green + _EPS)
+
+
+def ndwi(nir, swir1):
+    """NDWI de Gao (1996), NIR–SWIR1 (B08/B11).
+
+    Esta nomenclatura não representa o NDWI de água superficial
+    Green–NIR (McFeeters). No Sentinel-2, a variante escolhida é equivalente
+    ao índice de conteúdo de água da vegetação e é mantida explícita na
+    proveniência da análise.
+    """
+    return (nir - swir1) / (nir + swir1 + _EPS)
+
+
 def index_array(layer: str, bands: np.ndarray) -> np.ndarray:
     """bands: (8, H, W) na ordem B02,B03,B04,B05,B08,B11,SCL,dataMask."""
     b02, b03, b04, b05, b08, b11 = bands[0], bands[1], bands[2], bands[3], bands[4], bands[5]
@@ -666,10 +691,17 @@ def index_array(layer: str, bands: np.ndarray) -> np.ndarray:
         return ndvi(b08, b04)
     if layer == "ndre":
         return ndre(b08, b05)
-    if layer == "ndmi":
-        return ndmi(b08, b11)
+    if layer == "savi":
+        return savi(b08, b04)
     if layer == "evi":
         return evi(b08, b04, b02)
+    if layer == "ndwi":
+        return ndwi(b08, b11)
+    if layer == "gndvi":
+        return gndvi(b08, b03)
+    if layer == "ndmi":
+        # Compatibilidade: NDMI histórico do projeto usa NIR–SWIR1.
+        return ndmi(b08, b11)
     raise ValueError(f"Camada sem índice: {layer}")
 
 
@@ -726,6 +758,9 @@ ZONE_THRESHOLDS = {
     "ndvi": (0.35, 0.55, 0.75),
     "evi": (0.30, 0.60, 0.95),
     "ndre": (0.35, 0.65, 0.95),
+    "savi": (0.25, 0.45, 0.70),
+    "ndwi": (0.20, 0.45, 0.70),
+    "gndvi": (0.30, 0.55, 0.75),
     "ndmi": (0.35, 0.65, 0.95),
 }
 
@@ -791,9 +826,12 @@ def render_layer_png(
 
         stats = {
             "mean_index": round(float(np.mean(values)), 4),
+            "median_index": round(float(np.median(values)), 4),
             "min": round(float(np.min(values)), 4),
             "max": round(float(np.max(values)), 4),
             "p2": round(lo, 4),
+            "p25": round(float(np.percentile(values, 25)), 4),
+            "p75": round(float(np.percentile(values, 75)), 4),
             "p98": round(hi, 4),
             "zones": _zone_stats(values, layer),
         }
@@ -831,6 +869,88 @@ def read_band_raster(content: bytes, size: int) -> np.ndarray:
         )
         arr = resized
     return arr.astype("float32")
+
+
+def _numeric_index_stats(values: np.ndarray) -> dict:
+    """Resumo numérico de uma cena, sem transformar o índice em cor."""
+    if values.size == 0:
+        raise CopernicusError("CDSE: nenhum pixel válido no recorte do talhão")
+    return {
+        "mean": round(float(np.mean(values)), 4),
+        "median": round(float(np.median(values)), 4),
+        "min": round(float(np.min(values)), 4),
+        "max": round(float(np.max(values)), 4),
+        "p25": round(float(np.percentile(values, 25)), 4),
+        "p75": round(float(np.percentile(values, 75)), 4),
+    }
+
+
+def process_farm_scene(
+    farm_id: int,
+    talhao_id: int,
+    lat: float,
+    lon: float,
+    area_ha: float,
+    kml_coordinates: str | None,
+    scene: SceneInfo,
+    index: str = "ndvi",
+    size: int | None = None,
+) -> dict:
+    """Processa uma aquisição real e preserva o raster numérico para análise.
+
+    Esta função é deliberadamente separada de ``process_farm_layer``. A camada
+    3D existente continua recebendo PNGs normalizados por cena; Saúde &
+    Evolução precisa dos valores de índice e das máscaras de cada pixel para
+    calcular delta A/B. Nenhuma textura colorida é usada como dado analítico.
+    """
+    if index not in HEALTH_INDICES:
+        raise ValueError(f"Índice de Saúde & Evolução não suportado: {index}")
+    size = int(size or settings.cdse_raster_size)
+    digest = geometry_digest(lat, lon, area_ha, kml_coordinates)
+    cache_key = f"health-raster:{farm_id}:{talhao_id}:{digest}:{scene.acquisition_date}:{index}:{size}"
+    cached = _mem_get(cache_key)
+    if cached is not None:
+        return cached
+
+    bounds = aoi_bounds(lat, lon, area_ha, kml_coordinates)
+    process_key = f"health-process:{farm_id}:{talhao_id}:{digest}:{scene.acquisition_date}:{scene.cloud_cover}:{size}"
+    content = _mem_get(process_key)
+    if content is None:
+        content = _process_request(
+            bounds=bounds,
+            evalscript=build_bands_evalscript(),
+            size=size,
+            time_range=(scene.acquisition_date, scene.acquisition_date),
+            max_cloud=scene.cloud_cover,
+            mosaicking_order="leastCC",
+        )
+        _mem_set(process_key, content)
+
+    bands = read_band_raster(content, size)
+    polygon = polygon_mask(size, bounds, kml_coordinates)
+    base_valid = build_valid_mask(bands) & polygon
+    values = index_array(index, bands).astype("float32")
+    valid = base_valid & np.isfinite(values)
+    selected = values[valid]
+    stats = _numeric_index_stats(selected)
+    polygon_pixels = max(int(np.sum(polygon)), 1)
+    stats.update({
+        "valid_pixels": int(selected.size),
+        "polygon_pixels": polygon_pixels,
+        "valid_pixel_pct": round(100.0 * selected.size / polygon_pixels, 1),
+    })
+    result = {
+        "index": index,
+        "date": scene.acquisition_date,
+        "values": values,
+        "valid_mask": valid,
+        "polygon_mask": polygon,
+        "stats": stats,
+        "scene": scene,
+        "cache_key": cache_key,
+    }
+    _mem_set(cache_key, result)
+    return result
 
 
 # ---------------------------------------------------------------------------

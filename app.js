@@ -283,6 +283,43 @@ const ClimateService = {
   }
 };
 
+/**
+ * SERVIÇO DE SAÚDE & EVOLUÇÃO DA LAVOURA (PR #8)
+ * Somente endpoints privados do backend. A resposta separa source_data,
+ * metrics e interpretation; falha do clima não impede a camada espectral.
+ */
+const CropHealthService = {
+  getTimeline: async (farmId, { index = 'ndvi', periodDays = 730, start = null, end = null, signal } = {}) => {
+    const params = new URLSearchParams({ index, period_days: String(periodDays), limit: '60' });
+    if (start && end) { params.set('start', start); params.set('end', end); }
+    const res = await fetch(`${API_URL}/farms/${farmId}/crop-health/timeline?${params.toString()}`, { headers: { ...authHeaders() }, signal });
+    if (res.status === 401) { AuthService.logout(); throw new Error('Sessão expirada — faça login novamente (auth.html).'); }
+    if (res.status === 403) throw new Error('Sem permissão para a análise desta fazenda.');
+    if (!res.ok) throw new Error('Erro ao consultar a evolução Sentinel-2.');
+    return res.json();
+  },
+  getCurrent: async (farmId, index = 'ndvi', signal) => {
+    const res = await fetch(`${API_URL}/farms/${farmId}/crop-health/current?index=${encodeURIComponent(index)}`, { headers: { ...authHeaders() }, signal });
+    if (res.status === 401) { AuthService.logout(); throw new Error('Sessão expirada — faça login novamente (auth.html).'); }
+    if (!res.ok) throw new Error('Erro ao consultar a cena atual.');
+    return res.json();
+  },
+  compare: async (farmId, dateA, dateB, index = 'ndvi', includeClimate = true, signal) => {
+    const params = new URLSearchParams({ date_a: dateA, date_b: dateB, index, include_climate: String(includeClimate) });
+    const res = await fetch(`${API_URL}/farms/${farmId}/crop-health/compare?${params.toString()}`, { headers: { ...authHeaders() }, signal });
+    if (res.status === 401) { AuthService.logout(); throw new Error('Sessão expirada — faça login novamente (auth.html).'); }
+    if (!res.ok) throw new Error('Erro ao comparar as cenas Sentinel-2.');
+    return res.json();
+  },
+  getDifferenceBlob: async (farmId, dateA, dateB, index = 'ndvi', signal) => {
+    const params = new URLSearchParams({ date_a: dateA, date_b: dateB, index });
+    const res = await fetch(`${API_URL}/farms/${farmId}/crop-health/difference.png?${params.toString()}`, { headers: { ...authHeaders() }, signal });
+    if (res.status === 401) { AuthService.logout(); throw new Error('Sessão expirada — faça login novamente (auth.html).'); }
+    if (!res.ok) throw new Error('Mapa de diferença indisponível.');
+    return res.blob();
+  }
+};
+
 const SatelliteService = {
   // Obter rota da textura dinâmica ou padrão do talhão
   // (PR #3 — exige Bearer token; a textura é privada por fazenda)
