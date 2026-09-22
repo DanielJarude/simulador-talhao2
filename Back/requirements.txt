@@ -1,0 +1,39 @@
+# ==========================================================
+# Orion Agro API — dependências (versões fixadas p/ reprodutibilidade)
+# ==========================================================
+
+# API
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+pydantic-settings==2.7.0
+email-validator==2.2.0
+
+# Banco de dados
+sqlalchemy==2.0.36
+
+# Migrações de esquema (PR #3 — ownership + FK física em SQLite via batch).
+# Em produção, rode `alembic upgrade head` antes de subir a app.
+alembic==1.14.0
+
+# Autenticação
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1          # fixado: passlib 1.7.4 é incompatível com bcrypt>=4.1
+
+# HTTP / processamento
+requests==2.32.3
+Pillow==11.0.0
+numpy==2.2.0
+rasterio==1.4.3        # pipeline do Copernicus DEM GL-30 (recorte/normalização)
+
+# Relatórios em PDF (FALTAVA — sem ela o backend não inicia)
+reportlab==4.2.5
+
+# ------------------------------------------------------------
+# Dev / Testes (suíte pytest em Back/tests/ + Front/tests/)
+# ------------------------------------------------------------
+pytest==8.3.2
+httpx==0.27.2          # exigido pelo TestClient do FastAPI
+
+# Removidas (não eram importadas em lugar nenhum): pandas, shapely, python-multipart

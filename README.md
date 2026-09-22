@@ -20,32 +20,68 @@ Plataforma de monitoramento agronômico que combina **sensoriamento espectral** 
 
 ## 📁 Estrutura
 
+O repositório é organizado em **quatro áreas**: `Back/` (núcleo do backend),
+`Api/` (integrações com provedores externos), `Front/` (aplicação visual) e
+`Documentacao/` (documentação técnica). Na raiz ficam apenas os arquivos de
+convenção (README, launchers, `pytest.ini`, `.gitignore`).
+
 ```
 .
-├── index.html              # Dashboard + Mapa 2D + Simulador 3D (SPA multi-tela)
-├── fazendas.html           # CRUD de propriedades + import de geometria
-├── auth.html               # Login / cadastro
-├── app.js                  # Cliente da API (Auth, Farms, Weather, Satellite, Simulation)
-├── backend/
-│   ├── main.py             # Rotas FastAPI (lifespan, CORS via settings)
-│   ├── config.py           # Configuração centralizada (pydantic-settings + .env)
-│   ├── database.py         # Engine/sessão SQLAlchemy
-│   ├── models.py           # User, Farm, Talhao
-│   ├── schemas.py          # Contratos Pydantic (validados)
-│   ├── security.py         # Senhas (bcrypt) + tokens JWT + dependência get_current_user
-│   ├── requirements.txt
+├── Back/                           # Núcleo do backend (FastAPI + domínio)
+│   ├── main.py                     # Rotas FastAPI (lifespan, CORS via settings)
+│   ├── config.py                   # Configuração centralizada (pydantic-settings + .env)
+│   ├── database.py                 # Engine/sessão SQLAlchemy
+│   ├── models.py                   # User, Farm, Talhao
+│   ├── schemas.py                  # Contratos Pydantic (validados)
+│   ├── security.py                 # Senhas (bcrypt) + tokens JWT + get_current_user
+│   ├── requirements.txt            # Dependências de TODO o backend (Back + Api)
 │   ├── .env.example
-│   ├── data/dem/           # Tiles GeoTIFF do Copernicus DEM GL-30 (fora do Git)
-│   └── services/
-│       ├── simulation_service.py   # Modelo agronômico what-if por cultura
-│       ├── weather_service.py      # NASA POWER + cache TTL
-│       ├── satellite_service.py    # Geração das texturas espectrais (KML → PNG)
-│       ├── analytics_service.py    # Série temporal, zoneamento, estimativa de safra
-│       ├── dem_service.py          # Pipeline topográfico Copernicus DEM GL-30 (heightmap)
-│       └── pdf_service.py          # Laudo técnico em PDF (ReportLab)
-├── sentinel-21KXQ-<data>/  # Texturas espectrais por passagem de satélite
-└── dynamic_talhoes/        # Texturas + heightmaps gerados dinamicamente (runtime)
+│   ├── alembic.ini
+│   ├── alembic/                    # Migrações de esquema (versions/)
+│   ├── services/                   # Serviços INTERNOS (sem provedor externo)
+│   │   ├── simulation_service.py   # Modelo agronômico what-if por cultura
+│   │   ├── satellite_service.py    # Geração das texturas espectrais (KML → PNG)
+│   │   ├── analytics_service.py    # Série temporal, zoneamento, estimativa de safra
+│   │   ├── crop_health_service.py  # Saúde & Evolução da Lavoura (PR #8)
+│   │   └── pdf_service.py          # Laudo técnico em PDF (ReportLab)
+│   └── tests/                      # Suíte pytest da API/serviços (+ conftest)
+│
+├── Api/                            # Integrações com serviços EXTERNOS
+│   ├── services/                   # Mesmo pacote `services` (namespace PEP 420)
+│   │   ├── copernicus_service.py   # CDSE: OAuth2 + STAC + Process API (Sentinel-2 L2A)
+│   │   ├── climate_service.py      # NASA POWER — análise climática por período (PR #7)
+│   │   ├── weather_service.py      # NASA POWER + cache TTL (contrato legado)
+│   │   ├── dem_service.py          # Copernicus DEM GL-30 (download + heightmap)
+│   │   └── geolocation_service.py  # Reverse geocoding (Nominatim) + geometria
+│   ├── data/
+│   │   ├── dem/                    # Tiles GeoTIFF do Copernicus DEM GL-30 (fora do Git)
+│   │   └── amostras/               # contorno_kml / contorno_shp (talhão 01 de exemplo)
+│   └── diagnostico/
+│       └── test_cdse_connection.py # Teste manual de conexão real com o CDSE
+│
+├── Front/                          # Aplicação visual (servida pela API ou por :5501)
+│   ├── index.html                  # Dashboard + Mapa 2D + Simulador 3D (SPA multi-tela)
+│   ├── fazendas.html               # CRUD de propriedades + import de geometria
+│   ├── auth.html                   # Login / cadastro
+│   ├── dashboard.html              # Página estática legada (dados demonstrativos)
+│   ├── app.js                      # Cliente da API (Auth, Farms, Weather, Satellite, …)
+│   ├── tools/playtest_dem.html     # Harness manual do pipeline 3D
+│   └── tests/                      # Suíte pytest de análise estática do frontend
+│
+├── Documentacao/
+│   └── auditorias/                 # AUDITORIA*.md (auditorias por PR)
+│
+├── README.md · run.sh · run.bat · pytest.ini · .gitignore
+├── sentinel-21KXQ-<data>/          # Texturas espectrais por passagem (fora do Git)
+└── dynamic_talhoes/                # Texturas + heightmaps gerados em runtime
 ```
+
+> **`services` é um pacote de namespace (PEP 420).** Os módulos continuam
+> sendo importados exatamente como antes (`from services.copernicus_service
+> import …`); apenas o diretório físico mudou: serviços internos em
+> `Back/services/`, serviços acoplados a provedores externos em
+> `Api/services/`. `Back/main.py` coloca `Api/` no `sys.path` no boot, de
+> modo que `uvicorn main:app` continua funcionando sem `PYTHONPATH`.
 
 ## ✅ Pré-requisitos
 
@@ -66,16 +102,16 @@ source .venv/bin/activate        # Linux/macOS
 # .venv\Scripts\activate         # Windows
 
 # 3. Instale as dependências do backend
-pip install -r backend/requirements.txt
+pip install -r Back/requirements.txt
 
 # 4. Configure o ambiente (recomendado)
-cp backend/.env.example backend/.env
+cp Back/.env.example Back/.env
 # Em produção, defina OBRIGATÓRIAMENTE JWT_SECRET_KEY (senão, um segredo
 # efêmero é usado e os tokens expiram a cada restart do servidor).
 #   python -c "import secrets; print(secrets.token_urlsafe(48))"
 
 # 5. Suba a API (porta 8000)
-cd backend
+cd Back
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 cd ..
 
@@ -83,7 +119,7 @@ cd ..
 #    http://localhost:8000/                → frontend completo (mesma origem)
 #    http://localhost:8000/docs            → Swagger da API
 #    (opcional) frontend separado em :5501 — outro terminal:
-#      python -m http.server 5501
+#      python -m http.server 5501 --directory Front
 #      http://localhost:5501/fazendas.html
 #      login (demo: admin@orion.com / 123456)
 ```
@@ -150,7 +186,7 @@ Cada fazenda pertence a um **dono** (`farms.owner_id` → `users.id`). Regras:
 
 ## 🗄️ Migrações (Alembic)
 
-O esquema evolui via **Alembic** (`backend/alembic/`). A revisão
+O esquema evolui via **Alembic** (`Back/alembic/`). A revisão
 `0001_farm_ownership` mantém `farms.owner_id` como FK física para `users.id`,
 adiciona `is_shared` e faz o **backfill seguro** de bancos legados (fazendas
 órfãs → admin demo; farm demo id=1 → compartilhada).
@@ -164,7 +200,7 @@ linhas legadas; uma segunda etapa remove o default físico, deixando o schema
 final equivalente ao produzido por `Base.metadata.create_all()`.
 
 ```bash
-cd backend
+cd Back
 # 1. Gere o arquivo .env a partir do exemplo (se ainda não tiver)
 cp .env.example .env
 # 2. Aplique as migrações pendentes (idempotente)
@@ -183,7 +219,7 @@ alembic revision --autogenerate -m "descreva a mudança"
   habilitam `PRAGMA foreign_keys=ON` centralmente em `database.py`.
 - O `lifespan` aplica `alembic upgrade head` no boot e interrompe a inicialização
   se a migration falhar, evitando iniciar com schema divergente.
-- O teste dedicado `tests/test_schema_parity.py` compara banco novo e banco
+- O teste dedicado `Back/tests/test_schema_parity.py` compara banco novo e banco
   legado migrado, incluindo colunas, defaults, índices, FKs, dados preservados,
   `alembic_version` e idempotência.
 
@@ -220,7 +256,7 @@ O terreno 3D usa **relevo real** em vez de um plano com displacement genérico, 
 - **PR #5f — câmera ENQUADRADA no talhão**: `fitCameraToTerrain()` calcula o `BoundingBox` da malha (contorno real + DEM), usa o **centro como target** e posiciona a câmera em **vista oblíqua diagonal ~42° (35–55° acima do plano)** com distância proporcional à extensão — funciona para fazendas pequenas e grandes, nunca nasce "rasante/faixa no horizonte" nem pode passar sob o terreno (`maxPolarAngle = 0.44π`). O reenquadro roda após `applyTalhaoGeometry` e após o DEM; **"⟲ Resetar visão"** restaura a vista sem tocar na data/layer/exagero; grade discreta com opacidade reduzida abaixo do terreno e iluminação ambiente + hemisférica + direcional lateral (relevo com sombra, textura Sentinel não escurecida).
 - **PR #5f — timeline de datas REAIS clicável**: abaixo do 3D, **um botão por cena STAC** ("30 AGO" / "2026", tooltip com data completa + nuvens, scroll horizontal + setas ‹ ›, 5/10/20+ cenas), com **Play/Pause**, velocidade e camada na mesma barra. **Ordem cronológica da interface: esquerda = mais antiga, direita = mais recente** (a API segue DESC internamente — `dates[0]` = mais recente para `latest_date`/cache — e a UI usa `timelineOrderDates` para apresentar ASC, sem nunca mutar o array da API). O destaque azul ("ATUAL") só muda no **COMMIT** da cena (preload nunca move a seleção); estados discretos por ponto (disponível/carregando/pronta/aplicada/erro); "⇥ Mais recente" resolve por `latest_date` (`latestSceneIndex`) e faz scroll automático até o chip; **Play percorre antiga → recente**, para (sem loop) na mais recente mantendo-a selecionada e, se acionado com a mais recente selecionada, reinicia explicitamente pela mais antiga; períodos 30d/60d/90d/6m/1a/Personalizado reconstroem os chips preservando o cache compatível. A timeline real continua construída **exclusivamente** de `GET /api/talhao/{farm_id}/dates` (`is_real=true`/`source=sentinel-cdse`).
 
-**Como obter a tile (modo offline):** baixe `Copernicus_Dem_GLO30_<sN>_w<NNN>` (OpenTopography ou portal Copernicus) e coloque em `backend/data/dem/`; a API também tenta baixar automaticamente (best-effort, `DEM_DOWNLOAD_ENABLED`).
+**Como obter a tile (modo offline):** baixe `Copernicus_Dem_GLO30_<sN>_w<NNN>` (OpenTopography ou portal Copernicus) e coloque em `Api/data/dem/`; a API também tenta baixar automaticamente (best-effort, `DEM_DOWNLOAD_ENABLED`).
 
 ## 🎨 Interface do Simulador 3D — 3 zonas (PR #5h)
 
@@ -257,7 +293,7 @@ timeline cronológica, cache, What-If e backend ficam exatamente como no #5g):
 
 O backend busca observação real sempre que possível, com fallback procedural explícito quando não há dado (sem credenciais, sem cena, erro/rate-limit). Nada é marcado como Sentinel sem ser.
 
-**Configuração (`backend/.env`, ver `.env.example`):**
+**Configuração (`Back/.env`, ver `.env.example`):**
 ```
 CDSE_ENABLED=true
 CDSE_CLIENT_ID=...        # OAuth Client do dataspace.copernicus.eu
@@ -271,7 +307,7 @@ CDSE_CACHE_HOURS=12
 CDSE_RASTER_SIZE=256
 ```
 
-**Fluxo (funções puras em `backend/services/copernicus_service.py`):**
+**Fluxo (funções puras em `Api/services/copernicus_service.py`):**
 ```
 polígono do talhão (KML ≥ 3 pts) → STAC search sentinel-2-l2a (intersects)
   → seleção explícita: mais recente ≤ 20% nuvem; relaxa (+15, +35, teto 100)
@@ -281,7 +317,7 @@ polígono do talhão (KML ≥ 3 pts) → STAC search sentinel-2-l2a (intersects)
     (dynamic_talhoes/farm_X_talhao_Y/cdse/<data>/) e memória (TTL config).
 ```
 
-**Fórmulas documentadas (validadas numericamente em `tests/test_copernicus_service.py`):**
+**Fórmulas documentadas (validadas numericamente em `Back/tests/test_copernicus_service.py`):**
 - NDVI = (B08−B04)/(B08+B04) · NDRE = (B08−B05)/(B08+B05) · NDMI = (B08−B11)/(B08+B11)
 - EVI = 2.5·(B08−B04)/(B08+6·B04−7.5·B02+1)
 - RGB = [2.5·B04, 2.5·B03, 2.5·B02] clampado a [0,1] (padrão visual CDSE)
@@ -298,11 +334,11 @@ polígono do talhão (KML ≥ 3 pts) → STAC search sentinel-2-l2a (intersects)
 - `GET /api/talhao/{id}/texture.png?layer=...&date=YYYY-MM-DD` → PNG (real cacheado ou procedural).
 - `GET /api/talhao/{id}/dates?period_days=30..730&start=&end=&limit=` → **calendário real** com `source: "sentinel-cdse"`, `is_real: true`, `source_label`, `latest_date` (cena válida mais recente), `count` e `dates` = EXATAMENTE as cenas STAC (mais recente primeiro, filtro de nuvens); **fallback** apenas quando não há real: `source: "config_fallback"`, `is_real: false`, `source_label: "Calendário demonstrativo (datas de demonstração)"` e `fallback_reason` em pt-BR (nunca confundível com Sentinel real).
 - `GET /api/talhao/dates` → público/legado demonstração (`source: "config_fallback"`, `is_real: false`); `visual_layers` inclui `rgb`.
-- O `.env` do backend agora é resolvido contra a **pasta do módulo** (`backend/.env`) além do CWD — o servidor não perde mais as credenciais CDSE quando iniciado da raiz do repositório.
+- O `.env` do backend agora é resolvido contra a **pasta do módulo** (`Back/.env`) além do CWD — o servidor não perde mais as credenciais CDSE quando iniciado da raiz do repositório.
 
 **Validação de integração real (opcional, FORA da suíte):**
 ```
-python scripts/test_cdse_connection.py --lat -22.7182 --lon -55.5421 --area 42.54 --demo
+python Api/diagnostico/test_cdse_connection.py --lat -22.7182 --lon -55.5421 --area 42.54 --demo
 ```
 O script imprime o **contrato exato consumido pelo frontend**:
 `[3D-DATES] source=... count=... latest=... dates=...` (e confirma se a lista fixa de
@@ -432,14 +468,14 @@ spinner discreto + "Preparando cenas: 3/7".
 ## 📊 Dados
 
 - **Sentinel-2**: 13 passagens em `sentinel-21KXQ-<data>/` (PNGs coloridos por índice).
-- **Topografia**: Copernicus DEM GL-30 — tiles GeoTIFF em `backend/data/dem/` (fora do Git).
-- **Contornos**: `contorno_kml` / `contorno_shp` (talhão 01 de exemplo).
+- **Topografia**: Copernicus DEM GL-30 — tiles GeoTIFF em `Api/data/dem/` (fora do Git).
+- **Contornos**: `Api/data/amostras/contorno_kml` / `contorno_shp` (talhão 01 de exemplo).
 - **Clima**: NASA POWER Daily (comunidade AG) — reanálise/modelo (MERRA-2/FLASHFlux), grade ~0,5°, defasagem NRT ~3 dias. PR #7: análise por período (7d/15d/30d/personalizado) + baseline histórico + indicadores + interpretações conservadoras + confiança; PR #7-FIX.1: cobertura com três conceitos formais (geral/por variável/dias completos), agregações parciais honestas, sequência seca nula com lacunas, baseline "mesmas datas" com omissão abaixo de 50% e confiança por métrica; PR #7-FIX.2: período personalizado com prioridade start/end, contagem inclusiva e proteção contra race condition (resposta tardia não sobrescreve); PR #7-FIX.3: estado único explícito do modo (climateMode), desambiguação dos dois controles "Personalizado + Aplicar" (clima × timeline 3D), validação semântica do período da resposta (incompatível → descartada), modo preservado na navegação e log de diagnóstico [CLIMATE]; falha da fonte → 503 explícito (nunca dado inventado). O endpoint legado (12 meses + janela de pulverização) mantém o contrato e rotula o fallback como dado demonstrativo.
 
 ## 🌦️ Clima & Inteligência Agronômica (PR #7)
 
 Camada climática consolidada — a base que os PRs seguintes (Saúde da Lavoura,
-Bioinsumos) vão consumir. Auditoria completa em `AUDITORIA_CLIMA_PR7.md`.
+Bioinsumos) vão consumir. Auditoria completa em `Documentacao/auditorias/AUDITORIA_CLIMA_PR7.md`.
 
 - **Fonte real, só pelo backend**: `services/climate_service.py` consulta a
   NASA POWER Daily (`/api/temporal/daily/point`, comunidade **AG**) com
@@ -586,7 +622,7 @@ curl -s "http://localhost:8000/api/climate/farm/1?start=2026-07-01&end=2026-07-3
 
 ## 🌱 Saúde & Evolução da Lavoura (PR #8)
 
-Auditoria completa em `AUDITORIA_SAUDE_LAVOURA_PR8.md`. Esta camada acompanha
+Auditoria completa em `Documentacao/auditorias/AUDITORIA_SAUDE_LAVOURA_PR8.md`. Esta camada acompanha
 mudanças espectrais entre aquisições Sentinel-2 reais e é independente do
 analytics legado de compatibilidade.
 
@@ -710,7 +746,7 @@ curl -H "Authorization: Bearer $TOKEN" "http://localhost:8000/api/climate/farm/1
 
 ## 🧪 Suíte de testes automatizados (pytest)
 
-A suíte versionada em `tests/` cobre as 4 frentes exigidas + ownership/migrações/paridade de
+A suíte versionada em `Back/tests/` (API/serviços) e `Front/tests/` (análise estática do frontend) cobre as 4 frentes exigidas + ownership/migrações/paridade de
 schema, assets autenticados, o **pipeline 3D (PR #4 ↔ PR #5h)** e a **camada climática
 consolidada (PR #7 / PR #7-FIX.1 / PR #7-FIX.2 / PR #7-FIX.3) e **Saúde & Evolução PR #8** — **458 testes** (457 passing + 1 skip por dataset Sentinel-2 ausente fora do git):
 
@@ -749,7 +785,7 @@ consolidada (PR #7 / PR #7-FIX.1 / PR #7-FIX.2 / PR #7-FIX.3) e **Saúde & Evolu
 ### Execução
 
 ```bash
-python3 -m venv .venv-test && .venv-test/bin/pip install -r backend/requirements.txt
+python3 -m venv .venv-test && .venv-test/bin/pip install -r Back/requirements.txt
 pytest            # a partir da RAIZ do repositório
 ```
 

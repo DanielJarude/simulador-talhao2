@@ -7,7 +7,9 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BACKEND_DIR="$SCRIPT_DIR/backend"
+BACKEND_DIR="$SCRIPT_DIR/Back"
+API_DIR="$SCRIPT_DIR/Api"
+FRONTEND_DIR="$SCRIPT_DIR/Front"
 
 # --- IDs dos processos filhos (para limpeza na saída) ---
 BACKEND_PID=""
@@ -44,7 +46,7 @@ fi
 # --- 1. Validar .env ---
 echo "[1/5] Validando arquivo de ambiente..."
 if [ ! -f "$BACKEND_DIR/.env.example" ]; then
-    echo "[ERRO] .env.example não encontrado na pasta backend/."
+    echo "[ERRO] .env.example não encontrado na pasta Back/."
     echo "       Verifique se o repositório está completo."
     echo ""
     exit 1
@@ -55,7 +57,7 @@ if [ ! -f "$BACKEND_DIR/.env" ]; then
         echo "  .env criado com sucesso."
     else
         echo "[ERRO] Falha ao criar .env a partir do .env.example."
-        echo "       Verifique as permissões da pasta backend/."
+        echo "       Verifique as permissões da pasta Back/."
         echo ""
         exit 1
     fi
@@ -79,7 +81,10 @@ echo ""
 # --- 3. Iniciar backend (Uvicorn) ---
 echo "[3/5] Iniciando servidor FastAPI na porta 8000..."
 cd "$BACKEND_DIR"
-python3 -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload &
+# `--reload-dir` cobre as DUAS raízes de código do backend (o pacote de
+# namespace `services` vive em Back/services + Api/services).
+python3 -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload \
+    --reload-dir "$BACKEND_DIR" --reload-dir "$API_DIR" &
 BACKEND_PID=$!
 cd "$SCRIPT_DIR"
 if ! kill -0 "$BACKEND_PID" 2>/dev/null; then
@@ -93,7 +98,7 @@ echo ""
 
 # --- 4. Iniciar servidor estático do frontend ---
 echo "[4/5] Iniciando servidor de arquivos estáticos na porta 5501..."
-python3 -m http.server 5501 &
+python3 -m http.server 5501 --directory "$FRONTEND_DIR" &
 FRONTEND_PID=$!
 if ! kill -0 "$FRONTEND_PID" 2>/dev/null; then
     echo "[ERRO] Falha ao iniciar o servidor de arquivos estáticos."

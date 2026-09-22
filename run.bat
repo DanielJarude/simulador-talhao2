@@ -21,9 +21,10 @@ if %ERRORLEVEL% neq 0 (
 
 REM --- 1. Validar .env ---
 echo [1/5] Validando arquivo de ambiente...
-set "BACKEND_DIR=%~dp0backend"
+set "BACKEND_DIR=%~dp0Back"
+set "FRONTEND_DIR=%~dp0Front"
 if not exist "%BACKEND_DIR%\.env.example" (
-    echo [ERRO] .env.example nao encontrado na pasta backend\.
+    echo [ERRO] .env.example nao encontrado na pasta Back\.
     echo        Verifique se o repositório está completo.
     echo.
     pause
@@ -34,7 +35,7 @@ if not exist "%BACKEND_DIR%\.env" (
     copy /Y "%BACKEND_DIR%\.env.example" "%BACKEND_DIR%\.env" > nul
     if %ERRORLEVEL% neq 0 (
         echo [ERRO] Falha ao criar .env a partir do .env.example.
-        echo        Verifique as permissoes da pasta backend\.
+        echo        Verifique as permissoes da pasta Back\.
         echo.
         pause
         exit /b 1
@@ -60,7 +61,10 @@ echo.
 
 REM --- 3. Iniciar backend em janela separada ---
 echo [3/5] Iniciando servidor FastAPI na porta 8000...
-start /D "%BACKEND_DIR%" "Orion Agro API" cmd /k "python -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload"
+REM --reload-dir cobre as DUAS raizes de codigo do backend (o pacote de
+REM namespace `services` vive em Back\services + Api\services). Os caminhos
+REM sao relativos ao /D acima (evita problemas de aspas no cmd /k).
+start /D "%BACKEND_DIR%" "Orion Agro API" cmd /k "python -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload --reload-dir . --reload-dir ..\Api"
 if %ERRORLEVEL% neq 0 (
     echo [ERRO] Falha ao iniciar o servidor FastAPI.
     echo        Verifique se a porta 8000 nao esta em uso.
@@ -73,7 +77,7 @@ echo.
 
 REM --- 4. Iniciar servidor estático do frontend em janela separada ---
 echo [4/5] Iniciando servidor de arquivos estaticos na porta 5501...
-start /D "%~dp0" "Orion Agro Frontend" cmd /k "python -m http.server 5501"
+start /D "%FRONTEND_DIR%" "Orion Agro Frontend" cmd /k "python -m http.server 5501"
 if %ERRORLEVEL% neq 0 (
     echo [ERRO] Falha ao iniciar o servidor de arquivos estaticos.
     echo        Verifique se a porta 5501 nao esta em uso.
