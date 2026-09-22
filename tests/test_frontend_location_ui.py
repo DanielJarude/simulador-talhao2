@@ -11,11 +11,13 @@ def form(fragment_id):
     return HTML[start:end]
 
 def test_frontend_real_is_fazendas_html():
-    assert 'Gestão de Propriedades' in HTML and '<script src="app.js"></script>' in HTML
+    assert 'Propriedades e talhões' in HTML and '<script src="app.js"></script>' in HTML
 
 def test_card_legacy_warning_and_no_coordinates():
     render=HTML[HTML.index('async function renderFarms'):HTML.index('// Modal de Edição')]
-    assert '⚠ Localização não verificada' in render
+    assert 'Localização não verificada' in render
+    # O aviso é um badge com significado (âmbar = atenção), não um ícone solto.
+    assert 'badge badge-warn' in render
     assert 'Lat: ${lat}' not in render and 'Lon: ${lon}' not in render
     assert 'Verificar localização' in render
 
@@ -30,8 +32,8 @@ def test_create_location_choices_are_visible():
     create=form('farm-name')
     assert 'Selecionar localização no mapa' in create
     assert 'Usar minha localização' in create
-    assert 'Importar Arquivo do Talhão' in create
-    assert 'LOCALIZAÇÃO DETECTADA' in create
+    assert 'Geometria do talhão (.kml ou .geojson)' in create
+    assert 'Localização detectada' in create
 
 def test_geolocation_only_after_user_action():
     call=HTML.index('navigator.geolocation.getCurrentPosition')
@@ -48,7 +50,8 @@ def test_kml_detection_requires_confirmation_and_area_is_automatic():
     assert 'commitDetection(c)' in HTML
 
 def test_edit_legacy_presents_stored_and_detected_location():
-    assert 'ATENÇÃO — LOCALIZAÇÃO NÃO VERIFICADA' in HTML
+    assert 'id="edit-legacy-warning"' in HTML
+    assert 'Localização não verificada' in HTML
     assert 'Localização cadastrada:' in HTML
     assert 'Coordenadas armazenadas:' in HTML
     assert 'Localização detectada pelas coordenadas:' in HTML

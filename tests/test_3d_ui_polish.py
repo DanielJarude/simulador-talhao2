@@ -5,14 +5,14 @@ em 3 zonas sem exigir navegador:
 
   - a timeline é uma faixa PRÓPRIA abaixO do viewport 3D (nunca flutua sobre
     o terreno); viewport dominante (flex 1) e timeline com altura própria;
-  - What-If é recolhível (`[⚡ What-If]`) e RECOLHER NÃO ALTERA os valores
+  - What-If é recolhível (`[What-If]`) e RECOLHER NÃO ALTERA os valores
     dos sliders (preservação por construção: só display é trocado);
   - proveniência compacta (1 linha + [Detalhes] → drawer com DEM/escala/
     exagero) e por padrão apenas o resumo;
   - data atual = UM único chip azul (ativo) por cena aplicada, sem data
     duplicada no cabeçalho dos controles;
-  - controles seguem presentes/ligados: ▶ Play, intervalo, camada,
-    Relevo 1×/2×/3×/5×, Resetar câmera, períodos e setas da timeline;
+  - controles seguem presentes/ligados: ▶ Reproduzir, intervalo, camada,
+    Relevo 1×/2×/3×/5×, Reenquadrar câmera, períodos e setas da timeline;
   - estrutura responsiva: clamp da barra de timeline, media queries para
     1366×768/1600×900/1920×1080, scene-timeline com scroll horizontal;
   - NENHUMA funcionalidade 3D removida (geometria/DEM/câmera/cache/
@@ -68,7 +68,7 @@ def test_3d_ui_timeline_outside_viewport(screen_3d_block):
 
 def test_3d_ui_timeline_own_region_css(source):
     """Zonas: viewport flex:1 dominante; timeline faixa própria com altura fixa."""
-    css = _slice(source, "/* =====================================================================\n       PR #5h", "  </style>")
+    css = _slice(source, "[3D-LAYOUT-CSS-START]", "[3D-LAYOUT-CSS-END]")
     assert "#screen-3d" in css
     assert re.search(r"#screen-3d\.active\s*\{[^}]*display:\s*flex[^}]*flex-direction:\s*column", css, re.S), \
         "screen-3d ativa é coluna (header externo / viewport / timeline)"
@@ -98,20 +98,20 @@ def test_3d_ui_timeline_two_content_lines(screen_3d_block):
 
 def test_3d_ui_zone_heights_responsive(source):
     """1920×1080 · 1600×900 · 1366×768: timeline (≤152px) nunca engole o 3D."""
-    css = _slice(source, "/* =====================================================================\n       PR #5h", "  </style>")
+    css = _slice(source, "[3D-LAYOUT-CSS-START]", "[3D-LAYOUT-CSS-END]")
     assert "@media (max-height: 800px)" in css, "regra específica p/ 1366×768"
     assert re.search(r"@media \(max-height:\s*800px\)\s*\{[^}]*#timeline-panel\s*\{\s*flex-basis:\s*112px", css, re.S), \
         "768px → timeline 112px (ainda mais contida)"
-    # Simula a conta das 3 resoluções (56px = top-nav fixa)
+    # Simula a conta das 3 resoluções (52px = top-nav fixa após o rework)
     for (label, height, expected_tl) in (
         ("1920×1080", 1080, 152),
         ("1600×900", 900, 152),
         ("1366×768", 768, 112),
     ):
         tl = expected_tl
-        viewport = height - 56 - tl
+        viewport = height - 52 - tl
         assert viewport > 400, f"{label}: viewport {viewport}px pequeno demais"
-        ratio = viewport / (height - 56)
+        ratio = viewport / (height - 52)
         assert 0.60 <= ratio <= 0.90, f"{label}: 3D deve dominar ({ratio:.0%})"
 
 
@@ -160,7 +160,7 @@ const sliderN = document.getElementById('slider-3d-n');
 sliderN.value = '30';                       // usuário moveu a adubação
 sandbox.setWhatIfCollapsed(true);
 assert.equal(panel.style.display, 'none', 'recolhido → painel some');
-assert.equal(tab.style.display, '', 'aba [⚡ What-If] aparece');
+assert.equal(tab.style.display, '', 'aba [What-If] aparece');
 assert.equal(toggle._attrs['aria-expanded'], 'false');
 assert.equal(sliderN.value, '30', 'VALOR do slider preservado ao recolher');
 assert.equal(document.getElementById('val-3d-n').innerText, '', 'resultados não são apagados');
@@ -182,8 +182,8 @@ process.stdout.write(JSON.stringify({ ok: true }));
 
 
 def test_3d_ui_whatif_collapsed_markup(screen_3d_block):
-    """Aba única [⚡ What-If] e painel compacto (agrupado, sem caixas aninhadas)."""
-    assert '<button id="whatif-tab" type="button" style="display:none;">⚡ What-If</button>' in screen_3d_block
+    """Aba única [What-If] e painel compacto (agrupado, sem caixas aninhadas)."""
+    assert '<button id="whatif-tab" type="button" style="display:none;">What-If</button>' in screen_3d_block
     assert '<button id="whatif-toggle" type="button"' in screen_3d_block
     assert 'id="whatif-body"' in screen_3d_block
     # Parâmetros agrupados TODO o painel é 1 caixa; sliders dentro de grupos simples
@@ -252,10 +252,8 @@ def test_3d_ui_provenance_markup_css(screen_3d_block, source):
     assert '<button id="prov-toggle" type="button">Detalhes</button>' in screen_3d_block
     assert '<div id="prov-details">' in screen_3d_block and 'id="prov-lines"' in screen_3d_block
     assert 'id="dem-line"' in screen_3d_block
-    css = _slice(source, "/* =====================================================================\n       PR #5h", "  </style>")
-    assert re.search(r"#metadata-panel\s*\{[^}]*bottom:\s*10px[^}]*max-width:\s*320px", css, re.S) or \
-        re.search(r"#metadata-panel\s*\{[^}]*bottom:\s*10px[^}]*max-width", css, re.S) or \
-        ("bottom: 10px" in css and "max-width: 320px" in css), \
+    css = _slice(source, "[3D-LAYOUT-CSS-START]", "[3D-LAYOUT-CSS-END]")
+    assert re.search(r"#metadata-panel\s*\{[^}]*bottom:[^;]+;[^}]*left:[^;]+;[^}]*max-width:\s*3\d\dpx", css, re.S), \
         "card no canto inferior esquerdo e ≤ ~25% da largura"
     assert re.search(r"#prov-details\s*\{[^}]*display:\s*none", css, re.S), \
         "por padrão SÓ o resumo (detalhes fechados)"
@@ -359,12 +357,12 @@ def test_3d_ui_no_duplicate_date_control(screen_3d_block):
 def test_3d_ui_controls_still_present_and_wired(screen_3d_block, source):
     engine = _slice(source, "function setPlayButtonUI()", "function onWindowResize()")
     # Markup
-    assert '<button id="play-btn" type="button">▶ Play</button>' in screen_3d_block
+    assert '<button id="play-btn" type="button">▶ Reproduzir</button>' in screen_3d_block
     assert '<select id="play-interval"' in screen_3d_block
     assert '<select id="layer-select"' in screen_3d_block
     for l in ("rgb", "ndvi", "evi", "ndre", "ndmi"):
         assert f'<option value="{l}">' in screen_3d_block
-    assert '<button id="btn-reset-camera"' in screen_3d_block and "⟲ Resetar" in screen_3d_block
+    assert '<button id="btn-reset-camera"' in screen_3d_block and "Reenquadrar" in screen_3d_block
     for exh in ("1×", "2×", "3×", "5×"):
         assert f'data-exag="{exh[:-1]}"' in screen_3d_block, f"Relevo {exh} presente"
     assert 'data-exag="1"' in screen_3d_block and 'data-exag="5"' in screen_3d_block
@@ -409,15 +407,17 @@ def test_3d_ui_pipeline_3d_preserved(source):
 
 def test_3d_ui_neutral_palette_and_hierarchy(source):
     """UI neutra: cor apenas para estado; hierarquia título→secundário→técnico."""
-    css = _slice(source, "/* =====================================================================\n       PR #5h", "  </style>")
-    # Labels discretos SEM caixas grandes (borda fina, fundo translúcido)
-    assert re.search(r"#label-left\s*\{[^}]*border-left:\s*3px", css, re.S)
-    assert "backdrop-filter" in css
+    css = _slice(source, "[3D-LAYOUT-CSS-START]", "[3D-LAYOUT-CSS-END]")
+    # Labels discretos SEM caixas grandes: hairline de 2px como marcador
+    assert re.search(r"#label-left\s*\{[^}]*border-left:\s*2px", css, re.S)
+    # O rework removeu vidro/blur/glow: superfície chapada com opacidade alta
+    assert "backdrop-filter" not in css, "sem glassmorphism no viewport 3D"
+    assert "box-shadow" not in css, "sem sombra decorativa no viewport 3D"
     # Título > subtítulo > técnico (tamanhos decrescentes na mesma família)
-    assert re.search(r"\.scenario-title\s*\{[^}]*font-size:\s*0\.64rem[^}]*font-weight:\s*800", css, re.S)
-    assert re.search(r"\.scenario-sub\s*\{[^}]*font-size:\s*0\.62rem[^}]*font-weight:\s*600", css, re.S)
+    assert re.search(r"\.scenario-title\s*\{[^}]*font-size:\s*var\(--fs-micro\)[^}]*font-weight:\s*700", css, re.S)
+    assert re.search(r"\.scenario-sub\s*\{[^}]*font-size:\s*var\(--fs-meta\)[^}]*font-weight:\s*600", css, re.S)
     # Dica discreta (não tutorial permanente) — texto no markup do viewport
-    assert "Arraste para orbitar · Scroll para zoom" in source
+    assert "Arraste para orbitar · roda do mouse para aproximar" in source
     # Erro/loading localizados (sem tela inteira)
     assert 'id="error-retry"' in source and "Tentar novamente" in source
     assert "showErrorToast" in source and "setSceneOverlay" in source

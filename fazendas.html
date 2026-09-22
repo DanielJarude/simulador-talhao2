@@ -2,146 +2,201 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <title>Fazendas & Talhões - Orion Agro</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Propriedades e talhões — Orion</title>
+  <link rel="stylesheet" href="orion.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <style>
-    * { box-sizing: border-box; }
-    body {
-      margin: 0; padding: 28px; font-family: 'Segoe UI', Roboto, Helvetica, sans-serif;
-      background: #0d1117; color: #f0f6fc;
-    }
+    body { margin: 0; padding: var(--sp-5) var(--sp-4) var(--sp-6); }
+    .page { max-width: 1440px; margin: 0 auto; }
+
     .header-bar {
-      display: flex; justify-content: space-between; align-items: center;
-      padding-bottom: 20px; border-bottom: 1px solid #30363d; margin-bottom: 28px;
+      display: flex; justify-content: space-between; align-items: flex-end;
+      gap: var(--sp-4); flex-wrap: wrap;
+      padding-bottom: var(--sp-3); border-bottom: 1px solid var(--line);
+      margin-bottom: var(--sp-5);
     }
-    .user-tag { font-size: 0.85rem; color: #8b949e; }
-    .btn-logout { background: transparent; color: #ff7b72; border: 1px solid #da3633; padding: 5px 12px; border-radius: 6px; cursor: pointer; }
+    .header-bar h2 { margin: var(--sp-1) 0 2px; font-size: 1.3rem; color: var(--text-1); }
+    .user-tag { font-size: var(--fs-meta); color: var(--text-3); }
+    .btn-logout {
+      background: transparent; color: var(--text-2); border: 1px solid var(--line);
+      padding: 6px 12px; border-radius: var(--r-md); cursor: pointer;
+      font: inherit; font-size: var(--fs-sm); font-weight: 600;
+    }
+    .btn-logout:hover { color: var(--risk-text); border-color: var(--risk); }
 
-    .main-grid { display: grid; grid-template-columns: 1fr 420px; gap: 24px; }
-    @media(max-width: 1000px) { .main-grid { grid-template-columns: 1fr; } }
+    .main-grid { display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: var(--sp-4); align-items: start; }
+    @media (max-width: 1000px) { .main-grid { grid-template-columns: minmax(0, 1fr); } }
 
-    .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 20px; }
-    .card h3 { margin: 0 0 16px 0; color: #58a6ff; font-size: 1.1rem; }
+    .card { background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--r-lg); padding: var(--sp-4); }
+    .card > h3 {
+      margin: 0 0 var(--sp-3); font-size: var(--fs-micro); text-transform: uppercase;
+      letter-spacing: 0.1em; color: var(--text-3); font-weight: 700;
+      padding-bottom: var(--sp-2); border-bottom: 1px solid var(--line);
+    }
 
+    /* Lista de propriedades — linhas densas, não cartões flutuantes */
     .farm-item {
-      background: #0d1117; border: 1px solid #30363d; border-radius: 10px;
-      padding: 16px; margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center;
-      gap: 12px; flex-wrap: wrap;
+      background: var(--surface-0); border: 1px solid var(--line);
+      border-left: 2px solid var(--line-strong);
+      border-radius: var(--r-md);
+      padding: var(--sp-3) var(--sp-4); margin-bottom: var(--sp-2);
+      display: flex; justify-content: space-between; align-items: center;
+      gap: var(--sp-3); flex-wrap: wrap;
     }
-    .farm-info h4 { margin: 0 0 4px 0; font-size: 1.05rem; color: #f0f6fc; }
-    .farm-info p { margin: 0; font-size: 0.82rem; color: #8b949e; }
+    .farm-item.unverified { border-left-color: var(--warn); }
+    .farm-item.verified { border-left-color: var(--veg); }
+    .farm-info { min-width: 0; }
+    .farm-info h4 { margin: 0 0 2px; font-size: var(--fs-body); color: var(--text-1); }
+    .farm-info p { margin: 0; font-size: var(--fs-meta); color: var(--text-2); line-height: 1.5; }
+    .farm-info .farm-figures { color: var(--text-1); font-variant-numeric: tabular-nums; }
+    .farm-info .farm-talhao { color: var(--text-3); }
 
-    .action-btns { display: flex; gap: 8px; align-items: center; }
-    
+    .action-btns { display: flex; gap: var(--sp-1); align-items: center; flex-wrap: wrap; }
     .btn-enter-3d {
-      background: #238636; color: #fff; border: none; padding: 8px 14px;
-      border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 0.82rem;
-      cursor: pointer; display: inline-flex; align-items: center; gap: 4px;
+      background: var(--veg); color: #fff; border: 1px solid var(--veg); padding: 6px 12px;
+      border-radius: var(--r-md); text-decoration: none; font-weight: 600; font-size: var(--fs-sm);
+      cursor: pointer; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
     }
-    .btn-enter-3d:hover { background: #2ea043; }
-
+    .btn-enter-3d:hover { background: #59a874; }
     .btn-edit {
-      background: #21262d; color: #58a6ff; border: 1px solid #30363d; padding: 8px 12px;
-      border-radius: 6px; font-weight: 600; font-size: 0.82rem; cursor: pointer;
+      background: var(--surface-2); color: var(--text-2); border: 1px solid var(--line);
+      padding: 6px 10px; border-radius: var(--r-md); font: inherit; font-weight: 600;
+      font-size: var(--fs-sm); cursor: pointer; white-space: nowrap;
     }
-    .btn-edit:hover { background: #30363d; }
-
+    .btn-edit:hover { color: var(--text-1); border-color: var(--line-strong); }
     .btn-delete {
-      background: #21262d; color: #ff7b72; border: 1px solid #da3633; padding: 8px 12px;
-      border-radius: 6px; font-weight: 600; font-size: 0.82rem; cursor: pointer;
+      background: transparent; color: var(--text-2); border: 1px solid var(--line);
+      padding: 6px 10px; border-radius: var(--r-md); font: inherit; font-weight: 600;
+      font-size: var(--fs-sm); cursor: pointer; white-space: nowrap;
     }
-    .btn-delete:hover { background: rgba(218, 54, 51, 0.2); }
+    .btn-delete:hover { color: var(--risk-text); border-color: var(--risk); background: var(--risk-soft); }
 
-    .form-group { margin-bottom: 12px; }
-    .form-group label { display: block; font-size: 0.8rem; color: #8b949e; margin-bottom: 4px; }
-    .form-group input, .form-group select, .form-group textarea {
-      width: 100%; padding: 8px 10px; background: #0d1117; border: 1px solid #30363d;
-      border-radius: 6px; color: #f0f6fc; font-size: 0.85rem;
+    .form-group { margin-bottom: var(--sp-3); }
+    .form-group label {
+      display: block; font-size: var(--fs-micro); text-transform: uppercase;
+      letter-spacing: 0.06em; font-weight: 700; color: var(--text-3); margin-bottom: var(--sp-1);
     }
-    .coord-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-    .location-box { border:1px solid #238636; border-radius:8px; padding:12px; margin:12px 0; }
-    .location-box strong { color:#7ee787; } .map-picker { height:230px; border-radius:8px; margin:10px 0; }
-    .location-actions { display:flex; gap:8px; flex-wrap:wrap; } .location-actions button { padding:7px 10px; cursor:pointer; }
-    details { margin:10px 0; color:#8b949e; } .geo-status { font-size:.78rem; margin-top:6px; }
+    .form-group label small { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--text-3); }
+    .form-group input, .form-group select, .form-group textarea { width: 100%; }
+    .coord-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-2); }
+
+    .location-box {
+      border: 1px solid var(--line); border-left: 2px solid var(--data);
+      border-radius: var(--r-md); padding: var(--sp-3); margin: var(--sp-3) 0;
+      background: var(--surface-0);
+    }
+    .location-box > strong {
+      display: block; font-size: var(--fs-micro); text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--text-3); margin-bottom: var(--sp-1);
+    }
+    .map-picker { height: 230px; border-radius: var(--r-md); margin: var(--sp-2) 0; border: 1px solid var(--line); }
+    .location-actions { display: flex; gap: var(--sp-1); flex-wrap: wrap; }
+    .location-actions button {
+      font: inherit; font-size: var(--fs-meta); font-weight: 600;
+      background: var(--surface-2); color: var(--text-1);
+      border: 1px solid var(--line); border-radius: var(--r-md);
+      padding: 6px 10px; cursor: pointer;
+    }
+    .location-actions button:hover:not(:disabled) { border-color: var(--line-strong); background: var(--surface-3); }
+    .location-actions button:disabled { opacity: 0.45; cursor: not-allowed; }
+    details { margin: var(--sp-3) 0; color: var(--text-2); font-size: var(--fs-sm); }
+    details summary { cursor: pointer; color: var(--text-2); }
+    details > button {
+      margin-top: var(--sp-2); font: inherit; font-size: var(--fs-meta); font-weight: 600;
+      background: var(--surface-2); color: var(--text-1); border: 1px solid var(--line);
+      border-radius: var(--r-md); padding: 6px 10px; cursor: pointer;
+    }
+    .geo-status { font-size: var(--fs-meta); color: var(--text-3); margin-top: var(--sp-2); line-height: 1.5; }
 
     .file-dropzone {
-      border: 2px dashed #30363d; border-radius: 8px; padding: 14px;
-      text-align: center; background: #0d1117; cursor: pointer; margin-bottom: 12px;
-      transition: 0.2s;
+      border: 1px dashed var(--line-strong); border-radius: var(--r-md); padding: var(--sp-4);
+      text-align: center; background: var(--surface-0); cursor: pointer; margin-bottom: var(--sp-3);
     }
-    .file-dropzone:hover { border-color: #58a6ff; }
-    .file-dropzone p { margin: 0; font-size: 0.8rem; color: #8b949e; }
-    .file-dropzone strong { color: #58a6ff; }
+    .file-dropzone:hover { border-color: var(--data); }
+    .file-dropzone p { margin: 0; font-size: var(--fs-meta); color: var(--text-3); }
+    .file-dropzone strong { color: var(--data-text); font-size: var(--fs-sm); }
 
     .btn-save-farm {
-      width: 100%; padding: 10px; background: #1f6feb; border: none; border-radius: 6px;
-      color: #fff; font-weight: 600; cursor: pointer; margin-top: 8px;
+      width: 100%; padding: 10px; background: var(--veg); border: 1px solid var(--veg);
+      border-radius: var(--r-md); color: #fff; font: inherit; font-weight: 600;
+      cursor: pointer; margin-top: var(--sp-2);
     }
-    .btn-save-farm:hover { background: #388bfd; }
+    .btn-save-farm:hover { background: #59a874; }
 
-    /* MODAL DE EDIÇÃO */
+    /* Modal de edição */
     .modal-overlay {
-      position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-      background: rgba(0, 0, 0, 0.75); display: none; justify-content: center;
-      align-items: center; z-index: 1000; backdrop-filter: blur(4px);
+      position: fixed; inset: 0; background: rgba(4, 7, 6, 0.78);
+      display: none; justify-content: center; align-items: center; z-index: 1000;
+      padding: var(--sp-4);
     }
     .modal-overlay.active { display: flex; }
     .modal-box {
-      background: #161b22; border: 1px solid #30363d; border-radius: 12px;
-      padding: 24px; width: 100%; max-width: 480px; box-shadow: 0 16px 36px rgba(0,0,0,0.8);
-      max-height: 90vh; overflow-y: auto;
+      background: var(--surface-1); border: 1px solid var(--line-strong);
+      border-radius: var(--r-lg); padding: var(--sp-5);
+      width: 100%; max-width: 480px; max-height: 90vh; overflow-y: auto;
     }
-    .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-    .modal-header h3 { margin: 0; color: #58a6ff; }
-    .btn-close-modal { background: transparent; color: #8b949e; border: none; font-size: 1.2rem; cursor: pointer; }
+    .modal-header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: var(--sp-4); padding-bottom: var(--sp-3); border-bottom: 1px solid var(--line);
+    }
+    .modal-header h3 { margin: 0; font-size: var(--fs-lg); color: var(--text-1); }
+    .btn-close-modal {
+      background: transparent; color: var(--text-3); border: 1px solid transparent;
+      font-size: 1.1rem; cursor: pointer; border-radius: var(--r-sm); padding: 2px 8px; line-height: 1;
+    }
+    .btn-close-modal:hover { color: var(--text-1); border-color: var(--line); }
   </style>
 </head>
 <body>
 
+  <div class="page">
   <div class="header-bar">
     <div>
-      <h2 style="margin:0; color:#58a6ff;">Gestão de Propriedades</h2>
-      <div class="user-tag" id="user-display">Conectado como: ...</div>
+      <span class="eyebrow">Orion · Sistemas Agrícolas</span>
+      <h2>Propriedades e talhões</h2>
+      <div class="user-tag" id="user-display">Conectado como: …</div>
     </div>
-    <button class="btn-logout" onclick="logout()">Sair</button>
+    <button class="btn-logout" type="button" onclick="logout()">Sair</button>
   </div>
 
   <div class="main-grid">
     <!-- Lista de Fazendas Cadastradas -->
     <div class="card">
-      <h3>Propriedades & Talhões Disponíveis</h3>
+      <h3>Propriedades cadastradas</h3>
       <div id="farms-list"></div>
     </div>
 
     <!-- Formulário para Cadastrar Nova Fazenda -->
-    <div class="card" style="border-left: 4px solid #1f6feb;">
-      <h3>+ Cadastrar Nova Fazenda / Talhão</h3>
+    <div class="card">
+      <h3>Cadastrar propriedade e talhão</h3>
       <form onsubmit="handleCreateFarm(event)">
         
         <div class="form-group">
-          <label>Importar Arquivo do Talhão (.kml ou .geojson):</label>
+          <label for="file-input">Geometria do talhão (.kml ou .geojson)</label>
           <div class="file-dropzone" onclick="document.getElementById('file-input').click()">
-            <p>📂 <strong>Clique para selecionar o KML/GeoJSON</strong></p>
-            <p style="font-size:0.75rem; margin-top:2px;">(As coordenadas e área serão calculadas automaticamente)</p>
+            <p><strong>Selecionar arquivo KML ou GeoJSON</strong></p>
+            <p style="margin-top:4px;">As coordenadas e a área em hectares são calculadas a partir do polígono.</p>
           </div>
           <input type="file" id="file-input" accept=".kml,.geojson,.json" style="display:none;" onchange="handleFileSelect(event, 'create')">
         </div>
 
         <div class="form-group">
-          <label>Nome da Fazenda</label>
-          <input type="text" id="farm-name" required placeholder="Ex: Fazenda Santa Fé">
+          <label for="farm-name">Nome da propriedade</label>
+          <input type="text" id="farm-name" required placeholder="Ex.: Fazenda Santa Fé">
         </div>
         <input type="hidden" id="farm-city">
         <div class="form-group">
-          <label>Nome do Talhão</label>
-          <input type="text" id="talhao-name" required placeholder="Ex: Talhão 01 - Sede">
+          <label for="talhao-name">Nome do talhão</label>
+          <input type="text" id="talhao-name" required placeholder="Ex.: Talhão 01 — Sede">
         </div>
         <div class="form-group">
-          <label>Área do Talhão (hectares) <small>— calculada ao importar um polígono</small></label>
-          <input type="number" step="0.01" id="farm-area" required placeholder="Calculada automaticamente ou informe a área">
+          <label for="farm-area">Área do talhão (ha) <small>calculada ao importar o polígono</small></label>
+          <input type="number" step="0.01" min="0.01" id="farm-area" required placeholder="Calculada automaticamente ou informada">
         </div>
         <div class="form-group">
-          <label>Cultura Principal</label>
+          <label for="farm-crop">Cultura principal</label>
           <select id="farm-crop">
             <option value="Soja / Milho Safrinha">Soja / Milho Safrinha</option>
             <option value="Cana-de-Açúcar">Cana-de-Açúcar</option>
@@ -151,7 +206,7 @@
           </select>
         </div>
 
-        <div class="location-box"><strong>LOCALIZAÇÃO DETECTADA</strong><div id="create-location-label">Importe o talhão, selecione no mapa ou use sua localização.</div>
+        <div class="location-box"><strong>Localização detectada</strong><div id="create-location-label">Importe o talhão, selecione no mapa ou use a localização do dispositivo.</div>
           <div id="create-map" class="map-picker"></div><div class="location-actions">
             <button type="button" onclick="startMapCorrection('create')">Selecionar localização no mapa</button>
             <button type="button" onclick="useDeviceLocation('create')">Usar minha localização</button>
@@ -163,7 +218,7 @@
         </div><button type="button" onclick="applyManualLocation('create')">Aplicar coordenadas e confirmar</button></details>
 
         <input type="hidden" id="kml-coords-hidden">
-        <button type="submit" class="btn-save-farm">Salvar Propriedade & Geometria</button>
+        <button type="submit" class="btn-save-farm">Salvar propriedade e geometria</button>
       </form>
     </div>
   </div>
@@ -172,35 +227,35 @@
   <div class="modal-overlay" id="edit-modal">
     <div class="modal-box">
       <div class="modal-header">
-        <h3>Editar Propriedade</h3>
-        <button class="btn-close-modal" onclick="closeEditModal()">✕</button>
+        <h3>Editar propriedade</h3>
+        <button class="btn-close-modal" type="button" aria-label="Fechar" onclick="closeEditModal()">&times;</button>
       </div>
       <form onsubmit="handleUpdateFarm(event)">
         <input type="hidden" id="edit-farm-id">
 
         <div class="form-group">
-          <label>Substituir Geometria (.kml ou .geojson):</label>
+          <label for="file-input-edit">Substituir geometria (.kml ou .geojson)</label>
           <div class="file-dropzone" onclick="document.getElementById('file-input-edit').click()">
-            <p>📂 <strong>Clique para atualizar o arquivo</strong></p>
+            <p><strong>Substituir o arquivo de geometria</strong></p>
           </div>
           <input type="file" id="file-input-edit" accept=".kml,.geojson,.json" style="display:none;" onchange="handleFileSelect(event, 'edit')">
         </div>
 
         <div class="form-group">
-          <label>Nome da Fazenda</label>
+          <label for="edit-farm-name">Nome da propriedade</label>
           <input type="text" id="edit-farm-name" required>
         </div>
         <input type="hidden" id="edit-farm-city">
         <div class="form-group">
-          <label>Nome do Talhão</label>
+          <label for="edit-talhao-name">Nome do talhão</label>
           <input type="text" id="edit-talhao-name" required>
         </div>
         <div class="form-group">
-          <label>Área do Talhão (Hectares)</label>
-          <input type="number" step="0.01" id="edit-farm-area" required>
+          <label for="edit-farm-area">Área do talhão (ha)</label>
+          <input type="number" step="0.01" min="0.01" id="edit-farm-area" required>
         </div>
         <div class="form-group">
-          <label>Cultura Principal</label>
+          <label for="edit-farm-crop">Cultura principal</label>
           <select id="edit-farm-crop">
             <option value="Soja / Milho Safrinha">Soja / Milho Safrinha</option>
             <option value="Cana-de-Açúcar">Cana-de-Açúcar</option>
@@ -210,21 +265,23 @@
           </select>
         </div>
 
-        <div id="edit-legacy-warning" class="location-box" style="display:none;border-color:#d29922">
-          <strong style="color:#d29922">⚠ ATENÇÃO — LOCALIZAÇÃO NÃO VERIFICADA</strong>
+        <div id="edit-legacy-warning" class="location-box" style="display:none;border-left-color:var(--warn);">
+          <strong style="color:var(--warn-text);">Localização não verificada</strong>
           <p>Os dados geográficos desta fazenda são anteriores ao sistema de localização automática.</p>
           <div>Localização cadastrada: <b id="edit-stored-city"></b></div>
           <div>Coordenadas armazenadas: <code id="edit-stored-coords"></code></div>
           <div id="edit-verification-result">Verificando localização atual…</div>
         </div>
-        <div class="location-box"><strong>LOCALIZAÇÃO DETECTADA</strong><div id="edit-location-label"></div><div id="edit-map" class="map-picker"></div>
+        <div class="location-box"><strong>Localização detectada</strong><div id="edit-location-label"></div><div id="edit-map" class="map-picker"></div>
           <div class="location-actions"><button type="button" onclick="startMapCorrection('edit')">Corrigir no mapa</button><button type="button" onclick="useDeviceLocation('edit')">Usar minha localização</button><button type="button" id="edit-confirm" onclick="confirmMapLocation('edit')" disabled>Confirmar localização detectada</button></div><div id="edit-geo-status" class="geo-status"></div></div>
         <details><summary>Opções avançadas — latitude/longitude</summary><div class="coord-grid"><input type="number" min="-90" max="90" step="0.000001" id="edit-farm-lat"><input type="number" min="-180" max="180" step="0.000001" id="edit-farm-lon"></div><button type="button" onclick="applyManualLocation('edit')">Aplicar coordenadas e confirmar</button></details>
 
         <input type="hidden" id="edit-kml-coords-hidden">
-        <button type="submit" class="btn-save-farm" style="background:#238636;">Atualizar Dados</button>
+        <button type="submit" class="btn-save-farm">Salvar alterações</button>
       </form>
     </div>
+  </div>
+
   </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -362,46 +419,54 @@
       catch(e){ document.getElementById(`${context}-geo-status`).textContent=e.message; alert(e.message); }
     }
 
-    // Listagem com botões Editar e Excluir
+    // Listagem: uma linha densa por propriedade, com a localização verificada
+    // ou não verificada em destaque (a cor tem significado, não é decoração).
     async function renderFarms() {
       const list = document.getElementById('farms-list');
-      list.innerHTML = '<p style="color:#8b949e;">Carregando propriedades...</p>';
-      
+      list.innerHTML = '<div class="state state-loading"><span class="spinner"></span><span>Carregando as propriedades da sua conta…</span></div>';
+
       try {
         const farms = await FarmService.getFarms();
         allFarmsCache = farms || [];
         list.innerHTML = '';
 
         if (!farms || farms.length === 0) {
-          list.innerHTML = '<p style="color:#8b949e;">Nenhuma fazenda cadastrada ainda.</p>';
+          list.innerHTML = '<div class="state state-empty">Nenhuma propriedade cadastrada nesta conta. Use o formulário ao lado para importar o polígono de um talhão (.kml ou .geojson) e começar o monitoramento.</div>';
           return;
         }
 
         farms.forEach(f => {
-          const talhao = (f.talhoes && f.talhoes.length > 0) ? f.talhoes[0] : { name: 'Talhão Principal', crop: 'Grãos' };
-          const lat = (f.latitude !== undefined && f.latitude !== null) ? Number(f.latitude).toFixed(4) : '-22.7182';
-          const lon = (f.longitude !== undefined && f.longitude !== null) ? Number(f.longitude).toFixed(4) : '-55.5421';
+          const talhao = (f.talhoes && f.talhoes.length > 0) ? f.talhoes[0] : { name: 'Talhão principal', crop: 'não informada' };
+          const unverified = (f.location_source === 'legacy' || !f.location_status || f.location_status === 'unverified');
+          const hasCoords = Number.isFinite(Number(f.latitude)) && Number.isFinite(Number(f.longitude));
+          const coords = hasCoords
+            ? `${Number(f.latitude).toFixed(4)}, ${Number(f.longitude).toFixed(4)}`
+            : 'coordenada não informada';
+          const area = Number(f.total_area).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
           list.innerHTML += `
-            <div class="farm-item">
+            <div class="farm-item ${unverified ? 'unverified' : 'verified'}">
               <div class="farm-info">
                 <h4>${f.name}</h4>
-                ${(f.location_source === 'legacy' || !f.location_status || f.location_status === 'unverified') ? '<p style="color:#d29922">⚠ Localização não verificada</p>' : `<p>📍 ${f.city}</p>`}
-                <p><strong>${Number(f.total_area).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})} ha</strong></p>
-                ${f.location_status === 'legacy_divergence_corrected' ? '<p style="color:#d29922">⚠ Divergência legada corrigida pela geometria</p>' : ''}
-                <p style="margin-top:4px; color:#58a6ff;">${talhao.name} (${talhao.crop})</p>
+                <p class="farm-figures">${area} ha · ${talhao.name}</p>
+                <p class="farm-talhao">Cultura: ${talhao.crop} · ${coords}</p>
+                ${unverified
+                  ? '<p style="margin-top:4px;"><span class="badge badge-warn">Localização não verificada</span></p>'
+                  : `<p style="margin-top:4px;">${f.city}</p>`}
+                ${f.location_status === 'legacy_divergence_corrected'
+                  ? '<p style="margin-top:4px;"><span class="badge badge-warn">Divergência legada corrigida pela geometria</span></p>' : ''}
               </div>
               <div class="action-btns">
-                ${(f.location_source === 'legacy' || !f.location_status || f.location_status === 'unverified') ? `<button class="btn-edit" onclick="openEditModal(${f.id})">📍 Verificar localização</button>` : ''}
-                <button class="btn-edit" onclick="openEditModal(${f.id})">✏️ Editar</button>
-                <button class="btn-delete" onclick="handleDeleteFarm(${f.id}, '${f.name}')">🗑️ Excluir</button>
-                <a href="index.html?farm_id=${f.id}" class="btn-enter-3d">Simulador 3D ↗</a>
+                ${unverified ? `<button class="btn-edit" type="button" onclick="openEditModal(${f.id})">Verificar localização</button>` : ''}
+                <button class="btn-edit" type="button" onclick="openEditModal(${f.id})">Editar</button>
+                <button class="btn-delete" type="button" onclick="handleDeleteFarm(${f.id}, '${f.name}')">Excluir</button>
+                <a href="index.html?farm_id=${f.id}" class="btn-enter-3d">Abrir monitoramento →</a>
               </div>
             </div>
           `;
         });
       } catch (err) {
-        list.innerHTML = `<p style="color:#ff7b72;">Erro ao carregar fazendas: ${err.message}</p>`;
+        list.innerHTML = `<div class="state state-error">Não foi possível carregar suas propriedades: ${err.message}</div>`;
       }
     }
 

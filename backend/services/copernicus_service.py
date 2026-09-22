@@ -65,7 +65,11 @@ CALENDAR_FALLBACK_SOURCE = "config_fallback"
 #: Bandas usadas no Process API (nomes oficiais do Sentinel-2 L2A no CDSE).
 #: B05 e B11 são de 20 m — o Process API entrega na grade pedida (10 m).
 BANDS = ["B02", "B03", "B04", "B05", "B08", "B11"]
-SUPPORTED_LAYERS = ("rgb", "ndvi", "evi", "ndre", "ndmi")
+# Camadas visuais legadas + índices que podem ser calculados para a análise
+# temporal. A camada de Saúde & Evolução usa apenas rasters numéricos reais;
+# não usa PNGs normalizados para calcular diferenças.
+SUPPORTED_LAYERS = ("rgb", "ndvi", "evi", "ndre", "ndmi", "savi", "gndvi", "ndwi")
+HEALTH_INDICES = ("ndvi", "ndre", "savi", "evi", "ndwi", "gndvi", "ndmi")
 
 #: Classes SCL tratadas como INVÁLIDAS para agricultura (nunca calcular índice
 #: sobre elas): nodata(0), saturado/defeito(1), pixels escuros/sombra(2),
@@ -388,12 +392,54 @@ def parse_stac_item(feature: dict) -> SceneInfo:
     )
 
 
+#: Teto de itens por página aceito pelo STAC do CDSE. Pedir mais do que isso
+#: faz o servidor truncar silenciosamente para o próprio limite dele.
+STAC_MAX_PAGE_LIMIT = 100
+#: Teto de páginas percorridas por consulta (proteção contra resposta enorme).
+STAC_MAX_PAGES = 8
+#: Teto absoluto de itens acumulados por consulta (proteção de memória/tempo).
+STAC_MAX_ITEMS = 400
+#: Ordenação temporal determinística pedida ao servidor (STAC API — Sort).
+STAC_SORTBY_DESC = [{"field": "properties.datetime", "direction": "desc"}]
+
+
+def _scene_sort_key(scene: SceneInfo) -> tuple[str, str]:
+    """Chave determinística: aquisição mais recente primeiro, desempate por id."""
+    return (scene.datetime or "", scene.item_id or "")
+
+
+def _stac_next_request(links, current_url: str, current_body: dict):
+    """Resolve o link `rel=next` de uma resposta STAC.
+
+    A paginação do STAC API por POST devolve `href`, `method`, `body` e
+    `merge`. Devolve `(method, url, body)` ou `None` quando não há próxima
+    página. Links malformados são ignorados (nunca quebram a consulta).
+    """
+    for link in links or []:
+        if not isinstance(link, dict) or str(link.get("rel") or "").lower() != "next":
+            continue
+        href = link.get("href") or current_url
+        method = str(link.get("method") or "POST").upper()
+        if method == "GET":
+            return "GET", href, None
+        body = link.get("body")
+        if isinstance(body, dict):
+            merged = {**current_body, **body} if link.get("merge") else dict(body)
+        else:
+            merged = dict(current_body)
+        return "POST", href, merged
+    return None
+
+
 def stac_search(
     geometry: dict | None,
     bbox: list[float],
     start: date,
     end: date,
     limit: int = 10,
+    *,
+    max_items: int | None = None,
+    sortby: bool = True,
 ) -> list[SceneInfo]:
     """
     POST https://stac.dataspace.copernicus.eu/v1/search (STAC 1.1.0).
@@ -401,11 +447,25 @@ def stac_search(
     `bbox` deve estar na ordem geográfica [minLon, minLat, maxLon, maxLat]
     (ver `aoi_bounds`). `geometry`, quando presente, é GeoJSON [lon, lat] —
     o CDSE prioriza `intersects` (interseção real do polígono).
+
+    Ordenação e paginação (PR #8):
+
+    - a consulta pede `sortby` por `properties.datetime` DESC, para que a
+      primeira página seja determinística (as aquisições mais recentes da
+      janela) em vez da ordem arbitrária do servidor;
+    - se o servidor recusar `sortby` (HTTP 400), a consulta é repetida uma
+      única vez sem o campo e a ordenação passa a ser feita localmente;
+    - `max_items` ativa a paginação por `rel=next`, limitada por
+      `STAC_MAX_PAGES` e `STAC_MAX_ITEMS`. Sem `max_items` o comportamento
+      é o histórico: uma página de `limit` itens;
+    - o resultado é SEMPRE reordenado localmente (mais recente primeiro),
+      com deduplicação por `id`, para nunca depender da ordem do provedor.
     """
     url = settings.cdse_stac_url.rstrip("/") + "/search"
+    page_limit = max(1, min(int(limit), STAC_MAX_PAGE_LIMIT))
     body: dict = {
         "collections": [COLLECTION],          # sentinel-2-l2a
-        "limit": limit,
+        "limit": page_limit,
         # Intervalo RFC3339 aceito pelo STAC: inicio/fim com offset UTC.
         "datetime": f"{start.isoformat()}T00:00:00Z/{end.isoformat()}T23:59:59Z",
     }
@@ -413,20 +473,65 @@ def stac_search(
         body["intersects"] = geometry            # prioriza interseção REAL do polígono
     else:
         body["bbox"] = list(bbox)                # [minLon, minLat, maxLon, maxLat]
+    if sortby:
+        body["sortby"] = [dict(rule) for rule in STAC_SORTBY_DESC]
 
     headers = {"Content-Type": "application/json"}
     if is_configured():
         headers["Authorization"] = f"Bearer {_get_token()}"
-    resp = _request("POST", url, json_body=body, headers=headers, stage="STAC_SEARCH")
-    try:
-        data = resp.json()
-    except Exception:
-        raise CopernicusError(
-            "CDSE STAC: JSON inválido na resposta",
-            endpoint=url, content_type="application/json", stage="STAC_SEARCH",
+
+    budget = STAC_MAX_ITEMS if max_items is None else max(1, min(int(max_items), STAC_MAX_ITEMS))
+    max_pages = 1 if max_items is None else STAC_MAX_PAGES
+    scenes: dict[str, SceneInfo] = {}
+    method, next_url, next_body = "POST", url, body
+    truncated = False
+
+    for page in range(max_pages):
+        if method == "GET":
+            resp = _request("GET", next_url, headers=headers, stage="STAC_SEARCH")
+        else:
+            try:
+                resp = _request("POST", next_url, json_body=next_body, headers=headers, stage="STAC_SEARCH")
+            except CopernicusError as exc:
+                # Servidor que não implementa `sortby` responde 400: refaz a
+                # consulta sem ordenação e ordena localmente.
+                if page == 0 and exc.status == 400 and "sortby" in (next_body or {}):
+                    logger.warning("CDSE STAC: sortby recusado (HTTP 400) — refazendo sem ordenação do servidor")
+                    next_body = {k: v for k, v in next_body.items() if k != "sortby"}
+                    resp = _request("POST", next_url, json_body=next_body, headers=headers, stage="STAC_SEARCH")
+                else:
+                    raise
+        try:
+            data = resp.json()
+        except Exception:
+            raise CopernicusError(
+                "CDSE STAC: JSON inválido na resposta",
+                endpoint=next_url, content_type="application/json", stage="STAC_SEARCH",
+            )
+        features = data.get("features") or []
+        for feature in features:
+            scene = parse_stac_item(feature)
+            scenes.setdefault(scene.item_id or f"_anon_{len(scenes)}", scene)
+        if len(scenes) >= budget:
+            truncated = len(scenes) > budget or bool(_stac_next_request(data.get("links"), next_url, next_body or {}))
+            break
+        if not features:
+            break
+        following = _stac_next_request(data.get("links"), next_url, next_body or {})
+        if not following:
+            break
+        if page == max_pages - 1:
+            truncated = True
+            break
+        method, next_url, next_body = following
+
+    ordered = sorted(scenes.values(), key=_scene_sort_key, reverse=True)
+    if truncated:
+        logger.warning(
+            "CDSE STAC: janela %s..%s truncada em %d cenas (teto de páginas/itens)",
+            start.isoformat(), end.isoformat(), len(ordered),
         )
-    features = data.get("features") or []
-    return [parse_stac_item(f) for f in features]
+    return ordered[:budget]
 
 
 def fetch_real_calendar(
@@ -464,9 +569,19 @@ def fetch_real_calendar(
     try:
         bounds = aoi_bounds(lat, lon, area_ha, kml_coordinates)
         geometry = kml_to_geojson_polygon(kml_coordinates)
-        scenes = stac_search(geometry, bounds, start, end, limit=max(limit, 20))
+        # A janela pode ser bem maior que uma página do STAC (ex.: 730 dias
+        # × revisita de ~5 dias = centenas de passagens). Pedimos ordenação
+        # temporal ao servidor E paginamos: as `limit` cenas devolvidas são
+        # as mais recentes REAIS da janela, não as primeiras que o servidor
+        # decidiu enviar.
+        page_limit = max(limit, 20)
+        budget = min(STAC_MAX_ITEMS, max(page_limit * 4, 120))
+        scenes = stac_search(
+            geometry, bounds, start, end,
+            limit=page_limit, max_items=budget, sortby=True,
+        )
         usable = [s for s in scenes if s.cloud_cover is not None and s.cloud_cover <= settings.cdse_max_cloud_cover]
-        usable.sort(key=lambda s: (s.datetime or "", s.item_id or ""), reverse=True)
+        usable.sort(key=_scene_sort_key, reverse=True)
         calendar = [
             {
                 "date": s.acquisition_date,
@@ -490,14 +605,22 @@ def fetch_real_calendar(
                 CALENDAR_FALLBACK_SOURCE, "no_scene", len(scenes),
                 start.isoformat(), end.isoformat(),
             )
-        return calendar, ("ok" if calendar else "no_scene"), None
+        coverage = {
+            "window": {"start": start.isoformat(), "end": end.isoformat()},
+            "stac_scenes": len(scenes),
+            "usable_scenes": len(usable),
+            "returned": len(calendar),
+            "max_cloud_cover": settings.cdse_max_cloud_cover,
+            "sorted_by": "properties.datetime desc",
+            "truncated_by_limit": len(usable) > len(calendar),
+        } if calendar else None
+        return calendar, ("ok" if calendar else "no_scene"), coverage
     except (CopernicusNotConfigured, CopernicusError) as exc:
         stage = getattr(exc, "stage", None) or type(exc).__name__
         logger.warning(
             "[3D-DATES] source=%s reason=%s stage=%s",
             CALENDAR_FALLBACK_SOURCE, "error", stage,
         )
-        return [], "error", exc.to_detail() if isinstance(exc, CopernicusError) else None
         return [], "error", exc.to_detail() if isinstance(exc, CopernicusError) else None
 
 
@@ -659,6 +782,27 @@ def evi(nir, red, blue):
     return 2.5 * (nir - red) / (nir + 6.0 * red - 7.5 * blue + 1.0 + _EPS)
 
 
+def savi(nir, red, l: float = 0.5):
+    """SAVI com L=0,5, valor documentado para cobertura intermediária."""
+    return ((nir - red) / (nir + red + l + _EPS)) * (1.0 + l)
+
+
+def gndvi(nir, green):
+    """GNDVI: contraste NIR–verde (B08/B03)."""
+    return (nir - green) / (nir + green + _EPS)
+
+
+def ndwi(nir, swir1):
+    """NDWI de Gao (1996), NIR–SWIR1 (B08/B11).
+
+    Esta nomenclatura não representa o NDWI de água superficial
+    Green–NIR (McFeeters). No Sentinel-2, a variante escolhida é equivalente
+    ao índice de conteúdo de água da vegetação e é mantida explícita na
+    proveniência da análise.
+    """
+    return (nir - swir1) / (nir + swir1 + _EPS)
+
+
 def index_array(layer: str, bands: np.ndarray) -> np.ndarray:
     """bands: (8, H, W) na ordem B02,B03,B04,B05,B08,B11,SCL,dataMask."""
     b02, b03, b04, b05, b08, b11 = bands[0], bands[1], bands[2], bands[3], bands[4], bands[5]
@@ -666,10 +810,17 @@ def index_array(layer: str, bands: np.ndarray) -> np.ndarray:
         return ndvi(b08, b04)
     if layer == "ndre":
         return ndre(b08, b05)
-    if layer == "ndmi":
-        return ndmi(b08, b11)
+    if layer == "savi":
+        return savi(b08, b04)
     if layer == "evi":
         return evi(b08, b04, b02)
+    if layer == "ndwi":
+        return ndwi(b08, b11)
+    if layer == "gndvi":
+        return gndvi(b08, b03)
+    if layer == "ndmi":
+        # Compatibilidade: NDMI histórico do projeto usa NIR–SWIR1.
+        return ndmi(b08, b11)
     raise ValueError(f"Camada sem índice: {layer}")
 
 
@@ -726,6 +877,9 @@ ZONE_THRESHOLDS = {
     "ndvi": (0.35, 0.55, 0.75),
     "evi": (0.30, 0.60, 0.95),
     "ndre": (0.35, 0.65, 0.95),
+    "savi": (0.25, 0.45, 0.70),
+    "ndwi": (0.20, 0.45, 0.70),
+    "gndvi": (0.30, 0.55, 0.75),
     "ndmi": (0.35, 0.65, 0.95),
 }
 
@@ -791,9 +945,12 @@ def render_layer_png(
 
         stats = {
             "mean_index": round(float(np.mean(values)), 4),
+            "median_index": round(float(np.median(values)), 4),
             "min": round(float(np.min(values)), 4),
             "max": round(float(np.max(values)), 4),
             "p2": round(lo, 4),
+            "p25": round(float(np.percentile(values, 25)), 4),
+            "p75": round(float(np.percentile(values, 75)), 4),
             "p98": round(hi, 4),
             "zones": _zone_stats(values, layer),
         }
@@ -831,6 +988,88 @@ def read_band_raster(content: bytes, size: int) -> np.ndarray:
         )
         arr = resized
     return arr.astype("float32")
+
+
+def _numeric_index_stats(values: np.ndarray) -> dict:
+    """Resumo numérico de uma cena, sem transformar o índice em cor."""
+    if values.size == 0:
+        raise CopernicusError("CDSE: nenhum pixel válido no recorte do talhão")
+    return {
+        "mean": round(float(np.mean(values)), 4),
+        "median": round(float(np.median(values)), 4),
+        "min": round(float(np.min(values)), 4),
+        "max": round(float(np.max(values)), 4),
+        "p25": round(float(np.percentile(values, 25)), 4),
+        "p75": round(float(np.percentile(values, 75)), 4),
+    }
+
+
+def process_farm_scene(
+    farm_id: int,
+    talhao_id: int,
+    lat: float,
+    lon: float,
+    area_ha: float,
+    kml_coordinates: str | None,
+    scene: SceneInfo,
+    index: str = "ndvi",
+    size: int | None = None,
+) -> dict:
+    """Processa uma aquisição real e preserva o raster numérico para análise.
+
+    Esta função é deliberadamente separada de ``process_farm_layer``. A camada
+    3D existente continua recebendo PNGs normalizados por cena; Saúde &
+    Evolução precisa dos valores de índice e das máscaras de cada pixel para
+    calcular delta A/B. Nenhuma textura colorida é usada como dado analítico.
+    """
+    if index not in HEALTH_INDICES:
+        raise ValueError(f"Índice de Saúde & Evolução não suportado: {index}")
+    size = int(size or settings.cdse_raster_size)
+    digest = geometry_digest(lat, lon, area_ha, kml_coordinates)
+    cache_key = f"health-raster:{farm_id}:{talhao_id}:{digest}:{scene.acquisition_date}:{index}:{size}"
+    cached = _mem_get(cache_key)
+    if cached is not None:
+        return cached
+
+    bounds = aoi_bounds(lat, lon, area_ha, kml_coordinates)
+    process_key = f"health-process:{farm_id}:{talhao_id}:{digest}:{scene.acquisition_date}:{scene.cloud_cover}:{size}"
+    content = _mem_get(process_key)
+    if content is None:
+        content = _process_request(
+            bounds=bounds,
+            evalscript=build_bands_evalscript(),
+            size=size,
+            time_range=(scene.acquisition_date, scene.acquisition_date),
+            max_cloud=scene.cloud_cover,
+            mosaicking_order="leastCC",
+        )
+        _mem_set(process_key, content)
+
+    bands = read_band_raster(content, size)
+    polygon = polygon_mask(size, bounds, kml_coordinates)
+    base_valid = build_valid_mask(bands) & polygon
+    values = index_array(index, bands).astype("float32")
+    valid = base_valid & np.isfinite(values)
+    selected = values[valid]
+    stats = _numeric_index_stats(selected)
+    polygon_pixels = max(int(np.sum(polygon)), 1)
+    stats.update({
+        "valid_pixels": int(selected.size),
+        "polygon_pixels": polygon_pixels,
+        "valid_pixel_pct": round(100.0 * selected.size / polygon_pixels, 1),
+    })
+    result = {
+        "index": index,
+        "date": scene.acquisition_date,
+        "values": values,
+        "valid_mask": valid,
+        "polygon_mask": polygon,
+        "stats": stats,
+        "scene": scene,
+        "cache_key": cache_key,
+    }
+    _mem_set(cache_key, result)
+    return result
 
 
 # ---------------------------------------------------------------------------

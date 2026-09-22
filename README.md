@@ -22,10 +22,12 @@ Plataforma de monitoramento agronômico que combina **sensoriamento espectral** 
 
 ```
 .
-├── index.html              # Dashboard + Mapa 2D + Simulador 3D (SPA multi-tela)
+├── index.html              # Painel + Mapa 2D + Terreno 3D (SPA multi-tela)
 ├── fazendas.html           # CRUD de propriedades + import de geometria
 ├── auth.html               # Login / cadastro
-├── app.js                  # Cliente da API (Auth, Farms, Weather, Satellite, Simulation)
+├── dashboard.html          # Vitrine estática legada (dados demonstrativos rotulados)
+├── orion.css               # Design system interno (tokens, componentes, estados)
+├── app.js                  # Cliente da API (Auth, Farms, Weather, Climate, CropHealth, Satellite, Simulation)
 ├── backend/
 │   ├── main.py             # Rotas FastAPI (lifespan, CORS via settings)
 │   ├── config.py           # Configuração centralizada (pydantic-settings + .env)
@@ -40,7 +42,11 @@ Plataforma de monitoramento agronômico que combina **sensoriamento espectral** 
 │       ├── simulation_service.py   # Modelo agronômico what-if por cultura
 │       ├── weather_service.py      # NASA POWER + cache TTL
 │       ├── satellite_service.py    # Geração das texturas espectrais (KML → PNG)
-│       ├── analytics_service.py    # Série temporal, zoneamento, estimativa de safra
+│       ├── analytics_service.py    # Série temporal legada, zoneamento, estimativa de safra
+│       ├── climate_service.py      # Clima por período + baseline + interpretações (PR #7)
+│       ├── copernicus_service.py   # STAC + Process API do CDSE (ordenação e paginação)
+│       ├── crop_health_service.py  # Saúde & Evolução: tendência, qualidade, zonas A/B (PR #8)
+│       ├── geolocation_service.py  # Localização canônica e verificação (PR #6)
 │       ├── dem_service.py          # Pipeline topográfico Copernicus DEM GL-30 (heightmap)
 │       └── pdf_service.py          # Laudo técnico em PDF (ReportLab)
 ├── sentinel-21KXQ-<data>/  # Texturas espectrais por passagem de satélite
@@ -222,6 +228,79 @@ O terreno 3D usa **relevo real** em vez de um plano com displacement genérico, 
 
 **Como obter a tile (modo offline):** baixe `Copernicus_Dem_GLO30_<sN>_w<NNN>` (OpenTopography ou portal Copernicus) e coloque em `backend/data/dem/`; a API também tenta baixar automaticamente (best-effort, `DEM_DOWNLOAD_ENABLED`).
 
+## 🎨 Design system interno (`orion.css`)
+
+O rework visual do PR #8 consolidou cor, tipografia, espaçamento, superfície e
+estado em um único arquivo (`orion.css`), carregado pelas quatro páginas. As
+páginas só declaram o que é próprio delas (layout do painel, viewport 3D,
+formulários). O contrato é verificado por `tests/test_frontend_design_system.py`.
+
+### Cor com significado
+
+Nenhuma cor é decorativa. A paleta é fechada — um hex fora dela reprova o teste.
+
+| Papel | Token | Valor | Uso |
+|---|---|---|---|
+| Vegetação / aumento | `--veg` `--veg-text` | `#4e9a68` `#8ecfa0` | aumento do índice, cena de qualidade alta, confirmação |
+| Atenção / dado parcial | `--warn` `--warn-text` | `#b8862c` `#dfae55` | qualidade média, cobertura parcial, dado demonstrativo |
+| Queda / risco / erro | `--risk` `--risk-text` | `#b8473c` `#d98a7f` | redução do índice, qualidade limitada, falha da fonte |
+| Dado / água / informação | `--data` `--data-text` | `#2f6f93` `#93b9cf` | séries, clima, seleção, carregando |
+| Neutro / sem dado | `--neutral` | `#58655f` | ausência de observação — **nunca** usado como cor de texto |
+
+Superfícies: `--surface-0` (`#0b0f0e`, página) → `--surface-1` (`#121716`,
+painel) → `--surface-2` (`#19201e`, controle) → `--surface-3` (`#222b28`,
+hover/ativo). Linhas: `--line` (`#2a3431`) e `--line-strong` (`#3a4744`).
+Texto: `--text-1` (valor), `--text-2` (rótulo), `--text-3` (meta/proveniência).
+
+Todas as combinações texto × superfície usadas atingem **contraste WCAG AA
+(≥ 4,5:1)**, verificado por teste automatizado.
+
+### Forma
+
+- raio máximo de 8px (instrumento, não cartão de marketing);
+- hairlines de 1px; barra de significado de 2px à esquerda dos blocos;
+- **sem** `backdrop-filter`, `box-shadow` decorativa, gradiente ou `text-shadow`
+  — a única sombra do sistema é o anel de foco (`--focus`), exigido para
+  acessibilidade;
+- escala de espaçamento múltipla de 4 (`--sp-1` … `--sp-6`);
+- números de indicador, tabela e série temporal em **algarismos tabulares**.
+
+### Componentes
+
+`.panel` `.inset` · `.metric` (rótulo → valor → qualificador) · `.badge`
+(`ok`/`warn`/`bad`/`data`/`none`) · `table.data` · `.btn` · `.field-label` ·
+`.provenance` · `.notice-demo` · `.state` nos quatro estados:
+
+| Estado | Classe | Aparência |
+|---|---|---|
+| Carregando | `.state-loading` | borda azul + spinner |
+| Vazio / sem dado | `.state-empty` | borda cinza **tracejada** |
+| Erro | `.state-error` | fundo e borda terracota |
+| Concluído | `.state-ok` | borda verde |
+
+"Sem dado" é visualmente distinto de "zero", de "estável" e de "erro" — esse é
+o motivo de existirem quatro estados e não um só.
+
+### Acessibilidade e responsividade
+
+- `:focus-visible` com anel de 2px em todas as páginas; `.skip-link` para pular
+  a navegação; `.visually-hidden` para rótulos de leitor de tela;
+- `prefers-reduced-motion` reduz animação;
+- `<meta name="viewport">` em todas as páginas (faltava em `index.html`);
+- breakpoints: 1500px (painel What-If encolhe), 1100px (coluna única),
+  900px (tablet: barra superior em duas linhas, abas com scroll),
+  560px (celular: grades em coluna única), e `max-height: 800px` para
+  1366×768;
+- tabelas dentro de `.table-wrap` com scroll horizontal; grids usam
+  `minmax(0, 1fr)` para que colunas possam encolher sem estourar a página.
+
+### Microcopy
+
+Português técnico, sem emoji decorativo e sem linguagem promocional. Rótulos
+dizem o que o número é e a que ele se refere ("Variação em ~30 dias",
+"Cobertura da série", "Cena mais recente com dado"), e a proveniência acompanha
+o dado em vez de ser escondida.
+
 ## 🎨 Interface do Simulador 3D — 3 zonas (PR #5h)
 
 Polimento de UX/UI **sem tocar na geometria/pipeline 3D** (volume, DEM, câmera,
@@ -232,21 +311,23 @@ timeline cronológica, cache, What-If e backend ficam exatamente como no #5g):
   (`clamp(120px,21vh,152px)`) — a timeline **nunca flutua/sobrepõe o terreno**.
 - **Linha 1**: Período `[30d][60d][90d][6m][1a]` + Personalizado + "⇥ Mais
   recente" + setas ‹ › + **um botão por cena STAC** (scroll horizontal; visual
-  antiga → recente). **Linha 2**: `▶ Play` · `1,6s` · camada RGB/NDVI/EVI/NDRE/NDMI ·
-  Relevo `1×/2×/3×/5×` · `⟲ Resetar`.
+  antiga → recente). **Linha 2**: `▶ Reproduzir` · `1,6s` · camada
+  RGB/NDVI/EVI/NDRE/NDMI · Relevo `1×/2×/3×/5×` · `Reenquadrar`.
 - **Data atual**: um único chip azul (ex.: `30 AGO / 2026`) por cena aplicada +
   ponto discreto de estado — sem data duplicada nem badges simultâneos.
 - **What-If recolhível**: painel compacto (Adubação N · Irrigação · Pragas +
-  Resultado NDVI/Produtividade/Impacto) que vira a aba `[⚡ What-If]` ao
+  Resultado NDVI/Produtividade/Impacto) que vira a aba `[What-If]` ao
   recolher; os valores dos sliders são **preservados** e restaurados ao reabrir.
-- **Proveniência/DEM compacta**: card translúcido no canto inferior esquerdo
-  (`max-width: 320px`) com `Sentinel-2 L2A • 30/08/2026 • Nuvens 9,8% • DEM
+- **Proveniência/DEM compacta**: card no canto inferior esquerdo
+  (`max-width: 330px`) com `Sentinel-2 L2A • 30/08/2026 • Nuvens 9,8% • DEM
   592–615 m`; `[Detalhes]` abre drawer técnico (product ID, provider, pixels
   válidos, DEM source, elevação real, relevo, escala u/m e exagero).
 - **Cores neutras** (o NDVI já traz cor; azul/verde reservados a estado),
   hierarquia tipográfica título → secundário → técnico, labels discretos
-  "OBSERVAÇÃO REAL" / "PROJEÇÃO WHAT-IF" e dica mínima "Arraste para orbitar ·
-  Scroll para zoom".
+  "Observação real" / "Projeção What-If" e dica mínima "Arraste para orbitar ·
+  roda do mouse para aproximar". Após o rework visual do PR #8 o viewport não
+  usa mais `backdrop-filter` nem sombra decorativa: superfícies chapadas e
+  hairline de 1–2px.
 - **Loading local** no chip/canto ("Carregando 27/08…") preservando a cena
   anterior até o commit; **erro local** "Falha ao carregar <data> · Tentar
   novamente" — nunca tela inteira.
@@ -584,6 +665,297 @@ curl -s "http://localhost:8000/api/climate/farm/1?start=2026-07-01&end=2026-07-3
   -H "Authorization: Bearer $TOKEN"
 ```
 
+## 🌱 Saúde & Evolução da Lavoura (PR #8)
+
+Auditoria completa em `AUDITORIA_SAUDE_LAVOURA_PR8.md` (inclui a revisão
+pós-playtest que reescreveu tendência, qualidade agregada e consulta STAC).
+Esta camada acompanha mudanças espectrais entre aquisições Sentinel-2 reais e é
+independente do analytics legado de compatibilidade.
+
+### Contrato e fonte
+
+- **Fonte exclusiva da série:** catálogo STAC real `sentinel-2-l2a` do
+  Copernicus Data Space Ecosystem e Process API para o recorte do talhão.
+- **Sem preenchimento demonstrativo:** quando o CDSE está sem credenciais, sem
+  cenas, sem pixels válidos ou indisponível, a resposta declara a CAUSA em vez
+  de uniformizar tudo como "sem dados":
+
+  | `source_data.calendar_status` | `status` | mensagem |
+  |---|---|---|
+  | `not_configured` | `unavailable` | fonte Sentinel-2 não configurada neste ambiente |
+  | `error` | `unavailable` | falha ao consultar o catálogo |
+  | `no_scene` | `insufficient_data` | nenhuma aquisição utilizável no período |
+
+  Em nenhum desses casos são usados `settings.sentinel_dates`, PNG procedural
+  ou valores fixos.
+- Cada resposta separa `source_data`, `metrics` e `interpretation`.
+- Cada aquisição informa data, produto, nuvens, cobertura válida após
+  SCL/dataMask, qualidade e bandas. As classes SCL 0, 1, 2, 3, 8, 9, 10 e 11
+  são excluídas.
+
+### Índices implementados
+
+| Índice | Fórmula | Bandas | Observação |
+|---|---|---|---|
+| NDVI | `(B08-B04)/(B08+B04)` | B08 NIR + B04 vermelho | vigor relativo |
+| NDRE | `(B08-B05)/(B08+B05)` | B08 + B05 red edge | contraste espectral; não prova nitrogênio |
+| SAVI | `((B08-B04)/(B08+B04+L))×(1+L)`, `L=0,5` | B08 + B04 | reduz influência do solo; L é documentado |
+| EVI | `2,5×(B08-B04)/(B08+6B04-7,5B02+1)` | B08 + B04 + B02 | vigor relativo em vegetação densa |
+| NDWI (Gao) | `(B08-B11)/(B08+B11)` | B08 + B11 | conteúdo hídrico da vegetação; não é NDWI de água superficial |
+| GNDVI | `(B08-B03)/(B08+B03)` | B08 + B03 | contraste NIR–verde |
+| NDMI | `(B08-B11)/(B08+B11)` | B08 + B11 | compatibilidade com o índice legado |
+
+B05 e B11 são bandas nativas de 20 m e são reamostradas pelo Process API na
+grade do recorte. NDWI (Gao) e NDMI têm a mesma combinação de bandas neste
+contrato, mas mantêm nomenclaturas documentadas. Índice espectral não é
+diagnóstico de doença, praga, deficiência, compactação, irrigação ou
+produtividade.
+
+### Tendência temporal — algoritmo e janela
+
+**Problema corrigido.** O classificador original exigia monotonicidade perfeita
+(`all(s == 1)` / `all(s == -1)` sobre as diferenças consecutivas). Com séries
+Sentinel reais, uma única oscilação intermediária anulava a tendência: no
+playtest, NDVI atual ≈ 0,59, delta ponta-a-ponta ≈ −0,32 e 23 cenas aceitas
+resultavam em **"Estável"**. Além disso, a série usada era a janela inteira
+pedida pelo frontend (730 dias) enquanto a UI chamava o indicador de
+"Tendência recente".
+
+**Algoritmo atual** (`classify_trend`, em `backend/services/crop_health_service.py`):
+
+1. entram apenas cenas com média válida e qualidade **alta ou média**;
+2. a **janela operacional** é recortada por `select_trend_window`: os últimos
+   `TREND_WINDOW_DAYS = 120` dias contados a partir da ÚLTIMA cena aceita;
+3. se essa janela não reúne o mínimo de cenas ou de intervalo, ela é estendida
+   **uma única vez** até `TREND_WINDOW_MAX_DAYS = 240` dias e o modo
+   (`janela_recente` / `janela_estendida`) é declarado na resposta;
+4. exige `MIN_TREND_SCENES = 3` cenas e `MIN_TREND_INTERVAL_DAYS = 14` dias de
+   intervalo **observado**;
+5. a inclinação é estimada por **Theil–Sen** (mediana das inclinações par a
+   par) sobre **dias corridos reais** — nunca sobre índice ordinal;
+6. a direção é confirmada pelo **tau de Kendall** (Mann–Kendall);
+7. a decisão combina magnitude, direção e ruído (tabela abaixo).
+
+| Parâmetro | Valor | Justificativa |
+|---|---|---|
+| `TREND_WINDOW_DAYS` | 120 dias | cobre aproximadamente um ciclo de soja/milho safrinha (110–130 dias); com revisita de ~5 dias do par Sentinel-2 comporta até ~24 passagens potenciais |
+| `TREND_WINDOW_MAX_DAYS` | 240 dias | extensão máxima quando há nuvem persistente; acima disso a análise misturaria dois ciclos agrícolas |
+| `MIN_TREND_SCENES` | 3 | mínimo para existir uma reta e duas transições |
+| `MIN_TREND_INTERVAL_DAYS` | 14 dias | evita "tendência" entre duas passagens quase simultâneas |
+| `delta_floor` (por índice) | 0,05 | magnitude mínima relevante na unidade do índice, preservada da versão anterior |
+| `TREND_TAU_MIN` | 0,30 | tau = S / C(n,2). Com n=3, tau=1/3 equivale a 2 de 3 pares concordantes — ou seja, **uma oscilação isolada ainda preserva a tendência**. 0,30 fica logo abaixo de 1/3 para não descartar o caso n=3 por arredondamento |
+| razão sinal/ruído | ≥ 1 | a mudança estimada no período precisa ser pelo menos tão grande quanto a dispersão residual robusta (MAD × 1,4826) em torno da reta |
+
+**Classificação resultante:**
+
+| Código | Rótulo | Condição |
+|---|---|---|
+| `melhoria` | Melhoria | `|mudança estimada| ≥ delta_floor` **e** `tau ≥ 0,30` **e** sinal/ruído ≥ 1 |
+| `queda` | Queda | idem, com `tau ≤ −0,30` |
+| `estavel` | Estável | magnitude abaixo do piso **e** dispersão residual abaixo do piso (série praticamente horizontal) |
+| `sem_tendencia` | Sem tendência definida | há variação, mas sem direção predominante ou com ruído maior que o sinal |
+| `dados_insuficientes` | Dados insuficientes | menos de 3 cenas aceitas na janela ou intervalo observado < 14 dias |
+
+O p-valor de Mann–Kendall (aproximação normal com correção de empates) é
+devolvido em `trend_detail.mann_kendall` como **informação**, não como critério:
+com n=3 o teste não tem poder estatístico e reprovaria toda tendência curta.
+
+Nenhuma dependência nova foi adicionada: Theil–Sen e Mann–Kendall são
+implementados com NumPy, que o projeto já usa.
+
+### Janelas: histórico × tendência
+
+| Conceito | Campo | Janela |
+|---|---|---|
+| Histórico exibido na timeline/gráfico | `period` (`period_days`) | o que o cliente pedir — o frontend usa 365 dias por padrão e oferece 180/365/730 |
+| Tendência operacional | `metrics.trend_detail.window` | últimos 120 dias a partir da última cena aceita (240 no modo estendido) |
+| Comparação A/B | `comparison` | duas datas escolhidas manualmente, independentes das duas anteriores |
+
+A interface mostra sempre o período analisado, a primeira e a última
+observação e a quantidade de cenas válidas.
+
+### Deltas — cada variação tem a sua referência
+
+Existem quatro conceitos distintos e a UI nunca os apresenta como o mesmo número:
+
+| Conceito | Campo | Significado | Como aparece na UI |
+|---|---|---|---|
+| Desde a cena anterior | `metrics.delta_previous_detail` | atual − cena **anterior com dado** (pula cenas que falharam) | "Desde a cena anterior" + datas + intervalo em dias |
+| ~30 dias | `metrics.delta_30d_detail` | atual − cena mais próxima de 30 dias antes, tolerância ±15 dias | "Variação em ~30 dias" + datas + intervalo real |
+| Período da tendência | `metrics.trend_detail.delta` (+ `delta_from`/`delta_to`) | última − primeira cena **aceita da janela** | "Variação no período da tendência" + datas + dias da janela |
+| Comparação A → B | `comparison.delta_mean` | cena B − cena A escolhidas manualmente | bloco próprio "Comparação A → B" |
+
+Todas são **absolutas, na unidade do índice** (`−0,32 NDVI`), nunca em `%`.
+`trend_detail.estimated_change` traz ainda a mudança estimada pela reta robusta
+(inclinação × dias observados), usada na decisão da tendência.
+
+### Qualidade: da cena × da série
+
+São dois indicadores diferentes, rotulados como tal na interface.
+
+**Qualidade da cena** (`timeline[].quality`, `scene_quality`) — inalterada:
+
+| Nível | Critério |
+|---|---|
+| Alta | cobertura válida ≥ 90% **e** nuvens ≤ 10% |
+| Média | válida ≥ 75% **e** nuvens ≤ 30% (ou nuvem desconhecida com válida ≥ 75%) |
+| Limitada | válida ≥ 50% **e** nuvens ≤ 60% |
+| Insuficiente | abaixo disso, ou sem pixels válidos |
+
+**Cobertura da série** (`quality`, escopo `serie`) — reescrita. Antes, uma única
+cena fora de alta/média rebaixava toda a análise para "Limitada", que virava
+fallback universal. Agora a classificação é proporcional:
+
+| Nível | Critério (úteis = alta + média) |
+|---|---|
+| Alta | ≥ 80% úteis **e** ≥ 50% de qualidade alta |
+| Média | ≥ 60% úteis |
+| Limitada | ≥ 34% úteis **e** pelo menos 3 cenas úteis |
+| Insuficiente | abaixo disso |
+
+A resposta inclui `distribution` (contagem por nível), `usable_ratio_pct` e
+`high_ratio_pct`, além do critério textual.
+
+**`confidence`** deixou de ser apresentado como dimensão independente. O campo
+permanece na resposta por compatibilidade, marcado com `alias_of: "quality"` e
+uma nota explicando que repete literalmente a qualidade agregada. A interface
+não o exibe. Nenhuma métrica de confiança artificial foi inventada.
+
+### Cena atual × última cena válida
+
+A última aquisição do catálogo pode não ser utilizável. A resposta separa:
+
+| Campo | Significado |
+|---|---|
+| `metrics.latest_scene` | última aquisição do período, mesmo que não tenha produzido valor |
+| `metrics.current` | última aquisição **com valor de índice calculado** |
+| `metrics.latest_valid_scene` | última aquisição **aceita pela análise de tendência** (alta/média) |
+| `metrics.current_is_valid_for_analysis` | `false` quando as duas anteriores divergem |
+| `metrics.current_scene_note` | texto explicando a divergência, exibido no painel |
+
+A qualidade ruim nunca é escondida: o card da cena atual muda de cor e a nota
+aparece junto do valor.
+
+### Zonas, persistência e anomalia
+
+- Comparação A/B calcula `Δíndice = B − A` sobre pixels válidos pareados e
+  dentro da geometria real do talhão. Zonas de aumento, estabilidade e redução
+  usam piso absoluto do índice + 2×MAD dos deltas, com limite superior 0,10.
+  Pixels sem par continuam separados como não observados.
+- Área é calculada pela proporção de pixels da máscara do polígono multiplicada
+  pela área cadastrada, em hectares e percentual; não é usado retângulo simples.
+- Persistência exige três cenas e duas transições na mesma direção acima do
+  limiar adaptativo. A resposta agora traz `window` com data inicial, data
+  final, duração em dias, número de cenas e número de transições, e o texto
+  cita esse período. O alerta é "nível de atenção elevado por persistência
+  espectral", nunca problema agronômico confirmado.
+- Anomalia usa a mediana dos pixels válidos do próprio talhão e informa o
+  afastamento absoluto; não usa um limite universal como `NDVI < 0,4`.
+- `volatility`/`stability` descrevem a dispersão **da janela da tendência**
+  (`volatility_scope`), não do histórico inteiro.
+
+### Consulta STAC — ordenação e paginação
+
+A consulta original não pedia ordenação e não paginava: com `limit=60` e
+`period_days=730`, o servidor podia devolver 60 itens arbitrários da janela e o
+calendário passaria a representar um recorte enviesado do período.
+
+`stac_search` agora:
+
+- envia `sortby: [{"field": "properties.datetime", "direction": "desc"}]`;
+- se o servidor recusar `sortby` com HTTP 400, refaz a consulta **uma vez** sem
+  o campo e ordena localmente;
+- pagina por `links[rel=next]` (POST com `body`/`merge` ou GET por `href`)
+  quando `max_items` é informado;
+- deduplica por `id` e **sempre** reordena localmente por
+  `(datetime, id)` decrescente — o resultado nunca depende da ordem do provedor;
+- respeita os tetos `STAC_MAX_PAGE_LIMIT = 100`, `STAC_MAX_PAGES = 8` e
+  `STAC_MAX_ITEMS = 400`, registrando um aviso no log quando trunca.
+
+Sem `max_items`, o comportamento histórico (uma página de `limit` itens) é
+preservado — é o que a timeline 3D usa.
+
+`fetch_real_calendar` pede paginação com orçamento de
+`min(400, max(limit × 4, 120))` itens, filtra por `eo:cloud_cover` **antes** de
+truncar e devolve, quando há resultado, um `detail` de cobertura seguro (sem
+credenciais):
+
+```json
+{
+  "window": {"start": "2024-10-01", "end": "2026-09-22"},
+  "stac_scenes": 27, "usable_scenes": 27, "returned": 5,
+  "max_cloud_cover": 20.0,
+  "sorted_by": "properties.datetime desc",
+  "truncated_by_limit": true
+}
+```
+
+### Endpoints protegidos
+
+```text
+GET /api/farms/{farm_id}/crop-health/timeline
+    ?index=ndvi&period_days=365&limit=60
+    ou ?index=ndvi&start=YYYY-MM-DD&end=YYYY-MM-DD
+    (period_days é a janela do HISTÓRICO; a tendência usa os últimos 120 dias)
+
+GET /api/farms/{farm_id}/crop-health/current?index=ndvi
+    (devolve current, latest_scene, latest_valid_scene, quality e scene_quality)
+
+GET /api/farms/{farm_id}/crop-health/compare
+    ?date_a=YYYY-MM-DD&date_b=YYYY-MM-DD&index=ndvi&include_climate=true
+
+GET /api/farms/{farm_id}/crop-health/difference.png
+    ?date_a=YYYY-MM-DD&date_b=YYYY-MM-DD&index=ndvi
+```
+
+Todas as rotas validam JWT e ownership/shared/admin pelo mesmo mecanismo das
+rotas Sentinel existentes. O mapa delta é privado e carregado no frontend por
+`fetch` autenticado + Blob URL.
+
+### Painel no frontend
+
+O painel segue cinco níveis de leitura, nesta ordem:
+
+1. **estado atual** — cena mais recente com dado, cobertura, nuvens e se ela é
+   válida para a análise;
+2. **mudança recente** — os três deltas acima, cada um com a sua referência;
+3. **tendência** — rótulo, período analisado, cenas usadas e critério;
+4. **atenção e cobertura** — persistência, anomalia interna, qualidade da cena e
+   cobertura da série;
+5. **histórico e comparação** — série temporal e comparação A/B com mapa delta.
+
+No gráfico, cada nível de qualidade tem cor própria: **alta** (verde), **média**
+(âmbar), **limitada** (terracota) e **insuficiente** (cinza, fora da tendência).
+"Limitada" e "insuficiente" não são colapsadas, porque só a segunda fica fora do
+cálculo. Ausência de dado é escrita como **"Sem dado"** — nunca como `0`,
+"Estável" ou "não aplicável".
+
+### Contexto temporal com clima
+
+A comparação pode consultar o relatório NASA POWER do PR #7 para o intervalo
+entre as cenas A/B e retorna chuva, temperatura, radiação e cobertura quando a
+fonte responde. A camada espectral continua funcionando se o clima estiver
+indisponível. A UI usa "ocorreu no mesmo intervalo"/"é contexto temporal" e
+nunca afirma que clima causou a mudança.
+
+### Cache e performance
+
+A análise usa cache TTL de respostas por fazenda/talhão/geometria/índice/janela
+e cache numérico de Process API por fazenda/talhão/geometria/data/índice/tamanho.
+PNG normalizado não é reutilizado para cálculo de delta. A análise é sob
+solicitação e não interfere no preload da timeline 3D.
+
+### Limitações conhecidas
+
+- Índice espectral descreve mudança relativa; **não determina a causa** e não
+  substitui inspeção de campo.
+- `period_days` alto (730) implica processar muitas cenas pelo Process API na
+  primeira execução; o padrão do frontend é 365 dias por esse motivo.
+- A tendência ignora cenas de qualidade limitada/insuficiente — em períodos
+  muito nublados o resultado legítimo é "dados insuficientes".
+- NDWI (Gao) e NDMI compartilham as mesmas bandas neste contrato.
+- O contexto climático é coincidência temporal, nunca causalidade.
+
 ## 🧪 Teste rápido da API (fluxo JWT)
 
 ```bash
@@ -620,7 +992,7 @@ curl -H "Authorization: Bearer $TOKEN" "http://localhost:8000/api/climate/farm/1
 
 A suíte versionada em `tests/` cobre as 4 frentes exigidas + ownership/migrações/paridade de
 schema, assets autenticados, o **pipeline 3D (PR #4 ↔ PR #5h)** e a **camada climática
-consolidada (PR #7 / PR #7-FIX.1 / PR #7-FIX.2 / PR #7-FIX.3)** — **440 testes** (439 passing + 1 skip por dataset Sentinel-2 ausente fora do git):
+consolidada (PR #7 / PR #7-FIX.1 / PR #7-FIX.2 / PR #7-FIX.3) e **Saúde & Evolução PR #8** — **554 testes** (553 passing + 1 skip por dataset Sentinel-2 ausente fora do git):
 
 | Módulo | Testes | Abrangência |
 |---|---|---|
@@ -629,9 +1001,15 @@ consolidada (PR #7 / PR #7-FIX.1 / PR #7-FIX.2 / PR #7-FIX.3)** — **440 testes
 | `test_farms_sim.py` | 28 | Contratos Pydantic (criação + resposta + What-If exatos a 9 campos), 422 parametrizados, 404, texturas dinâmicas em disco (rota autenticada), datas Sentinel-2, matemática da simulação (constantes por crop), analytics (série temporal, zoneamento, safras), laudo PDF |
 | `test_dem.py` | 17 | Nomenclatura SRTM/Copernicus, bounds (KML e por área), seleção de tile, endpoint de heightmap: recorte → normalização → PNG 256×256 servido por rota autenticada, `size`, 422, 404, indisponível com orientação |
 | `test_services.py` | 36 | Cache de clima (hit, por coordenadas, TTL, fallback em erro, fallback cacheado), regras de negócio do what-if, estimativa de safra, zoneamento espectral, paletas espectrais |
+| `test_crop_health_service.py` | 13 | **PR #8** — fórmulas NDVI/NDRE/SAVI/EVI/NDWI/GNDVI/NDMI, divisão por zero, qualidade por cobertura/nuvens, timeline STAC real, delta, zonas, hectares, anomalia interna, persistência, contrato A/B preservado (`difference_map`, zonas, `quality_a`/`quality_b`; `confidence_a`/`confidence_b` removidos), autenticação/ownership e ausência de dados CDSE com a **causa declarada** (`not_configured` ≠ `error` ≠ `no_scene`) |
+| `test_crop_health_trend.py` | 16 | **PR #8 (revisão)** — tendência Theil–Sen + Kendall: série horizontal continua "Estável"; **queda de 23 cenas com oscilações não vira "Estável"** (regressão do playtest); queda/melhoria com 12–20 cenas e ruído; série ruidosa → "Sem tendência definida"; intervalo < 14 dias e < 3 cenas → dados insuficientes; cenas de qualidade inadequada não completam o mínimo; **datas irregulares** usam dias reais (inclinação idêntica com espaçamentos diferentes); janela operacional de 120 dias recorta o histórico de 2 anos; extensão para 240 dias declarada; janela não mistura dois ciclos; critérios/limiares documentados na resposta; estimadores Theil–Sen e Mann–Kendall isolados |
+| `test_crop_health_quality_deltas.py` | 17 | **PR #8 (revisão)** — `delta_previous` com data/intervalo e pulando cena sem dado; `delta_30d` escolhendo a cena mais próxima, **borda exata da tolerância** (±15 dias) e ausência que **não vira zero**; qualidade da cena isolada; **série majoritariamente útil não é rebaixada por uma cena ruim**; série mista alta/média/limitada/insuficiente; série majoritariamente insuficiente; "Limitada" deixa de ser fallback universal; **cena atual × última cena válida** (nota explícita, tendência não contaminada); qualidade da cena × da série coexistindo; `confidence` como alias; janela da persistência |
+| `test_stac_calendar_pagination.py` | 12 | **PR #8 (revisão)** — STAC: `sortby` por `properties.datetime` desc no payload; ordenação local mesmo com resposta fora de ordem; **retry sem `sortby` quando o servidor responde 400**; erro não relacionado é propagado; sem `max_items` mantém uma página (comportamento histórico); paginação por `rel=next` POST com merge de token e GET por `href`; teto de itens; dedupe entre páginas; **janela de 730 dias devolve as cenas mais recentes reais** com `detail` de cobertura sem credenciais; filtro de nuvem antes do truncamento |
+| `test_frontend_crop_health_panel.py` | 18 | **PR #8 (revisão)** — contrato do painel + **execução do código real em VM Node** com payload do backend: hierarquia de leitura (estado → mudança → tendência → atenção → série/A-B), **variação nunca sem referência** (unidade do índice + datas + dias), janela da tendência declarada, **fim da colisão "Estável + variação absoluta sem contexto"**, "Sem dado" nunca desenhado como 0/"Estável", cena disponível × cena válida, qualidade da cena × cobertura da série, persistência/anomalia com período e baseline, proveniência com fonte/fórmula/máscara/critérios, cabeçalho do gráfico com período e unidade, "limitada" ≠ "insuficiente" no gráfico, endpoints privados/Bearer, sem chamada direta ao CDSE e linguagem conservadora |
+| `test_frontend_design_system.py` | 38 | **PR #8 (rework visual)** — `orion.css` como fonte única: tokens obrigatórios, todas as páginas consomem o design system, **paleta fechada** (hex fora da lista reprova), **contraste WCAG AA** de todas as combinações texto × superfície, `--neutral` nunca usado como texto, **sem vidro/glow/gradiente/sombra decorativa** (única sombra permitida = anel de foco), raio ≤ 8px, **sem emoji decorativo**, sem microcopy promocional, `<meta viewport>` em todas as páginas, breakpoints 1500/1100/900/560px + `max-height: 800px`, tabelas/gráficos que não estouram a largura, `.skip-link` + `:focus-visible` + `.visually-hidden` + `prefers-reduced-motion`, `<button>` sempre com `type` e os quatro estados visuais distintos |
 | `test_climate_service.py` | 83 | **PR #7 + FIX.1 + FIX.2** — serviço climático: consulta NASA POWER (URL/parâmetros/comunidade AG/período/coordenadas), parsing (fill −999 → null, unidades m/s e MJ/m²/dia), períodos inválidos/máx./pré-1981, **cobertura com 3 conceitos formais** (geral T2M+PREC / por variável / dias completos), agregações com `available_days` declarados (chuva/sequência seca/temperatura/radiação/umidade/vento), **sequência seca nula com lacunas** (NULL interrompe a contagem; "dia sem dados ≠ dia sem chuva"), **baseline metodologia A+B** (mesmas datas com observação; omissão < 50%; ano inválido excluído), **regressão ratio × percentage** ("21 de 30 … 70%" e nunca "1%"), cenário 21/30 de ponta a ponta, presets 7d (insufficient preservado) / 15d (ok) / 30d parcial, **FIX.2: janela única e contagem inclusiva** (20/08→07/09 = 19 dias; period/coverage/data_quality/séries/métricas/baseline na mesma janela), confiança **geral + por métrica** + `confidence_basis`, interpretações conservadoras (sem causalidade/diagnóstico), **sem imputação** (NULL nunca vira 0), ausência de ET, cache, timeout/HTTP 502/parse_error, coordenada inválida, tags `is_real`/`data_origin` do legado |
 | `test_climate_api.py` | 24 | **PR #7 + FIX.2** — endpoint `/api/climate/farm/{id}`: ownership (401 anônimo / 404 alheia / 200 dono / 200 admin), **localização canônica** enviada à NASA, presets 7d/15d/30d + personalizado, 422 (start>end, só start, **só end**, >366 dias), **503 explícito** com fonte fora (sem dado fake), `insufficient_data` explícito, cache em nível de API, contrato legado `/api/weather/farm/{id}` intacto, **FIX.2: período personalizado** — janela exata 20/08→07/09 = 19 dias (period/coverage/séries só com as datas do intervalo), **start/end precedem preset** (nunca misturados), **baseline na mesma janela** (6 consultas, todas 20/08–07/09), **cache diferencia preset 30d de custom e dois customs distintos** |
-| `test_frontend_climate_panel.py` | 20 | **PR #7 + FIX.1 + FIX.2 + FIX.3** — painel integrado ao Dashboard (FAZENDA→TALHÃO→LOCALIZAÇÃO), presets 7d/15d/30d + personalizado, **frontend nunca chama a NASA diretamente**, estados explícitos (indisponível/sem dados/Tentar novamente), separação dado/calculado/interpretação, proveniência + confiança visíveis, baseline rotulado "não é normal climatológica oficial", dashboard legada como DADOS DEMONSTRATIVOS, `ClimateService` no app.js, **FIX.1**: bloco "Dados do período — disponibilidade por variável" + "Dias completos", banner **DADOS PARCIAIS** ("nenhum valor foi estimado"), chip "comparação omitida (cobertura insuficiente)", indicador nulo com motivo "OMITIDO:", **FIX.2: teste COMPORTAMENTAL em VM Node** do fluxo real do período personalizado (extraído do index.html) — URL com start/end e **nunca preset**, clicar "Personalizado" não dispara análise, **resposta tardia de 30d NÃO sobrescreve o custom (race condition)**, validações client-side (start>end/vazio/>366 dias não disparam requisição), alternância 30d→custom→15d→custom, **FIX.3: estado único explícito `climateMode`** (declaração única; `loadActiveFarm` chama o clima 1× e nunca muda o modo; nenhuma outra rotina escreve no modo), **switchScreen real em VM** (modo preservado ao sair/voltar, sem nova requisição, pílulas restauradas), **fluxo completo do playtest** (carga 30d em voo → custom 20/08→07/09 = 19 dias → 30d tardia descartada → nenhum 3º preset=30d), **validação semântica** (resposta com período ≠ pedido → descartada), retry reenvia o mesmo custom + reprefill das datas, botões "Aplicar" desambiguados (clima × timeline 3D), log [CLIMATE] nos pontos-chave |
+| `test_frontend_climate_panel.py` | 20 | **PR #7 + FIX.1 + FIX.2 + FIX.3** — painel integrado ao Dashboard (FAZENDA→TALHÃO→LOCALIZAÇÃO), presets 7d/15d/30d + personalizado, **frontend nunca chama a NASA diretamente**, estados explícitos (indisponível/sem dados/Tentar novamente), separação dado/calculado/interpretação, proveniência + confiança visíveis, baseline rotulado "não é normal climatológica oficial", dashboard legada rotulada como dado demonstrativo (`notice-demo`), `ClimateService` no app.js, **FIX.1**: bloco "Dados do período — disponibilidade por variável" + "Dias completos", banner **DADOS PARCIAIS** ("nenhum valor foi estimado"), chip "comparação omitida (cobertura insuficiente)", indicador nulo com motivo "OMITIDO:", **FIX.2: teste COMPORTAMENTAL em VM Node** do fluxo real do período personalizado (extraído do index.html) — URL com start/end e **nunca preset**, clicar "Personalizado" não dispara análise, **resposta tardia de 30d NÃO sobrescreve o custom (race condition)**, validações client-side (start>end/vazio/>366 dias não disparam requisição), alternância 30d→custom→15d→custom, **FIX.3: estado único explícito `climateMode`** (declaração única; `loadActiveFarm` chama o clima 1× e nunca muda o modo; nenhuma outra rotina escreve no modo), **switchScreen real em VM** (modo preservado ao sair/voltar, sem nova requisição, pílulas restauradas), **fluxo completo do playtest** (carga 30d em voo → custom 20/08→07/09 = 19 dias → 30d tardia descartada → nenhum 3º preset=30d), **validação semântica** (resposta com período ≠ pedido → descartada), retry reenvia o mesmo custom + reprefill das datas, botões "Aplicar" desambiguados (clima × timeline 3D), log [CLIMATE] nos pontos-chave |
 | `test_3d_pipeline.py` | 15 | **PR #4** — pipeline 3D: demo sem dataset Sentinel (metadados/PNG/analytics com `data_origin`), fazenda dinâmica autenticada, owner/admin/401/404, assets fora do mount público, `PUBLIC_BASE_URL`, heightmap `available=false` + motivo, contrato What-If, frontend servido pelo backend e higiene (`.env` não exposto) |
 | `test_frontend_3d_pipeline.py` | 1 | **PR #4 ↔ #5d** — helpers do `index.html` executados em VM Node: classificação de erro HTTP, normalização de URL relativa/absoluta, token no fetch, atribuição real de textura ao material, pixel What-If, polígono KML → plano 3D e fallback de asset (material nunca sem `map`) |
 | `test_3d_player_state.py` | 1 | **PR #5d** — máquina de estados da timeline executada em VM Node: Play não avança durante loading, data só muda após aplicar, generationId descarta resposta antiga, Pause durante loading não retoma, troca manual invalida carga anterior, layer swap congela e retoma, falha → error+pause+retry, Real/What-If sincronizados, metadados da textura aplicada, status real/fallback e proveniência compacta + Detalhes |
@@ -647,7 +1025,7 @@ consolidada (PR #7 / PR #7-FIX.1 / PR #7-FIX.2 / PR #7-FIX.3)** — **440 testes
   compartilham os MESMOS helpers e o contrato de código (textura no mesh, exagero sem fetch,
   `?debug3d=1` nunca por padrão, grade abaixo da base) |
 | `test_3d_camera_chips.py` | 3 | **PR #5f** — VM Node: (1) **câmera** `computeCameraFit` pura (vista oblíqua 35–55° nunca rasante nem abaixo do plano, target = centro, distância proporcional à bbox pequena/grande, aspect, clamp, determinística → reset restaura) e (2) **chips da timeline** (exatamente 1 botão por data STAC, ordem desc, sem datas fixas/intermediárias, tooltip data completa + nuvens, 24 cenas) e (3) **DOM real** `renderDatePills` + estados discretos (aplicada só na cena comitada — preload vira `ready`, nunca seleção; clique → `selectDateIndex`; troca de período reconstrói sem sobras; loading/error) |
-| `test_3d_ui_polish.py` | 15 | **PR #5h — INTERFACE/UX** (VM Node + contrato de fonte): timeline é faixa PRÓPRIA fora do viewport 3D (irmã do `#viewport-3d`, nunca flutua sobre o terreno), viewport dominante (flex 1) × timeline `clamp(120px,21vh,152px)`, linhas da barra (status fina + Período/cenas + controles), alturas simuladas 1920×1080/1600×900/1366×768 (3D 60–90% do espaço), What-If recolhível que **preserva valores** (`setWhatIfCollapsed` só troca display, VM Node), proveniência compacta `Sentinel-2 L2A • data • nuvens • DEM m` + drawer com 13 linhas (product ID/provider/pixels/relevo/escala/exagero), **um único chip azul** da data aplicada (sem data duplicada/badge extra), controles presentes e ligados (▶ Play · 1,6s · camada · Relevo 1×/2×/3×/5× · Resetar · períodos · setas) e contratos 3D intactos (OrbitControls, volume, hillshade, sombras, cache por identidade, marcadores `[3D-*]`) |
+| `test_3d_ui_polish.py` | 17 | **PR #5h — INTERFACE/UX** (atualizado no rework do PR #8: marcador `[3D-LAYOUT-CSS-*]`, microcopy em português e ausência de `backdrop-filter`/`box-shadow` no viewport) (VM Node + contrato de fonte): timeline é faixa PRÓPRIA fora do viewport 3D (irmã do `#viewport-3d`, nunca flutua sobre o terreno), viewport dominante (flex 1) × timeline `clamp(120px,21vh,152px)`, linhas da barra (status fina + Período/cenas + controles), alturas simuladas 1920×1080/1600×900/1366×768 (3D 60–90% do espaço), What-If recolhível que **preserva valores** (`setWhatIfCollapsed` só troca display, VM Node), proveniência compacta `Sentinel-2 L2A • data • nuvens • DEM m` + drawer com 13 linhas (product ID/provider/pixels/relevo/escala/exagero), **um único chip azul** da data aplicada (sem data duplicada/badge extra), controles presentes e ligados (▶ Play · 1,6s · camada · Relevo 1×/2×/3×/5× · Resetar · períodos · setas) e contratos 3D intactos (OrbitControls, volume, hillshade, sombras, cache por identidade, marcadores `[3D-*]`) |
 | `test_ownership.py` | 32 | **Ownership** (usuário cria/ler/edita/exclui a própria farm; `owner_id` correto; payload `owner_id` ignorado), **admin global**, **privacidade** (GETs exigem token → 401; analytics/clima/textura/heightmap/PDF não expõem farm alheia → 404), **migração Alembic** (adiciona `owner_id`/`is_shared` + backfill seguro em SQLite legado) |
 | `test_schema_parity.py` | 3 | Paridade banco novo × legado migrado: colunas, tipos, nullable, defaults, PK, índices, FKs, `alembic_version`, idempotência, preservação de dados e enforcement SQLite |
 | `test_frontend_texture_urls.py` | 1 | Fluxo frontend de texture.png/heightmap.png relativos e absolutos: classificação, Bearer no fetch, respostas 401/403/404 e revogação do Blob URL após o TextureLoader |

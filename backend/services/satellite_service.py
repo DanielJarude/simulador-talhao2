@@ -37,13 +37,29 @@ def get_spectral_palette(layer_name: str, val: float):
         else:
             return [0, 201, 87, 255]    # Verde Esmeralda / Ótimo N
 
-    elif layer_name == "ndmi":
+    elif layer_name in ("ndmi", "ndwi"):
         if v < 0.35:
-            return [220, 20, 60, 255]   # Vermelho / Seca
+            return [220, 20, 60, 255]   # Vermelho / menor sinal relativo
         elif v < 0.65:
-            return [0, 206, 209, 255]   # Ciano / Hidratação Média
+            return [0, 206, 209, 255]   # Ciano / intermediário
         else:
-            return [0, 0, 205, 255]     # Azul Real / Alta Água Foliar
+            return [0, 0, 205, 255]     # Azul / maior sinal relativo
+
+    elif layer_name == "savi":
+        if v < 0.30:
+            return [160, 82, 45, 255]
+        elif v < 0.60:
+            return [217, 119, 6, 255]
+        elif v < 0.80:
+            return [46, 160, 67, 255]
+        return [31, 111, 235, 255]
+
+    elif layer_name == "gndvi":
+        if v < 0.35:
+            return [199, 21, 133, 255]
+        elif v < 0.65:
+            return [255, 215, 0, 255]
+        return [0, 201, 87, 255]
 
     return [46, 160, 67, 255]
 
