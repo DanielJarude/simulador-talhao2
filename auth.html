@@ -2,77 +2,97 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <title>Acesso - Plataforma Agrícola Orion</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Acesso — Orion</title>
+  <link rel="stylesheet" href="orion.css">
   <style>
-    * { box-sizing: border-box; }
     body {
-      margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
-      font-family: 'Segoe UI', Roboto, Helvetica, sans-serif; background: #0d1117; color: #f0f6fc;
-      background-image: radial-gradient(#1f2937 1px, transparent 1px); background-size: 24px 24px;
+      margin: 0; min-height: 100vh; padding: var(--sp-4);
+      display: flex; align-items: center; justify-content: center;
     }
     .auth-card {
-      background: #161b22; border: 1px solid #30363d; border-radius: 14px;
-      padding: 32px; width: 100%; max-width: 400px; box-shadow: 0 16px 36px rgba(0,0,0,0.6);
+      background: var(--surface-1); border: 1px solid var(--line);
+      border-radius: var(--r-lg); padding: var(--sp-6) var(--sp-5);
+      width: 100%; max-width: 380px;
     }
-    .auth-header { text-align: center; margin-bottom: 24px; }
-    .auth-header h2 { margin: 0; color: #58a6ff; font-size: 1.5rem; }
-    .auth-header p { margin: 6px 0 0 0; color: #8b949e; font-size: 0.85rem; }
-    
-    .tab-switch { display: flex; gap: 8px; margin-bottom: 20px; background: #0d1117; padding: 4px; border-radius: 8px; }
-    .tab-switch button {
-      flex: 1; padding: 8px; background: transparent; border: none; color: #8b949e;
-      font-weight: 600; border-radius: 6px; cursor: pointer; transition: 0.2s;
+    .auth-header { margin-bottom: var(--sp-5); }
+    .auth-header .mark {
+      display: block; font-size: var(--fs-micro); text-transform: uppercase;
+      letter-spacing: 0.18em; font-weight: 700; color: var(--text-3);
     }
-    .tab-switch button.active { background: #238636; color: #fff; }
+    .auth-header h2 { margin: var(--sp-1) 0 var(--sp-2); font-size: 1.35rem; color: var(--text-1); }
+    .auth-header p { margin: 0; color: var(--text-2); font-size: var(--fs-sm); line-height: 1.5; }
 
-    .form-group { margin-bottom: 14px; }
-    .form-group label { display: block; font-size: 0.8rem; color: #8b949e; margin-bottom: 4px; }
-    .form-group input, .form-group select {
-      width: 100%; padding: 10px; background: #0d1117; border: 1px solid #30363d;
-      border-radius: 6px; color: #f0f6fc; font-size: 0.9rem;
+    .tab-switch {
+      display: flex; gap: 2px; margin-bottom: var(--sp-4);
+      background: var(--surface-0); border: 1px solid var(--line);
+      padding: 3px; border-radius: var(--r-md);
     }
+    .tab-switch button {
+      flex: 1; padding: 7px; background: transparent; border: none; color: var(--text-2);
+      font: inherit; font-size: var(--fs-sm); font-weight: 600;
+      border-radius: var(--r-sm); cursor: pointer;
+    }
+    .tab-switch button:hover { color: var(--text-1); }
+    .tab-switch button.active { background: var(--surface-2); color: var(--text-1); border-bottom: 2px solid var(--veg); padding-bottom: 5px; }
+
+    .form-group { margin-bottom: var(--sp-3); }
+    .form-group label {
+      display: block; font-size: var(--fs-micro); text-transform: uppercase;
+      letter-spacing: 0.06em; font-weight: 700; color: var(--text-3); margin-bottom: var(--sp-1);
+    }
+    .form-group input, .form-group select { width: 100%; }
     .btn-submit {
-      width: 100%; padding: 12px; background: #238636; border: none; border-radius: 8px;
-      color: #fff; font-weight: 700; font-size: 0.95rem; cursor: pointer; margin-top: 10px;
+      width: 100%; padding: 11px; background: var(--veg); border: 1px solid var(--veg);
+      border-radius: var(--r-md); color: #fff; font: inherit; font-weight: 600;
+      font-size: var(--fs-body); cursor: pointer; margin-top: var(--sp-3);
     }
-    .btn-submit:hover { background: #2ea043; }
-    .msg-error { color: #ff7b72; font-size: 0.8rem; margin-top: 10px; text-align: center; display: none; }
+    .btn-submit:hover { background: #59a874; }
+    .msg-error {
+      display: none; margin-top: var(--sp-3);
+      background: var(--risk-soft); border: 1px solid var(--risk);
+      border-radius: var(--r-md); color: var(--risk-text);
+      font-size: var(--fs-sm); padding: var(--sp-2) var(--sp-3); line-height: 1.5;
+    }
+    .auth-foot { margin-top: var(--sp-4); font-size: var(--fs-meta); color: var(--text-3); line-height: 1.6; }
   </style>
 </head>
 <body>
 
   <div class="auth-card">
     <div class="auth-header">
-      <h2>🚜 Portal Orion Agro</h2>
-      <p>Acesso ao Simulador 3D & Telemetria</p>
+      <span class="mark">Orion · Sistemas Agrícolas</span>
+      <h2>Acesso à plataforma</h2>
+      <p>Monitoramento de talhões com Sentinel-2 e NASA POWER.</p>
     </div>
 
     <div class="tab-switch">
-      <button class="active" id="tab-login-btn" onclick="showForm('login')">Entrar</button>
-      <button id="tab-register-btn" onclick="showForm('register')">Novo Usuário</button>
+      <button type="button" class="active" id="tab-login-btn" onclick="showForm('login')">Entrar</button>
+      <button type="button" id="tab-register-btn" onclick="showForm('register')">Criar conta</button>
     </div>
 
     <!-- Formulário Login -->
     <form id="form-login" onsubmit="handleLogin(event)">
       <div class="form-group">
-        <label>E-mail Corporativo</label>
-        <input type="email" id="login-email" value="admin@orion.com" required>
+        <label for="login-email">E-mail</label>
+        <input type="email" id="login-email" autocomplete="username" value="admin@orion.com" required>
       </div>
       <div class="form-group">
-        <label>Senha</label>
-        <input type="password" id="login-pass" value="123456" required>
+        <label for="login-pass">Senha</label>
+        <input type="password" id="login-pass" autocomplete="current-password" value="123456" required>
       </div>
-      <button type="submit" class="btn-submit">Acessar Plataforma</button>
+      <button type="submit" class="btn-submit">Entrar</button>
     </form>
 
     <!-- Formulário Cadastro -->
     <form id="form-register" style="display:none;" onsubmit="handleRegister(event)">
       <div class="form-group">
-        <label>Nome Completo</label>
-        <input type="text" id="reg-name" required placeholder="Ex: Lucas Ferreira">
+        <label for="reg-name">Nome completo</label>
+        <input type="text" id="reg-name" autocomplete="name" required placeholder="Nome e sobrenome">
       </div>
       <div class="form-group">
-        <label>Cargo / Perfil</label>
+        <label for="reg-role">Função na operação</label>
         <select id="reg-role">
           <option value="Produtor Rural">Produtor Rural / Gestor</option>
           <option value="Engenheiro Agrônomo">Engenheiro Agrônomo</option>
@@ -80,17 +100,22 @@
         </select>
       </div>
       <div class="form-group">
-        <label>E-mail</label>
-        <input type="email" id="reg-email" required placeholder="lucas@fazenda.com">
+        <label for="reg-email">E-mail</label>
+        <input type="email" id="reg-email" autocomplete="email" required placeholder="nome@empresa.com.br">
       </div>
       <div class="form-group">
-        <label>Senha</label>
-        <input type="password" id="reg-pass" required placeholder="Mínimo 6 caracteres">
+        <label for="reg-pass">Senha</label>
+        <input type="password" id="reg-pass" autocomplete="new-password" minlength="6" required placeholder="Mínimo de 6 caracteres">
       </div>
-      <button type="submit" class="btn-submit">Criar Conta</button>
+      <button type="submit" class="btn-submit">Criar conta</button>
     </form>
 
-    <div id="auth-error" class="msg-error"></div>
+    <div id="auth-error" class="msg-error" role="alert" aria-live="assertive"></div>
+
+    <p class="auth-foot">
+      Cada conta enxerga apenas as próprias propriedades. A função escolhida é
+      informativa: o servidor atribui o papel de acesso.
+    </p>
   </div>
 
   <script src="app.js"></script>
@@ -100,6 +125,7 @@
       document.getElementById('form-register').style.display = type === 'register' ? 'block' : 'none';
       document.getElementById('tab-login-btn').className = type === 'login' ? 'active' : '';
       document.getElementById('tab-register-btn').className = type === 'register' ? 'active' : '';
+      document.getElementById(type === 'login' ? 'login-email' : 'reg-name').focus();
       document.getElementById('auth-error').style.display = 'none';
     }
 

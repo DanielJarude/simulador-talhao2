@@ -23,6 +23,7 @@ from services.climate_service import (
 )
 from services.crop_health_service import (
     SUPPORTED_INDICES as CROP_HEALTH_INDICES,
+    TREND_WINDOW_DAYS,
     compare_dates as compare_crop_health_dates,
     difference_path_for,
     get_health_timeline,
@@ -860,7 +861,15 @@ def _validate_crop_health_or_422(index: str) -> str:
 def get_crop_health_timeline(
     farm_id: int,
     index: str = Query(default="ndvi", description="Índice: ndvi, ndre, savi, evi, ndwi, gndvi ou ndmi."),
-    period_days: int = Query(default=730, ge=30, le=730, description="Janela de cenas reais STAC."),
+    period_days: int = Query(
+        default=730, ge=30, le=730,
+        description=(
+            "Janela do HISTÓRICO exibido na timeline (cenas reais STAC). A tendência "
+            "operacional NÃO usa esta janela: ela é calculada sobre os últimos "
+            f"{TREND_WINDOW_DAYS} dias a partir da última cena aceita (ver "
+            "metrics.trend_detail.window)."
+        ),
+    ),
     start: date | None = Query(default=None, description="Início opcional (YYYY-MM-DD)."),
     end: date | None = Query(default=None, description="Fim opcional (YYYY-MM-DD)."),
     limit: int = Query(default=60, ge=1, le=120),
@@ -898,11 +907,22 @@ def get_crop_health_current(
         area_ha=ctx["area_ha"], kml_coordinates=ctx["kml_coordinates"], index=index,
         period_days=period_days, limit=60,
     )
+    metrics = result.get("metrics") or {}
     return {
         "status": result.get("status"), "message": result.get("message"),
         "index": result.get("index"), "index_definition": result.get("index_definition"),
-        "current": (result.get("metrics") or {}).get("current"),
-        "metrics": result.get("metrics"), "quality": result.get("quality"),
+        # `current` = última aquisição COM valor; `latest_valid_scene` = última
+        # aquisição aceita pela análise de tendência. Podem ser diferentes.
+        "current": metrics.get("current"),
+        "latest_scene": metrics.get("latest_scene"),
+        "latest_valid_scene": metrics.get("latest_valid_scene"),
+        "current_is_valid_for_analysis": metrics.get("current_is_valid_for_analysis"),
+        "current_scene_note": metrics.get("current_scene_note"),
+        "metrics": metrics,
+        # `quality` = qualidade AGREGADA da série; `scene_quality` = qualidade
+        # da cena atual. São dimensões distintas e nomeadas como tal.
+        "quality": result.get("quality"),
+        "scene_quality": result.get("scene_quality"),
         "source_data": result.get("source_data"),
         "interpretation": result.get("interpretation"), "period": result.get("period"),
     }
@@ -1227,7 +1247,7 @@ def download_farm_report_pdf(
 # `sentinel-21KXQ-*` quando o dataset está presente na máquina — nunca
 # `.env`/diretórios internos do backend).
 # ---------------------------------------------------------------------------
-_FRONTEND_STATIC_FILES = {"index.html", "fazendas.html", "auth.html", "dashboard.html", "app.js"}
+_FRONTEND_STATIC_FILES = {"index.html", "fazendas.html", "auth.html", "dashboard.html", "app.js", "orion.css"}
 _FRONTEND_DEFAULT_PAGE = "index.html"
 _FRONTEND_ROOT_REAL = os.path.realpath(BASE_PROJECT_DIR)
 
@@ -1262,6 +1282,8 @@ def serve_frontend(frontend_path: str):
         media = "image/png"
     elif path.endswith(".js"):
         media = "application/javascript"
+    elif path.endswith(".css"):
+        media = "text/css; charset=utf-8"
     else:
         media = "text/html; charset=utf-8"
     return FileResponse(real, media_type=media)

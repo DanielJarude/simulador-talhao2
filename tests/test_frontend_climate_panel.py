@@ -84,8 +84,10 @@ def test_estados_explícitos_sem_dado_inventado():
     assert "temporariamente indisponíveis" in INDEX
     assert "Não há dados suficientes" in INDEX
     assert "Tentar novamente" in INDEX
-    # fallback legado rotulado no KPI
-    assert "DADOS DEMONSTRATIVOS" in INDEX
+    # fallback legado rotulado no KPI: badge de atenção + causa explícita
+    assert "Dado demonstrativo" in INDEX
+    assert "fonte NASA POWER indisponível" in INDEX
+    assert "badge badge-warn" in INDEX
     assert "kpi-rain-sub" in INDEX
 
 
@@ -115,7 +117,8 @@ def test_graficos_precipitacao_e_temperatura_com_baseline():
 
 
 def test_dash_legacy_rotulada_como_demonstrativa():
-    assert "DADOS DEMONSTRATIVOS" in DASH
+    assert "Dados demonstrativos" in DASH
+    assert "notice-demo" in DASH
     # o antigo rótulo enganoso "Ciclo Completo (NASA)" foi removido
     assert "Ciclo Completo (NASA)" not in DASH
 

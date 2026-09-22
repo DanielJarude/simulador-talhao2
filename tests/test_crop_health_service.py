@@ -156,6 +156,17 @@ def test_compare_ab_returns_delta_zones_and_real_map(monkeypatch):
     assert result["comparison"]["zones"]["improved"]["ha"] == pytest.approx(4.0)
     assert result["climate_context"]["status"] == "not_requested"
     assert result["_difference_path"]
+    # Regressão do rework: o contrato A/B permanece intacto e independente
+    # dos deltas automáticos da timeline.
+    c = result["comparison"]
+    assert c["date_a"] == "2026-08-01" and c["date_b"] == "2026-08-16"
+    assert c["direction"] == "melhoria"
+    assert c["quality_a"]["scope" if "scope" in c["quality_a"] else "level"]
+    assert set(c["zones"]) >= {"improved", "stable", "declined", "unobserved",
+                               "observed_pair", "threshold_absolute", "method"}
+    assert "difference_map" in c and c["difference_map"]["url_path"].startswith("/api/farms/")
+    # `confidence_a`/`confidence_b` deixaram de existir como dimensão própria.
+    assert "confidence_a" not in c and "confidence_b" not in c
 
 
 def test_climate_unavailable_does_not_break_spectral_context(monkeypatch):
@@ -190,10 +201,18 @@ def test_crop_health_endpoint_respects_ownership(client):
 
 
 def test_crop_health_endpoint_is_explicit_when_cdse_unavailable(client, admin_token):
+    """Sem credenciais CDSE o painel DECLARA a causa; nunca preenche a série."""
     response = client.get("/api/farms/1/crop-health/timeline", headers=auth(admin_token))
     assert response.status_code == 200
     body = response.json()
-    assert body["status"] in {"insufficient_data", "unavailable"}
-    assert "Não há dados suficientes" in (body.get("message") or "") or "indisponíveis" in (body.get("message") or "")
+    assert body["status"] == "unavailable"
+    # A causa é nomeada: fonte não configurada ≠ falha da fonte ≠ janela vazia.
+    assert "não configurada" in (body.get("message") or "")
+    assert body["source_data"]["calendar_status"] == "not_configured"
+    assert body["source_data"]["scene_count"] == 0
     assert body["timeline"] == []
     assert body["metrics"]["trend"] == "dados_insuficientes"
+    assert body["metrics"]["current"] is None
+    assert body["metrics"]["latest_valid_scene"] is None
+    assert body["quality"]["level"] == "insuficiente"
+    assert body["scene_quality"] is None

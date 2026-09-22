@@ -2,8 +2,14 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <title>Plataforma Agrícola Inteligente - Orion Agro</title>
-  
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Monitoramento de talhões com Sentinel-2 e NASA POWER — Orion Tecnologia e Sistemas Agrícolas.">
+  <meta name="color-scheme" content="dark">
+  <title>Monitoramento do talhão — Orion</title>
+
+  <!-- Design system interno -->
+  <link rel="stylesheet" href="orion.css">
+
   <!-- Leaflet & Chart.js -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -14,497 +20,602 @@
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 
   <style>
-    * { box-sizing: border-box; }
+    /* ====================================================================
+       Simulador de talhão — estilos da página.
+       A base (cores, tipografia, espaçamento, estados, tabelas, badges)
+       vem de orion.css. Aqui ficam apenas as estruturas próprias desta
+       tela: navegação, dashboard, mapa 2D e o viewport 3D.
+       ==================================================================== */
     html, body {
-      margin: 0; padding: 0; width: 100vw; height: 100vh;
-      overflow: hidden; font-family: 'Segoe UI', Roboto, Helvetica, sans-serif;
-      background: #0d1117; color: #f0f6fc;
+      margin: 0; padding: 0; width: 100%; height: 100%;
+      overflow: hidden;
       display: flex; flex-direction: column;
     }
 
+    /* ---- Barra superior ---- */
     #top-nav {
-      height: 56px; min-height: 56px; background: #161b22; border-bottom: 1px solid #30363d;
+      height: 52px; min-height: 52px;
+      background: var(--surface-1);
+      border-bottom: 1px solid var(--line);
       display: flex; justify-content: space-between; align-items: center;
-      padding: 0 20px; z-index: 100; flex-shrink: 0;
+      gap: var(--sp-4);
+      padding: 0 var(--sp-4); z-index: 100; flex-shrink: 0;
     }
-    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1.05rem; color: #58a6ff; }
-    .nav-tabs { display: flex; gap: 8px; }
+    .nav-left, .nav-right { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; }
+    .brand {
+      display: flex; flex-direction: column; justify-content: center;
+      min-width: 0; line-height: 1.25;
+    }
+    .brand .brand-mark {
+      font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: 0.14em;
+      font-weight: 700; color: var(--text-3);
+    }
+    .brand #nav-farm-title {
+      font-size: var(--fs-body); font-weight: 600; color: var(--text-1);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 34vw;
+    }
+
+    .nav-tabs { display: flex; gap: var(--sp-1); }
     .tab-btn {
-      background: transparent; color: #8b949e; border: 1px solid transparent;
-      padding: 7px 14px; border-radius: 8px; font-weight: 600; cursor: pointer;
-      display: flex; align-items: center; gap: 6px; transition: 0.2s; font-size: 0.85rem;
+      font: inherit; font-size: var(--fs-sm); font-weight: 600;
+      background: transparent; color: var(--text-2);
+      border: 1px solid transparent; border-radius: var(--r-md);
+      padding: 6px 12px; cursor: pointer;
+      display: inline-flex; align-items: center; gap: 6px;
+      transition: background 0.12s, color 0.12s, border-color 0.12s;
+      white-space: nowrap;
     }
-    .tab-btn:hover { background: #21262d; color: #f0f6fc; }
-    .tab-btn.active { background: #238636; color: #ffffff; border-color: #2ea043; }
+    .tab-btn:hover { background: var(--surface-2); color: var(--text-1); }
+    .tab-btn.active {
+      background: var(--surface-3); color: var(--text-1);
+      border-color: var(--line-strong); border-bottom-color: var(--veg);
+    }
 
     .btn-back-farms {
-      background: #21262d; color: #f0f6fc; border: 1px solid #30363d; padding: 6px 12px;
-      border-radius: 6px; text-decoration: none; font-size: 0.82rem; font-weight: 600;
+      font-size: var(--fs-sm); font-weight: 600;
+      background: var(--surface-2); color: var(--text-2);
+      border: 1px solid var(--line); padding: 6px 10px;
+      border-radius: var(--r-md); text-decoration: none; white-space: nowrap;
     }
+    .btn-back-farms:hover { color: var(--text-1); border-color: var(--line-strong); }
     .btn-pdf-report {
-      background: #1f6feb; color: #fff; border: none; padding: 6px 12px;
-      border-radius: 6px; font-size: 0.82rem; font-weight: 600; cursor: pointer; transition: 0.2s;
+      font: inherit; font-size: var(--fs-sm); font-weight: 600;
+      background: var(--surface-2); color: var(--text-1);
+      border: 1px solid var(--line); padding: 6px 12px;
+      border-radius: var(--r-md); cursor: pointer; white-space: nowrap;
     }
-    .btn-pdf-report:hover { background: #388bfd; }
+    .btn-pdf-report:hover { border-color: var(--data); color: var(--data-text); }
     .btn-calc-orion {
-      background: #d97706; color: #fff; padding: 6px 12px; border-radius: 6px;
-      text-decoration: none; font-size: 0.82rem; font-weight: 600; transition: 0.2s;
+      font-size: var(--fs-sm); font-weight: 600;
+      background: transparent; color: var(--text-2);
+      border: 1px solid var(--line); padding: 6px 12px;
+      border-radius: var(--r-md); text-decoration: none; white-space: nowrap;
     }
-    .btn-calc-orion:hover { background: #b45309; }
+    .btn-calc-orion:hover { color: var(--text-1); border-color: var(--line-strong); }
 
-    #main-content {
-      flex: 1; width: 100%; position: relative; overflow: hidden;
-    }
+    #main-content { flex: 1; width: 100%; position: relative; overflow: hidden; }
 
-    .screen-view {
-      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-      display: none;
-    }
+    .screen-view { position: absolute; inset: 0; display: none; }
     .screen-view.active { display: block; }
 
-    /* DASHBOARD */
-    #dash-container { padding: 20px; height: 100%; overflow-y: auto; }
+    /* ---- Dashboard ---- */
+    #dash-container {
+      padding: var(--sp-4) var(--sp-4) var(--sp-6);
+      height: 100%; overflow-y: auto;
+      max-width: 1680px; margin: 0 auto;
+    }
 
-    /* PAINEL DE CONTROLE TEMPORAL CENTRAL */
+    /* Faixa de contexto da propriedade (quem/onde/quanto) */
+    .context-bar {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 1px; background: var(--line);
+      border: 1px solid var(--line); border-radius: var(--r-lg);
+      overflow: hidden; margin-bottom: var(--sp-4);
+    }
+    .context-bar > div { background: var(--surface-1); padding: var(--sp-3) var(--sp-4); min-width: 0; }
+    .context-bar .label {
+      display: block; font-size: var(--fs-micro); text-transform: uppercase;
+      letter-spacing: 0.06em; font-weight: 700; color: var(--text-3);
+    }
+    .context-bar .value {
+      display: block; font-size: var(--fs-body); font-weight: 600; color: var(--text-1);
+      font-variant-numeric: tabular-nums; margin-top: 2px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .context-bar .sub { display: block; font-size: var(--fs-meta); color: var(--text-2); margin-top: 1px; }
+
+    /* Seletor temporal + camadas do dashboard */
     .timeline-control-panel {
-      background: #161b22; border: 1px solid #30363d; border-radius: 12px;
-      padding: 14px 18px; margin-bottom: 16px; display: flex; flex-direction: column; gap: 10px;
+      background: var(--surface-1); border: 1px solid var(--line);
+      border-radius: var(--r-lg);
+      padding: var(--sp-3) var(--sp-4); margin-bottom: var(--sp-4);
+      display: flex; flex-direction: column; gap: var(--sp-3);
     }
     .timeline-header {
-      display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;
+      display: flex; justify-content: space-between; align-items: center;
+      flex-wrap: wrap; gap: var(--sp-3);
     }
-    .timeline-header h4 { margin: 0; font-size: 0.95rem; color: #58a6ff; display: flex; align-items: center; gap: 8px; }
-    .layer-pill-group { display: flex; gap: 6px; }
+    .timeline-header h4 {
+      margin: 0; font-size: var(--fs-micro); text-transform: uppercase;
+      letter-spacing: 0.1em; font-weight: 700; color: var(--text-3);
+    }
+    .layer-pill-group { display: flex; gap: var(--sp-1); flex-wrap: wrap; }
     .layer-pill {
-      background: #21262d; border: 1px solid #30363d; color: #8b949e;
-      padding: 4px 12px; border-radius: 20px; font-size: 0.78rem; font-weight: 700; cursor: pointer; transition: 0.2s;
+      font: inherit; font-size: var(--fs-meta); font-weight: 600;
+      background: var(--surface-2); border: 1px solid var(--line); color: var(--text-2);
+      padding: 4px 10px; border-radius: var(--r-md); cursor: pointer;
+      transition: background 0.12s, color 0.12s, border-color 0.12s;
     }
-    .layer-pill:hover { color: #fff; background: #30363d; }
-    .layer-pill.active { background: #238636; color: #fff; border-color: #2ea043; }
+    .layer-pill:hover { color: var(--text-1); background: var(--surface-3); }
+    .layer-pill.active { background: var(--surface-3); color: var(--text-1); border-color: var(--veg); }
 
-    .timeline-dates-bar {
-      display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin;
-    }
+    .timeline-dates-bar { display: flex; gap: var(--sp-1); overflow-x: auto; padding-bottom: var(--sp-1); scrollbar-width: thin; }
     .date-pill {
-      background: #0d1117; border: 1px solid #30363d; color: #8b949e;
-      padding: 6px 12px; border-radius: 8px; font-size: 0.75rem; font-weight: 600; cursor: pointer; white-space: nowrap; transition: 0.2s;
+      background: var(--surface-0); border: 1px solid var(--line); color: var(--text-2);
+      padding: 5px 10px; border-radius: var(--r-md); font-size: var(--fs-meta);
+      font-weight: 600; cursor: pointer; white-space: nowrap;
+      font-variant-numeric: tabular-nums; transition: border-color 0.12s, color 0.12s;
     }
-    .date-pill:hover { border-color: #58a6ff; color: #58a6ff; }
-    .date-pill.active { background: #1f6feb; border-color: #388bfd; color: #ffffff; box-shadow: 0 0 10px rgba(31, 111, 235, 0.4); }
-    /* Estados discretos da timeline (PR #5e): disponível / carregando /
-       pronta / aplicada / erro — representados por um ponto minúsculo. */
+    .date-pill:hover { border-color: var(--line-strong); color: var(--text-1); }
+    .date-pill.active { background: var(--surface-3); border-color: var(--data); color: var(--text-1); }
+    /* Estado por cena: disponível / carregando / pronta / aplicada / erro. */
     .date-pill .state-dot {
-      display: inline-block; width: 6px; height: 6px; border-radius: 50%;
-      margin-left: 5px; background: #30363d; vertical-align: 1px;
+      display: inline-block; width: 5px; height: 5px; border-radius: 50%;
+      margin-left: 6px; background: var(--line-strong); vertical-align: 1px;
     }
-    .date-pill.loading .state-dot { background: #58a6ff; box-shadow: 0 0 5px rgba(88,166,255,0.8); }
-    .date-pill.ready .state-dot { background: #7ee787; }
-    .date-pill.applied .state-dot { background: #f0f6fc; }
-    .date-pill.error .state-dot { background: #ff7b72; }
+    .date-pill.loading .state-dot { background: var(--data-text); }
+    .date-pill.ready .state-dot { background: var(--veg-text); }
+    .date-pill.applied .state-dot { background: var(--text-1); }
+    .date-pill.error .state-dot { background: var(--risk-text); }
 
-    .kpi-grid {
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 14px; margin-bottom: 16px;
-    }
-    .kpi-card {
-      background: #161b22; border: 1px solid #30363d; padding: 14px 16px;
-      border-radius: 10px; display: flex; flex-direction: column; gap: 4px;
-    }
-    .kpi-card span { font-size: 0.72rem; color: #8b949e; text-transform: uppercase; font-weight: 700; }
-    .kpi-card strong { font-size: 1.3rem; color: #f0f6fc; }
-    .kpi-card small { font-size: 0.75rem; color: #7ee787; }
-
-    .dash-layout { display: grid; grid-template-columns: 1fr 340px; gap: 16px; }
-    @media(max-width: 1050px) { .dash-layout { grid-template-columns: 1fr; } }
+    .dash-layout { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: var(--sp-4); align-items: start; }
+    @media (max-width: 1100px) { .dash-layout { grid-template-columns: minmax(0, 1fr); } }
 
     .chart-box, .table-box, .side-card {
-      background: #161b22; border: 1px solid #30363d; padding: 16px; border-radius: 10px; margin-bottom: 16px;
+      background: var(--surface-1); border: 1px solid var(--line);
+      padding: var(--sp-4); border-radius: var(--r-lg); margin-bottom: var(--sp-4);
     }
-    .chart-box h3, .table-box h3, .side-card h3 { margin: 0 0 12px 0; font-size: 0.92rem; color: #58a6ff; }
-    .charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px; }
-    @media(max-width: 750px) { .charts-grid { grid-template-columns: 1fr; } }
-
-    /* PR #7 — CLIMA & CONDIÇÕES AGRONÔMICAS */
-    .climate-context { font-size: 0.72rem; color: #8b949e; margin-bottom: 10px; line-height: 1.5; }
-    .climate-context b { color: #f0f6fc; }
-    .climate-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-bottom: 12px; }
-    .climate-metric { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 10px 12px; }
-    .climate-metric span { font-size: 0.68rem; color: #8b949e; text-transform: uppercase; font-weight: 700; display: block; }
-    .climate-metric strong { font-size: 1.15rem; color: #f0f6fc; display: block; margin: 2px 0; }
-    .climate-metric small { font-size: 0.7rem; color: #8b949e; display: block; line-height: 1.35; }
-    .climate-delta-down { color: #ff7b72; } .climate-delta-up { color: #fbbf24; } .climate-delta-flat { color: #7ee787; }
-    .climate-section-title { font-size: 0.72rem; color: #8b949e; text-transform: uppercase; font-weight: 700; margin: 12px 0 6px 0; letter-spacing: 0.04em; }
-    .climate-interp { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border: 1px solid #21262d; border-radius: 8px; margin-bottom: 6px; background: #0d1117; font-size: 0.78rem; line-height: 1.45; color: #c9d1d9; }
-    .climate-interp .chip { flex-shrink: 0; font-size: 0.62rem; font-weight: 700; padding: 2px 6px; border-radius: 4px; margin-top: 1px; }
-    .chip-conf-alta { background: rgba(35,134,54,0.25); color: #7ee787; border: 1px solid #2ea043; }
-    .chip-conf-media { background: rgba(217,119,6,0.25); color: #fbbf24; border: 1px solid #d97706; }
-    .chip-conf-limitada { background: rgba(218,54,51,0.25); color: #ff7b72; border: 1px solid #da3633; }
-    .climate-state-box { padding: 18px; text-align: center; color: #8b949e; font-size: 0.85rem; border: 1px dashed #30363d; border-radius: 8px; }
-    .climate-state-box.error { color: #ff7b72; border-color: #da3633; }
-    .climate-provenance { margin-top: 12px; padding-top: 10px; border-top: 1px solid #21262d; font-size: 0.68rem; color: #7d8590; line-height: 1.6; }
-    .climate-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 12px; }
-    @media(max-width: 750px) { .climate-charts { grid-template-columns: 1fr; } }
-    .climate-charts .chart-box-inner { background: #0d1117; border: 1px solid #21262d; border-radius: 8px; padding: 10px; }
-    .climate-charts h4 { margin: 0 0 8px 0; font-size: 0.78rem; color: #8b949e; }
-
-    /* PR #8 — SAÚDE & EVOLUÇÃO DA LAVOURA */
-    .crop-health-panel { border-left: 4px solid #2ea043; }
-    .crop-health-toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px; }
-    .crop-health-toolbar label { font-size:0.72rem; color:#8b949e; font-weight:700; }
-    .crop-health-toolbar select, .crop-health-toolbar button { background:#0d1117; color:#c9d1d9; border:1px solid #30363d; border-radius:6px; padding:5px 8px; font-size:0.72rem; }
-    .crop-health-toolbar button { cursor:pointer; color:#9fc2e8; font-weight:700; }
-    .crop-health-toolbar button:hover { border-color:#58a6ff; }
-    .crop-health-kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(145px,1fr)); gap:8px; margin:10px 0; }
-    .crop-health-kpi { background:#0d1117; border:1px solid #30363d; border-radius:8px; padding:10px; min-height:70px; }
-    .crop-health-kpi span { display:block; color:#8b949e; font-size:0.66rem; text-transform:uppercase; font-weight:700; }
-    .crop-health-kpi strong { display:block; color:#f0f6fc; font-size:1.1rem; margin-top:4px; }
-    .crop-health-kpi small { color:#8b949e; font-size:0.68rem; }
-    .crop-health-state { color:#8b949e; font-size:0.78rem; line-height:1.45; padding:9px 10px; border:1px dashed #30363d; border-radius:7px; }
-    .crop-health-state.error { color:#ff7b72; border-color:#da3633; }
-    .crop-health-state.ok { color:#c9d1d9; border-style:solid; }
-    .crop-health-meta { color:#7d8590; font-size:0.68rem; line-height:1.55; margin-top:9px; }
-    .crop-health-compare { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px; }
-    @media(max-width:750px) { .crop-health-compare { grid-template-columns:1fr; } }
-    .crop-health-compare-card { background:#0d1117; border:1px solid #21262d; border-radius:8px; padding:10px; }
-    .crop-health-compare-card h4 { margin:0 0 7px; color:#8b949e; font-size:0.76rem; }
-    .crop-health-compare-card img { width:100%; min-height:150px; object-fit:contain; background:#161b22; border-radius:5px; }
-    .crop-health-legend { font-size:0.68rem; color:#8b949e; margin-top:5px; }
-
-    /* ZONEAMENTO */
-    .zones-grid {
-      display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 16px;
+    .chart-box h3, .table-box h3, .side-card h3 {
+      margin: 0 0 var(--sp-3) 0; font-size: var(--fs-body); font-weight: 600; color: var(--text-1);
     }
+    .chart-box canvas, .table-box canvas { max-width: 100%; }
+    .charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
+    @media (max-width: 820px) { .charts-grid { grid-template-columns: 1fr; } }
+
+    .chart-caption {
+      font-size: var(--fs-meta); color: var(--text-3); margin-top: var(--sp-2); line-height: 1.5;
+    }
+
+    /* ---- Clima & condições agronômicas (NASA POWER) ---- */
+    .climate-context { font-size: var(--fs-meta); color: var(--text-2); margin-bottom: var(--sp-3); line-height: 1.55; }
+    .climate-context b { color: var(--text-1); font-weight: 600; }
+    .climate-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--sp-2); margin-bottom: var(--sp-3); }
+    .climate-metric {
+      background: var(--surface-0); border: 1px solid var(--line);
+      border-radius: var(--r-md); padding: var(--sp-3);
+    }
+    .climate-metric span { font-size: var(--fs-micro); color: var(--text-3); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; display: block; }
+    .climate-metric strong { font-size: 1.2rem; color: var(--text-1); display: block; margin: 2px 0; font-variant-numeric: tabular-nums; }
+    .climate-metric small { font-size: var(--fs-meta); color: var(--text-2); display: block; line-height: 1.4; }
+    .climate-delta-down { color: var(--risk-text); } .climate-delta-up { color: var(--warn-text); } .climate-delta-flat { color: var(--veg-text); }
+    .climate-section-title { font-size: var(--fs-micro); color: var(--text-3); text-transform: uppercase; font-weight: 700; margin: var(--sp-4) 0 var(--sp-2); letter-spacing: 0.08em; }
+    .climate-interp {
+      display: flex; gap: var(--sp-2); align-items: flex-start;
+      padding: var(--sp-2) var(--sp-3); border: 1px solid var(--line);
+      border-radius: var(--r-md); margin-bottom: var(--sp-1);
+      background: var(--surface-0); font-size: var(--fs-sm); line-height: 1.5; color: var(--text-2);
+    }
+    .climate-interp .chip { flex-shrink: 0; font-size: var(--fs-micro); font-weight: 700; padding: 1px 6px; border-radius: var(--r-sm); margin-top: 2px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .chip-conf-alta { background: var(--veg-soft); color: var(--veg-text); border: 1px solid var(--veg); }
+    .chip-conf-media { background: var(--warn-soft); color: var(--warn-text); border: 1px solid var(--warn); }
+    .chip-conf-limitada { background: var(--risk-soft); color: var(--risk-text); border: 1px solid var(--risk); }
+    .climate-state-box {
+      padding: var(--sp-4); color: var(--text-3); font-size: var(--fs-sm);
+      border: 1px dashed var(--line); border-radius: var(--r-md); line-height: 1.5;
+    }
+    .climate-state-box.error { color: var(--risk-text); border-color: var(--risk); border-style: solid; background: var(--risk-soft); }
+    .climate-provenance { margin-top: var(--sp-3); padding-top: var(--sp-3); border-top: 1px solid var(--line); font-size: var(--fs-meta); color: var(--text-3); line-height: 1.6; }
+    .climate-charts { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); margin-top: var(--sp-3); }
+    @media (max-width: 820px) { .climate-charts { grid-template-columns: 1fr; } }
+    .climate-charts .chart-box-inner, .chart-box-inner {
+      background: var(--surface-0); border: 1px solid var(--line);
+      border-radius: var(--r-md); padding: var(--sp-3);
+    }
+    .climate-charts h4 { margin: 0 0 var(--sp-2) 0; font-size: var(--fs-meta); color: var(--text-2); font-weight: 600; }
+
+    /* ====================================================================
+       SAÚDE & EVOLUÇÃO DA LAVOURA (Sentinel-2)
+       Hierarquia: 1 estado atual · 2 mudança recente · 3 tendência ·
+       4 persistência/anomalia · 5 histórico e comparação A/B.
+       ==================================================================== */
+    #crop-health-panel { border-left: 2px solid var(--veg); }
+    .ch-toolbar { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; }
+    .ch-toolbar label { font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-3); font-weight: 700; }
+    .ch-toolbar select {
+      font: inherit; font-size: var(--fs-meta); background: var(--surface-0); color: var(--text-1);
+      border: 1px solid var(--line); border-radius: var(--r-md); padding: 5px 8px;
+    }
+    .ch-toolbar button {
+      font: inherit; font-size: var(--fs-meta); font-weight: 600;
+      background: var(--surface-2); color: var(--text-1);
+      border: 1px solid var(--line); border-radius: var(--r-md); padding: 5px 10px; cursor: pointer;
+    }
+    .ch-toolbar button:hover { border-color: var(--line-strong); background: var(--surface-3); }
+    .ch-toolbar button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    /* Nível 1 — leitura primária: estado atual + tendência */
+    .ch-primary {
+      display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+      gap: var(--sp-2); margin: var(--sp-3) 0;
+    }
+    @media (max-width: 720px) { .ch-primary { grid-template-columns: 1fr; } }
+    .ch-headline {
+      background: var(--surface-0); border: 1px solid var(--line);
+      border-left: 2px solid var(--veg); border-radius: var(--r-md);
+      padding: var(--sp-3) var(--sp-4); display: flex; flex-direction: column; gap: var(--sp-1);
+    }
+    .ch-headline.is-risk { border-left-color: var(--risk); }
+    .ch-headline.is-warn { border-left-color: var(--warn); }
+    .ch-headline.is-none { border-left-color: var(--neutral); }
+    .ch-headline .label { font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; color: var(--text-3); }
+    .ch-headline .value { font-size: 1.85rem; font-weight: 600; line-height: 1.1; color: var(--text-1); font-variant-numeric: tabular-nums; }
+    .ch-headline .value .unit { font-size: 0.9rem; font-weight: 600; color: var(--text-3); margin-right: 6px; letter-spacing: 0.04em; }
+    .ch-headline .qualifier { font-size: var(--fs-meta); color: var(--text-2); line-height: 1.5; }
+
+    /* Nível 2 — mudança recente, cada delta com a sua referência */
+    .ch-deltas { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: var(--sp-2); }
+    .ch-delta {
+      background: var(--surface-0); border: 1px solid var(--line);
+      border-radius: var(--r-md); padding: var(--sp-3); min-width: 0;
+    }
+    .ch-delta .label { display: block; font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; color: var(--text-3); }
+    .ch-delta .value { display: block; font-size: 1.15rem; font-weight: 600; color: var(--text-1); font-variant-numeric: tabular-nums; margin-top: 2px; }
+    .ch-delta .value.up { color: var(--veg-text); }
+    .ch-delta .value.down { color: var(--risk-text); }
+    .ch-delta .value.none { color: var(--text-3); font-size: var(--fs-body); }
+    .ch-delta .ref { display: block; font-size: var(--fs-meta); color: var(--text-2); line-height: 1.45; margin-top: 2px; }
+
+    /* Nível 4 — persistência / anomalia / qualidade da série */
+    .ch-secondary { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: var(--sp-2); margin-top: var(--sp-2); }
+
+    .ch-block-title {
+      display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-2);
+      flex-wrap: wrap;
+      font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: 0.08em;
+      font-weight: 700; color: var(--text-3);
+      margin: var(--sp-4) 0 var(--sp-2);
+      padding-top: var(--sp-3); border-top: 1px solid var(--line);
+    }
+    .ch-block-title .hint { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--text-3); font-size: var(--fs-meta); }
+
+    .ch-chart-head {
+      display: flex; justify-content: space-between; align-items: baseline;
+      gap: var(--sp-3); flex-wrap: wrap; margin-bottom: var(--sp-2);
+    }
+    .ch-chart-head h4 { margin: 0; font-size: var(--fs-sm); font-weight: 600; color: var(--text-1); }
+    .ch-chart-head .axis-note { font-size: var(--fs-meta); color: var(--text-3); }
+    .ch-legend { display: flex; gap: var(--sp-3); flex-wrap: wrap; font-size: var(--fs-meta); color: var(--text-2); margin-top: var(--sp-2); }
+    .ch-legend span { display: inline-flex; align-items: center; gap: 5px; }
+    .ch-legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+
+    .ch-compare { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--sp-2); margin-top: var(--sp-2); }
+    @media (max-width: 820px) { .ch-compare { grid-template-columns: 1fr; } }
+    .ch-compare-card {
+      background: var(--surface-0); border: 1px solid var(--line);
+      border-radius: var(--r-md); padding: var(--sp-3); min-width: 0;
+    }
+    .ch-compare-card h4 { margin: 0 0 var(--sp-2); font-size: var(--fs-meta); color: var(--text-2); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+    .ch-compare-card img { width: 100%; min-height: 160px; object-fit: contain; background: var(--surface-1); border-radius: var(--r-sm); display: block; }
+    .ch-areas { display: flex; flex-direction: column; gap: var(--sp-2); }
+    .ch-area-row { display: grid; grid-template-columns: 78px minmax(0, 1fr) auto; gap: var(--sp-2); align-items: center; font-size: var(--fs-meta); }
+    .ch-area-row .name { color: var(--text-2); }
+    .ch-area-row .bar { height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+    .ch-area-row .bar > i { display: block; height: 100%; }
+    .ch-area-row .qty { color: var(--text-1); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+    /* ---- Zoneamento legado ---- */
+    .zones-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--sp-2); margin-bottom: var(--sp-3); }
+    @media (max-width: 720px) { .zones-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
     .zone-card {
-      padding: 10px; border-radius: 8px; text-align: center; border: 1px solid #30363d; background: #0d1117;
+      padding: var(--sp-3); border-radius: var(--r-md); border: 1px solid var(--line);
+      border-top: 2px solid var(--line-strong); background: var(--surface-0); min-width: 0;
     }
-    .zone-card span { font-size: 0.7rem; color: #8b949e; display: block; margin-bottom: 2px; }
-    .zone-card strong { font-size: 1.05rem; display: block; }
-    .zone-card small { font-size: 0.72rem; color: #8b949e; }
+    .zone-card span { font-size: var(--fs-micro); color: var(--text-3); display: block; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
+    .zone-card strong { font-size: 1.15rem; display: block; font-variant-numeric: tabular-nums; margin-top: 2px; }
+    .zone-card small { font-size: var(--fs-meta); color: var(--text-2); }
 
-    table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
-    th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #21262d; }
-    th { color: #8b949e; background: #0d1117; }
-    .badge { padding: 3px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; }
-    .badge-ok { background: rgba(35, 134, 54, 0.25); color: #7ee787; border: 1px solid #2ea043; }
-    .badge-warn { background: rgba(217, 119, 6, 0.25); color: #fbbf24; border: 1px solid #d97706; }
-    .badge-bad { background: rgba(218, 54, 51, 0.25); color: #ff7b72; border: 1px solid #da3633; }
+    /* ---- Tabelas do dashboard ---- */
+    table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+    th, td { padding: var(--sp-2) var(--sp-3); text-align: left; border-bottom: 1px solid var(--line); }
+    th { color: var(--text-3); background: var(--surface-0); font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; white-space: nowrap; }
+    td { font-variant-numeric: tabular-nums; }
+    tbody tr:last-child td { border-bottom: none; }
 
-    /* MAPA 2D */
+    /* ---- Mapa 2D ---- */
     #map { width: 100%; height: 100%; }
     .map-floating-card {
-      position: absolute; top: 16px; left: 16px; z-index: 500;
-      background: rgba(22, 27, 34, 0.92); backdrop-filter: blur(10px);
-      padding: 14px 18px; border-radius: 10px; border-left: 4px solid #238636;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.6); max-width: 300px;
+      position: absolute; top: var(--sp-3); left: var(--sp-3); z-index: 500;
+      background: var(--surface-1); border: 1px solid var(--line);
+      border-left: 2px solid var(--veg);
+      padding: var(--sp-3) var(--sp-4); border-radius: var(--r-lg);
+      max-width: 300px;
     }
+    .map-floating-card h3 { margin: 0 0 var(--sp-1); font-size: var(--fs-body); color: var(--text-1); }
 
-    /* =====================================================================
-       PR #5h — SIMULADOR 3D EM 3 ZONAS (terreno em primeiro plano):
-         A) HEADER/navegação (top-nav, fora daqui);
-         B) viewport 3D (Real × What-If) — flex:1, ocupa ~70-78% da altura;
-         C) timeline/controles — faixa PRÓPRIA abaixo do 3D (nunca flutua
-            sobre o terreno), 2 linhas, ~20% da altura.
-       Regras: uma fonte visual por função; cores neutras (o NDVI já tem cor);
-       informativos no canto inferior esquerdo, pequenos, translúcidos.
-       ===================================================================== */
-    #screen-3d {
-      background: #0d1117; position: relative; width: 100%; height: 100%;
-      overflow: hidden;
-    }
-    /* Flex só com a tela ATIVA — `display:none` da base .screen-view continua
-       valendo quando a aba 3D não está aberta (troca de abas intacta). */
+    /* ====================================================================
+       [3D-LAYOUT-CSS-START]
+       SIMULADOR 3D — viewport dominante + faixa própria de timeline abaixo
+       (o terreno nunca fica coberto por controles).
+       ==================================================================== */
+    #screen-3d { background: var(--surface-0); position: relative; width: 100%; height: 100%; overflow: hidden; }
     #screen-3d.active { display: flex; flex-direction: column; }
-    #viewport-3d {
-      position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden;
-      background: #0d1117;
-    }
-    #canvas-container {
-      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-    }
+    #viewport-3d { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; background: var(--surface-0); }
+    #canvas-container { position: absolute; inset: 0; }
 
     .view-label {
-      position: absolute; top: 10px; z-index: 25;
-      padding: 4px 10px; border-radius: 6px; font-weight: 700;
-      backdrop-filter: blur(8px); display: flex; flex-direction: column; gap: 1px;
+      position: absolute; top: var(--sp-2); z-index: 25;
+      padding: 4px 10px; border-radius: var(--r-md);
+      display: flex; flex-direction: column; gap: 1px;
       min-width: 150px; max-width: 250px;
+      background: rgba(18, 23, 22, 0.88); border: 1px solid var(--line);
     }
-    #label-left { left: 12px; background: rgba(22, 27, 34, 0.78); border-left: 3px solid #3d6fa8; color: #9fc2e8; }
-    #label-right { left: calc(50% + 10px); background: rgba(22, 27, 34, 0.78); border-left: 3px solid #8a6d1f; color: #cdb56a; }
-    .scenario-title { font-size: 0.64rem; font-weight: 800; letter-spacing: 0.05em; opacity: 0.9; }
-    .scenario-sub { font-size: 0.62rem; font-weight: 600; opacity: 0.85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    #label-left .scenario-sub.real { color: #6fbf85; }
-    #label-left .scenario-sub.approx { color: #b8934a; }
-    #label-left .scenario-sub.no-config { color: #c07a3a; }
-    #label-right .scenario-sub { color: #cdb56a; }
-    .divider-line {
-      position: absolute; top: 0; left: 50%; width: 1px; height: 100%;
-      background: rgba(48, 54, 61, 0.6); z-index: 20;
-    }
+    #label-left { left: var(--sp-3); border-left: 2px solid var(--data); }
+    #label-right { left: calc(50% + 10px); border-left: 2px solid var(--warn); }
+    .scenario-title { font-size: var(--fs-micro); font-weight: 700; letter-spacing: 0.1em; color: var(--text-3); text-transform: uppercase; }
+    .scenario-sub { font-size: var(--fs-meta); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-2); }
+    #label-left .scenario-sub.real { color: var(--veg-text); }
+    #label-left .scenario-sub.approx { color: var(--warn-text); }
+    #label-left .scenario-sub.no-config { color: var(--warn-text); }
+    #label-right .scenario-sub { color: var(--warn-text); }
+    .divider-line { position: absolute; top: 0; left: 50%; width: 1px; height: 100%; background: var(--line); z-index: 20; }
 
-    /* ---- Painel WHAT-IF compacto e RECOLHÍVEL (PR #5h) ---- */
+    /* ---- What-If (recolhível) ---- */
     #whatif-panel-3d {
-      position: absolute; top: 10px; right: 12px; z-index: 30; width: 232px;
-      background: rgba(22, 27, 34, 0.88); backdrop-filter: blur(10px);
-      border: 1px solid #30363d; border-radius: 10px; overflow: hidden;
-      box-shadow: 0 6px 18px rgba(0,0,0,0.5);
+      position: absolute; top: var(--sp-2); right: var(--sp-3); z-index: 30; width: 228px;
+      background: rgba(18, 23, 22, 0.94); border: 1px solid var(--line);
+      border-radius: var(--r-lg); overflow: hidden;
     }
     #whatif-header {
       display: flex; align-items: center; justify-content: space-between;
-      padding: 7px 10px; background: rgba(13, 17, 23, 0.6);
-      border-bottom: 1px solid #21262d;
+      padding: 6px 10px; background: var(--surface-0); border-bottom: 1px solid var(--line);
     }
-    .whatif-title { font-size: 0.72rem; font-weight: 800; color: #cdb56a; letter-spacing: 0.04em; }
+    .whatif-title { font-size: var(--fs-micro); font-weight: 700; color: var(--warn-text); letter-spacing: 0.08em; text-transform: uppercase; }
     #whatif-toggle {
-      background: #21262d; color: #8b949e; border: 1px solid #30363d;
-      border-radius: 5px; width: 22px; height: 22px; font-size: 0.9rem;
-      line-height: 1; cursor: pointer; font-weight: 800;
+      background: var(--surface-2); color: var(--text-2); border: 1px solid var(--line);
+      border-radius: var(--r-sm); width: 22px; height: 22px; font-size: 0.9rem;
+      line-height: 1; cursor: pointer; font-weight: 700;
     }
-    #whatif-toggle:hover { color: #cdb56a; border-color: #8a6d1f; }
-    #whatif-body { padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 7px; }
+    #whatif-toggle:hover { color: var(--text-1); border-color: var(--line-strong); }
+    #whatif-body { padding: var(--sp-2) var(--sp-3) var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-2); }
     .param-group label {
-      font-size: 0.66rem; color: #8b949e; display: flex; justify-content: space-between;
-      align-items: baseline; margin-bottom: 1px;
+      font-size: var(--fs-meta); color: var(--text-2); display: flex; justify-content: space-between;
+      align-items: baseline; margin-bottom: 2px; gap: var(--sp-2);
     }
-    .param-group label strong { color: #c9d1d9; font-size: 0.66rem; }
-    .param-group input[type=range] { width: 100%; height: 12px; accent-color: #b8934a; margin: 0; }
+    .param-group label strong { color: var(--text-1); font-size: var(--fs-meta); font-variant-numeric: tabular-nums; }
+    .param-group input[type=range] { width: 100%; height: 14px; accent-color: var(--warn); margin: 0; }
     .sim-result-box {
-      background: rgba(13, 17, 23, 0.55); padding: 6px 8px; border-radius: 6px;
-      border: 1px solid #21262d; font-size: 0.66rem; line-height: 1.45; color: #8b949e;
+      background: var(--surface-0); padding: var(--sp-2) var(--sp-3); border-radius: var(--r-md);
+      border: 1px solid var(--line); font-size: var(--fs-meta); line-height: 1.6; color: var(--text-2);
       display: flex; flex-direction: column; gap: 1px;
     }
-    .sim-result-box strong { color: #c9d1d9; }
-    /* Aba lateral quando recolhido: [⚡ What-If] */
+    .sim-result-box strong { color: var(--text-1); font-variant-numeric: tabular-nums; }
     #whatif-tab {
-      position: absolute; top: 10px; right: 12px; z-index: 30;
-      background: rgba(22, 27, 34, 0.92); border: 1px solid #8a6d1f; color: #cdb56a;
-      border-radius: 8px; padding: 6px 12px; font-size: 0.72rem; font-weight: 800;
-      cursor: pointer; backdrop-filter: blur(8px);
+      position: absolute; top: var(--sp-2); right: var(--sp-3); z-index: 30;
+      background: rgba(18, 23, 22, 0.94); border: 1px solid var(--warn); color: var(--warn-text);
+      border-radius: var(--r-md); padding: 5px 12px; font-size: var(--fs-meta); font-weight: 700;
+      cursor: pointer; text-transform: uppercase; letter-spacing: 0.06em;
     }
-    #whatif-tab:hover { background: #21262d; }
+    #whatif-tab:hover { background: var(--surface-2); }
 
-    /* ---- Proveniência/DEM: card compacto (canto inferior ESQUERDO) ---- */
+    /* ---- Proveniência / DEM ---- */
     #metadata-panel {
-      position: absolute; bottom: 10px; left: 12px; z-index: 34;
-      max-width: 320px; /* ≲ 25% da largura */
-      background: rgba(13, 17, 23, 0.72); border: 1px solid rgba(48, 54, 61, 0.8);
-      border-radius: 8px; padding: 5px 8px; backdrop-filter: blur(8px);
+      position: absolute; bottom: var(--sp-2); left: var(--sp-3); z-index: 34;
+      max-width: 330px;
+      background: rgba(11, 15, 14, 0.9); border: 1px solid var(--line);
+      border-radius: var(--r-md); padding: 5px var(--sp-2);
     }
     #metadata-summary {
-      display: flex; align-items: center; gap: 6px; font-size: 0.66rem;
-      font-weight: 700; color: #c9d1d9; white-space: nowrap; overflow: hidden;
+      display: flex; align-items: center; gap: 6px; font-size: var(--fs-meta);
+      font-weight: 600; color: var(--text-2); white-space: nowrap; overflow: hidden;
     }
-    #metadata-summary.real { color: #a9c9b2; }
-    #metadata-summary.approx { color: #b8934a; }
-    #metadata-summary.no-config { color: #c07a3a; }
+    #metadata-summary.real { color: var(--veg-text); }
+    #metadata-summary.approx { color: var(--warn-text); }
+    #metadata-summary.no-config { color: var(--warn-text); }
     #prov-toggle {
-      background: #21262d; color: #9fc2e8; border: 1px solid #30363d;
-      border-radius: 5px; padding: 1px 7px; font-size: 0.62rem; font-weight: 700;
+      background: var(--surface-2); color: var(--text-2); border: 1px solid var(--line);
+      border-radius: var(--r-sm); padding: 1px 7px; font-size: var(--fs-micro); font-weight: 700;
       cursor: pointer; flex-shrink: 0;
     }
-    #prov-toggle:hover { border-color: #3d6fa8; }
-    #prov-details {
-      display: none; margin-top: 4px; padding-top: 4px;
-      border-top: 1px dashed rgba(48, 54, 61, 0.8);
-      max-height: 150px; overflow-y: auto;
-    }
+    #prov-toggle:hover { border-color: var(--line-strong); color: var(--text-1); }
+    #prov-details { display: none; margin-top: var(--sp-1); padding-top: var(--sp-1); border-top: 1px solid var(--line); max-height: 150px; overflow-y: auto; }
     #prov-details.open { display: block; }
-    #prov-details pre {
-      margin: 0; font-family: inherit; font-size: 0.62rem; line-height: 1.5;
-      color: #8b949e; white-space: pre-wrap;
-    }
+    #prov-details pre { margin: 0; font-family: var(--font-num); font-size: var(--fs-micro); line-height: 1.6; color: var(--text-2); white-space: pre-wrap; }
     #dem-line {
-      margin-top: 4px; padding-top: 4px; border-top: 1px dashed rgba(48, 54, 61, 0.8);
-      font-size: 0.62rem; font-weight: 600; color: #8b949e;
+      margin-top: var(--sp-1); padding-top: var(--sp-1); border-top: 1px solid var(--line);
+      font-size: var(--fs-micro); font-weight: 600; color: var(--text-3);
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    #dem-line.ok { color: #6fbf85; }
-    #dem-line.warn { color: #b8934a; }
+    #dem-line.ok { color: var(--veg-text); }
+    #dem-line.warn { color: var(--warn-text); }
 
-    /* Dica discreta de navegação (nunca tutorial permanente) */
     #camera-hint {
-      position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%);
-      z-index: 24; font-size: 0.6rem; color: #6e7681; opacity: 0.65;
+      position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%);
+      z-index: 24; font-size: var(--fs-micro); color: var(--text-3);
       white-space: nowrap; pointer-events: none;
     }
 
-    /* ---- Barra inferior: TIMELINE + CONTROLES (faixa própria, 2 linhas) ---- */
+    /* ---- Faixa da timeline Sentinel-2 ---- */
     #timeline-panel {
       flex: 0 0 clamp(120px, 21vh, 152px); min-height: 0;
-      background: #161b22; border-top: 1px solid #30363d;
-      padding: 6px 14px 8px; display: flex; flex-direction: column; gap: 5px;
-      overflow: hidden;
+      background: var(--surface-1); border-top: 1px solid var(--line);
+      padding: 6px var(--sp-4) var(--sp-2); display: flex; flex-direction: column; gap: 5px; overflow: hidden;
     }
-    .timeline-row {
-      display: flex; align-items: center; gap: 8px; min-height: 0;
-      white-space: nowrap; overflow: hidden;
-    }
-    .tl-label { font-size: 0.62rem; color: #8b949e; font-weight: 700; white-space: nowrap; }
-    #timeline-title {
-      font-size: 0.64rem; font-weight: 800; letter-spacing: 0.07em;
-      color: #9fc2e8; white-space: nowrap;
-    }
-    #scene-timeline {
-      flex: 1 1 auto; display: flex; gap: 5px; overflow-x: auto; padding: 2px;
-      scrollbar-width: thin; scroll-behavior: smooth; min-width: 0;
-    }
+    .timeline-row { display: flex; align-items: center; gap: var(--sp-2); min-height: 0; white-space: nowrap; overflow: hidden; }
+    .tl-label { font-size: var(--fs-micro); color: var(--text-3); font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap; }
+    #timeline-title { font-size: var(--fs-micro); font-weight: 700; letter-spacing: 0.1em; color: var(--text-3); white-space: nowrap; text-transform: uppercase; }
+    #scene-timeline { flex: 1 1 auto; display: flex; gap: 5px; overflow-x: auto; padding: 2px; scrollbar-width: thin; scroll-behavior: smooth; min-width: 0; }
     #scene-timeline::-webkit-scrollbar { height: 5px; }
-    #scene-timeline::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+    #scene-timeline::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 3px; }
     .scene-chip {
-      background: #0d1117; border: 1px solid #30363d; color: #8b949e;
-      border-radius: 6px; padding: 3px 8px; cursor: pointer; white-space: nowrap;
+      background: var(--surface-0); border: 1px solid var(--line); color: var(--text-2);
+      border-radius: var(--r-md); padding: 3px var(--sp-2); cursor: pointer; white-space: nowrap;
       display: flex; flex-direction: column; align-items: center; gap: 0;
-      font-family: inherit; flex-shrink: 0; transition: 0.15s;
+      font-family: inherit; flex-shrink: 0; transition: border-color 0.12s;
     }
-    .scene-chip .chip-day { font-size: 0.68rem; font-weight: 800; color: #c9d1d9; line-height: 1.1; }
-    .scene-chip .chip-year { font-size: 0.55rem; font-weight: 600; color: #6e7681; line-height: 1.15; }
-    .scene-chip:hover { border-color: #3d6fa8; }
-    .scene-chip:hover .chip-day { color: #9fc2e8; }
-    .scene-chip.active {
-      background: #1f6feb; border-color: #388bfd; box-shadow: 0 0 8px rgba(31,111,235,0.4);
-    }
-    .scene-chip.active .chip-day { color: #fff; }
-    .scene-chip.active .chip-year { color: #cae1ff; }
-    .scene-chip .state-dot {
-      width: 4px; height: 4px; border-radius: 50%; background: #30363d; margin-top: 1px;
-    }
-    .scene-chip.loading .state-dot { background: #58a6ff; box-shadow: 0 0 5px rgba(88,166,255,0.9); }
-    .scene-chip.ready .state-dot { background: #6fbf85; }
-    .scene-chip.applied .state-dot { background: #f0f6fc; }
-    .scene-chip.error .state-dot { background: #ff7b72; }
+    .scene-chip .chip-day { font-size: var(--fs-meta); font-weight: 700; color: var(--text-1); line-height: 1.15; font-variant-numeric: tabular-nums; }
+    .scene-chip .chip-year { font-size: var(--fs-micro); font-weight: 600; color: var(--text-3); line-height: 1.2; }
+    .scene-chip:hover { border-color: var(--line-strong); }
+    .scene-chip.active { background: var(--surface-3); border-color: var(--data); }
+    .scene-chip.active .chip-day { color: var(--text-1); }
+    .scene-chip.active .chip-year { color: var(--data-text); }
+    .scene-chip .state-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--line-strong); margin-top: 2px; }
+    .scene-chip.loading .state-dot { background: var(--data-text); }
+    .scene-chip.ready .state-dot { background: var(--veg-text); }
+    .scene-chip.applied .state-dot { background: var(--text-1); }
+    .scene-chip.error .state-dot { background: var(--risk-text); }
     .chip-badge {
-      display: none; font-size: 0.5rem; font-weight: 800; letter-spacing: 0.06em;
-      color: #fff; background: rgba(255,255,255,0.16); border-radius: 3px;
-      padding: 0 4px; margin-top: 1px;
+      display: none; font-size: var(--fs-micro); font-weight: 700; letter-spacing: 0.06em;
+      color: var(--text-1); background: var(--surface-3); border-radius: 2px; padding: 0 4px; margin-top: 1px;
     }
     .scene-chip.applied .chip-badge { display: inline-block; }
     .tl-arrow {
-      background: #21262d; border: 1px solid #30363d; color: #8b949e;
-      border-radius: 5px; width: 24px; height: 30px; cursor: pointer;
-      font-size: 0.95rem; font-weight: 800; flex-shrink: 0; line-height: 1;
+      background: var(--surface-2); border: 1px solid var(--line); color: var(--text-2);
+      border-radius: var(--r-sm); width: 24px; height: 30px; cursor: pointer;
+      font-size: 0.95rem; font-weight: 700; flex-shrink: 0; line-height: 1;
     }
-    .tl-arrow:hover { color: #9fc2e8; border-color: #3d6fa8; }
+    .tl-arrow:hover { color: var(--text-1); border-color: var(--line-strong); }
     #btn-latest {
-      background: #21262d; border: 1px solid #30363d; color: #a9c9b2;
-      padding: 3px 8px; border-radius: 6px; font-size: 0.62rem; font-weight: 700;
+      background: var(--surface-2); border: 1px solid var(--line); color: var(--text-2);
+      padding: 3px var(--sp-2); border-radius: var(--r-md); font-size: var(--fs-micro); font-weight: 700;
       cursor: pointer; flex-shrink: 0;
     }
-    #btn-latest:hover { border-color: #6fbf85; }
+    #btn-latest:hover { border-color: var(--veg); color: var(--veg-text); }
     .period-pill {
-      background: #0d1117; border: 1px solid #30363d; color: #8b949e;
-      padding: 2px 8px; border-radius: 5px; font-size: 0.62rem; font-weight: 700;
-      cursor: pointer; white-space: nowrap; transition: 0.15s;
+      background: var(--surface-0); border: 1px solid var(--line); color: var(--text-2);
+      padding: 2px var(--sp-2); border-radius: var(--r-sm); font-size: var(--fs-micro); font-weight: 700;
+      cursor: pointer; white-space: nowrap;
     }
-    .period-pill:hover { border-color: #3d6fa8; color: #9fc2e8; }
-    .period-pill.active { background: #1f6feb; border-color: #388bfd; color: #fff; }
+    .period-pill:hover { border-color: var(--line-strong); color: var(--text-1); }
+    .period-pill.active { background: var(--surface-3); border-color: var(--data); color: var(--text-1); }
     #period-pills { display: inline-flex; gap: 3px; overflow-x: auto; min-width: 0; scrollbar-width: none; }
     #period-pills::-webkit-scrollbar { display: none; }
-    #custom-period-row { display: inline-flex; gap: 4px; align-items: center; flex-shrink: 0; }
+    #custom-period-row { display: inline-flex; gap: var(--sp-1); align-items: center; flex-shrink: 0; }
     #custom-period-row input[type="date"] {
-      background: #0d1117; border: 1px solid #30363d; color: #c9d1d9;
-      border-radius: 4px; padding: 1px 5px; font-size: 0.62rem; color-scheme: dark;
+      background: var(--surface-0); border: 1px solid var(--line); color: var(--text-1);
+      border-radius: var(--r-sm); padding: 1px 5px; font-size: var(--fs-micro); color-scheme: dark;
     }
     #custom-apply {
-      background: #21262d; border: 1px solid #30363d; color: #9fc2e8;
-      border-radius: 4px; padding: 1px 7px; font-size: 0.62rem; font-weight: 700; cursor: pointer;
+      background: var(--surface-2); border: 1px solid var(--line); color: var(--text-2);
+      border-radius: var(--r-sm); padding: 2px var(--sp-2); font-size: var(--fs-micro); font-weight: 700; cursor: pointer;
     }
-    #load-indicator {
-      display: none; align-items: center; font-size: 0.62rem; font-weight: 600;
-      color: #9fc2e8; white-space: nowrap; flex-shrink: 0;
-    }
+    #custom-apply:hover { color: var(--text-1); border-color: var(--line-strong); }
+    #load-indicator { display: none; align-items: center; gap: 5px; font-size: var(--fs-micro); font-weight: 600; color: var(--data-text); white-space: nowrap; flex-shrink: 0; }
     #load-indicator.visible { display: inline-flex; }
-    #preload-status { font-size: 0.62rem; font-weight: 700; color: #9fc2e8; white-space: nowrap; flex-shrink: 0; }
-    #preload-status.done { color: #6fbf85; }
-    #timeline-meta { font-size: 0.6rem; color: #6e7681; white-space: nowrap; flex-shrink: 1; overflow: hidden; text-overflow: ellipsis; }
+    #preload-status { font-size: var(--fs-micro); font-weight: 700; color: var(--data-text); white-space: nowrap; flex-shrink: 0; }
+    #preload-status.done { color: var(--veg-text); }
+    #timeline-meta { font-size: var(--fs-micro); color: var(--text-3); white-space: nowrap; flex-shrink: 1; overflow: hidden; text-overflow: ellipsis; }
 
-    /* Linha 2 — controles: Play · data · intervalo · camada · Relevo · Reset */
+    /* Linha 2 — controles: reproduzir · intervalo · camada · relevo · reenquadrar */
     .controls-row button, .controls-row select {
-      background: #21262d; color: #c9d1d9; border: 1px solid #30363d;
-      border-radius: 6px; padding: 4px 10px; font-size: 0.66rem; font-weight: 700;
-      cursor: pointer; flex-shrink: 0;
+      background: var(--surface-2); color: var(--text-1); border: 1px solid var(--line);
+      border-radius: var(--r-md); padding: 4px 10px; font-size: var(--fs-micro); font-weight: 700;
+      cursor: pointer; flex-shrink: 0; font-family: inherit;
     }
-    .controls-row button:hover { border-color: #3d6fa8; color: #9fc2e8; }
-    #play-btn { background: #238636; border-color: #2ea043; color: #fff; min-width: 84px; }
-    #play-btn:hover { background: #2ea043; color: #fff; }
-    .exag-row { display: inline-flex; gap: 4px; align-items: center; }
+    .controls-row button:hover, .controls-row select:hover { border-color: var(--line-strong); }
+    #play-btn { background: var(--veg); border-color: var(--veg); color: #fff; min-width: 84px; }
+    #play-btn:hover { background: #59a874; }
+    .exag-row { display: inline-flex; gap: 3px; align-items: center; }
     .exag-btn {
-      background: #21262d; border: 1px solid #30363d; color: #c9d1d9;
-      border-radius: 4px; padding: 3px 8px; font-size: 0.64rem; font-weight: 800;
-      cursor: pointer; transition: 0.15s;
+      background: var(--surface-2); border: 1px solid var(--line); color: var(--text-2);
+      border-radius: var(--r-sm); padding: 3px var(--sp-2); font-size: var(--fs-micro); font-weight: 700; cursor: pointer;
     }
-    .exag-btn:hover { border-color: #3d6fa8; color: #9fc2e8; }
-    .exag-btn.active { background: #1f6feb; border-color: #388bfd; color: #fff; }
+    .exag-btn:hover { border-color: var(--line-strong); color: var(--text-1); }
+    .exag-btn.active { background: var(--surface-3); border-color: var(--data); color: var(--text-1); }
 
-    /* Spinner (herdado do load) */
-    .spinner {
-      display: inline-block; width: 12px; height: 12px; border-radius: 50%;
-      border: 2px solid rgba(88, 166, 255, 0.35); border-top-color: #58a6ff;
-      animation: spin 0.8s linear infinite; vertical-align: -2px; margin-right: 5px;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
+    /* Spinner local da timeline 3D (o global vem de orion.css) */
+    .spinner { margin-top: 0; vertical-align: -1px; }
 
-    /* Overlay discreto de carregamento da cena REAL (nunca cobre o centro) */
     #overlay-loading-real {
-      position: absolute; top: 44px; left: 12px; z-index: 36; display: none;
-      align-items: center; gap: 6px; padding: 4px 9px; border-radius: 6px;
-      font-size: 0.62rem; font-weight: 700; color: #9fc2e8;
-      background: rgba(22, 27, 34, 0.85); border: 1px solid #1f6feb;
-      backdrop-filter: blur(8px); pointer-events: none;
+      position: absolute; top: 44px; left: var(--sp-3); z-index: 36; display: none;
+      align-items: center; gap: 6px; padding: 4px var(--sp-2); border-radius: var(--r-md);
+      font-size: var(--fs-micro); font-weight: 700; color: var(--data-text);
+      background: rgba(18, 23, 22, 0.92); border: 1px solid var(--data); pointer-events: none;
     }
     #overlay-loading-real.visible { display: inline-flex; }
 
-    /* Erro compacto e LOCAL (nunca transforma a tela em erro) */
     #error-toast {
       position: absolute; bottom: 34px; left: 50%; transform: translateX(-50%);
-      z-index: 45; display: none; align-items: center; gap: 8px;
-      padding: 6px 12px; border-radius: 8px; max-width: 82%;
-      background: rgba(43, 24, 27, 0.9); border: 1px solid #da3633;
-      color: #ff9a92; font-size: 0.66rem; font-weight: 700; white-space: nowrap;
+      z-index: 45; display: none; align-items: center; gap: var(--sp-2);
+      padding: 6px var(--sp-3); border-radius: var(--r-md); max-width: 82%;
+      background: var(--surface-1); border: 1px solid var(--risk);
+      color: var(--risk-text); font-size: var(--fs-meta); font-weight: 600; white-space: nowrap;
     }
     #error-toast.visible { display: inline-flex; }
     #error-toast button {
-      background: #da3633; color: #fff; border: none; border-radius: 5px;
-      padding: 3px 9px; font-size: 0.62rem; font-weight: 700; cursor: pointer;
+      background: var(--risk); color: #fff; border: none; border-radius: var(--r-sm);
+      padding: 3px 9px; font-size: var(--fs-micro); font-weight: 700; cursor: pointer; font-family: inherit;
     }
 
-    /* ---- RESPONSIVIDADE (PR #5h): 1920×1080 · 1600×900 · 1366×768 ---- */
+    /* ---- Responsividade ---- */
     @media (max-height: 800px) {
-      #timeline-panel { flex-basis: 112px; padding: 4px 10px 6px; gap: 3px; }
+      #timeline-panel { flex-basis: 112px; padding: 4px var(--sp-3) 6px; gap: 3px; }
       .scene-chip { padding: 2px 6px; }
-      .scene-chip .chip-day { font-size: 0.62rem; }
-      .controls-row button, .controls-row select { padding: 3px 8px; font-size: 0.62rem; }
+      .controls-row button, .controls-row select { padding: 3px 8px; }
       #whatif-panel-3d { width: 208px; }
-      #camera-hint { display: none; } /* dica só quando há espaço */
+      #camera-hint { display: none; }
     }
     @media (max-width: 1500px) {
       #whatif-panel-3d { width: 206px; }
-      #timeline-meta { display: none; } /* secundário: só em telas largas */
+      #timeline-meta { display: none; }
     }
     @media (max-width: 1100px) {
       #label-right { left: calc(50% + 8px); }
       #whatif-body { padding: 6px 8px 8px; }
     }
+    /* Tablet / celular: a barra superior passa a duas linhas e o dashboard
+       vira coluna única; nada é escondido — a ordem de leitura é preservada. */
+    @media (max-width: 900px) {
+      body { height: auto; min-height: 100%; overflow: auto; }
+      #top-nav { height: auto; min-height: 0; flex-wrap: wrap; padding: var(--sp-2) var(--sp-3); gap: var(--sp-2); }
+      .nav-tabs { order: 3; width: 100%; overflow-x: auto; padding-bottom: 2px; }
+      .brand #nav-farm-title { max-width: 52vw; }
+      #main-content { position: relative; height: calc(100vh - 118px); }
+      #dash-container { padding: var(--sp-3) var(--sp-3) var(--sp-6); }
+      .context-bar { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
+      #metadata-panel { max-width: calc(100% - 24px); }
+      #whatif-panel-3d { width: 190px; }
+    }
+    @media (max-width: 560px) {
+      .metric-grid, .ch-deltas, .ch-secondary, .context-bar { grid-template-columns: 1fr; }
+      .zones-grid { grid-template-columns: 1fr; }
+      .btn-calc-orion, #camera-hint { display: none; }
+      .ch-area-row { grid-template-columns: 72px minmax(0, 1fr); }
+      .ch-area-row .qty { grid-column: 1 / -1; }
+    }
+    /* [3D-LAYOUT-CSS-END] */
   </style>
 </head>
 <body>
 
-  <!-- Barra Superior -->
+  <a href="#main-content" class="skip-link">Ir para o conteúdo</a>
+
+  <!-- Barra superior: onde estou · o que estou analisando · o que posso fazer -->
   <header id="top-nav">
-    <div style="display:flex; align-items:center; gap:14px;">
-      <a href="fazendas.html" class="btn-back-farms">← Trocar Propriedade</a>
+    <div class="nav-left">
+      <a href="fazendas.html" class="btn-back-farms" title="Voltar à lista de propriedades">← Propriedades</a>
       <div class="brand">
-        <span>🚜</span> <span id="nav-farm-title">Carregando...</span>
+        <span class="brand-mark">Orion · Talhão</span>
+        <span id="nav-farm-title">Carregando…</span>
       </div>
     </div>
-    <div class="nav-tabs">
-      <button class="tab-btn active" id="tab-dash" onclick="switchScreen('dash')">📊 Dashboard</button>
-      <button class="tab-btn" id="tab-map" onclick="switchScreen('map')">🗺️ Google Maps 2D</button>
-      <button class="tab-btn" id="tab-3d" onclick="switchScreen('3d')">⛰️ Simulador 3D Split-View</button>
-    </div>
-    <div style="display:flex; gap:10px; align-items:center;">
-      <button onclick="downloadPDFReport()" class="btn-pdf-report">
-        📄 Baixar Laudo Técnico (PDF)
-      </button>
-      <a href="https://orion.ind.br/calculadora/" target="_blank" class="btn-calc-orion">🚜 Calculadora Orion ↗</a>
+    <nav class="nav-tabs" aria-label="Modos de visualização">
+      <button class="tab-btn active" id="tab-dash" type="button" onclick="switchScreen('dash')">Painel</button>
+      <button class="tab-btn" id="tab-map" type="button" onclick="switchScreen('map')">Mapa</button>
+      <button class="tab-btn" id="tab-3d" type="button" onclick="switchScreen('3d')">Terreno 3D</button>
+    </nav>
+    <div class="nav-right">
+      <button onclick="downloadPDFReport()" class="btn-pdf-report" type="button">Laudo em PDF</button>
+      <a href="https://orion.ind.br/calculadora/" target="_blank" rel="noopener" class="btn-calc-orion">Calculadora Orion ↗</a>
     </div>
   </header>
 
@@ -515,98 +626,70 @@
     <div id="screen-dash" class="screen-view active">
       <div id="dash-container">
         
-        <!-- SELETOR TEMPORAL E CAMADAS NO TOPO DO DASHBOARD -->
+        <!-- ==============================================================
+             1 · CONTEXTO DA PROPRIEDADE
+             Responde "onde estou / o que estou analisando" antes de
+             qualquer número.
+             ============================================================== -->
+        <div class="context-bar" id="farm-context-bar">
+          <div>
+            <span class="label">Talhão</span>
+            <span class="value" id="ctx-talhao">—</span>
+            <span class="sub" id="ctx-farm">—</span>
+          </div>
+          <div>
+            <span class="label">Área monitorada</span>
+            <span class="value" id="kpi-area">— ha</span>
+            <span class="sub" id="kpi-talhao-desc">geometria cadastrada</span>
+          </div>
+          <div>
+            <span class="label">Cultura</span>
+            <span class="value" id="ctx-crop">—</span>
+            <span class="sub" id="ctx-city">—</span>
+          </div>
+          <div>
+            <span class="label">Coordenada</span>
+            <span class="value" id="ctx-coords">—</span>
+            <span class="sub">centro usado nas consultas</span>
+          </div>
+        </div>
+
+        <!-- ==============================================================
+             2 · AQUISIÇÕES SENTINEL-2 — data e camada em análise
+             ============================================================== -->
         <div class="timeline-control-panel">
           <div class="timeline-header">
-            <h4>🛰️ Passagens do Satélite Sentinel-2</h4>
-            <div class="layer-pill-group">
-              <button class="layer-pill" onclick="setSpectralLayer('rgb')">RGB (True Color)</button>
-              <button class="layer-pill active" onclick="setSpectralLayer('ndvi')">NDVI (Vigor relativo)</button>
-              <button class="layer-pill" onclick="setSpectralLayer('evi')">EVI (Vigor relativo)</button>
-              <button class="layer-pill" onclick="setSpectralLayer('ndre')">NDRE (Contraste red edge)</button>
-              <button class="layer-pill" onclick="setSpectralLayer('ndmi')">NDMI (Sinal hídrico relativo)</button>
+            <h4>Aquisições Sentinel-2 · data em análise</h4>
+            <div class="layer-pill-group" role="group" aria-label="Camada espectral exibida">
+              <button type="button" class="layer-pill" onclick="setSpectralLayer('rgb')">RGB</button>
+              <button type="button" class="layer-pill active" onclick="setSpectralLayer('ndvi')">NDVI</button>
+              <button type="button" class="layer-pill" onclick="setSpectralLayer('evi')">EVI</button>
+              <button type="button" class="layer-pill" onclick="setSpectralLayer('ndre')">NDRE</button>
+              <button type="button" class="layer-pill" onclick="setSpectralLayer('ndmi')">NDMI</button>
             </div>
           </div>
-          <div class="timeline-dates-bar" id="dashboard-dates-bar">
-            <!-- Pílulas de datas injetadas via JS -->
-          </div>
-        </div>
-
-        <!-- CARDS DE ESTIMATIVA DE SAFRA -->
-        <div class="kpi-grid" style="margin-bottom: 16px;">
-          <div class="kpi-card" style="border-left: 4px solid #2ea043; background: linear-gradient(145deg, #161b22, #1a232e);">
-            <span>🌱 Safra de Verão (Soja)</span>
-            <strong id="kpi-soja-yield" style="color:#7ee787;">-- sc/ha</strong>
-            <small id="kpi-soja-vol">Total: -- sacas | R$ --</small>
-          </div>
-          <div class="kpi-card" style="border-left: 4px solid #d29922; background: linear-gradient(145deg, #161b22, #262117);">
-            <span>🌽 2ª Safra (Milho Safrinha)</span>
-            <strong id="kpi-milho-yield" style="color:#fbbf24;">-- sc/ha</strong>
-            <small id="kpi-milho-vol">Total: -- sacas | R$ --</small>
-          </div>
-          <div class="kpi-card" style="border-left: 4px solid #58a6ff; background: linear-gradient(145deg, #161b22, #162233);">
-            <span>💰 Faturamento Anual Estimado</span>
-            <strong id="kpi-total-revenue" style="color:#58a6ff;">R$ --</strong>
-            <small>Soma das 2 Safras no Talhão</small>
-          </div>
-        </div>
-
-        <div class="kpi-grid">
-          <div class="kpi-card" style="border-left: 4px solid #2ea043;">
-            <span>Área Monitorada</span>
-            <strong id="kpi-area">-- ha</strong>
-            <small id="kpi-talhao-desc">Talhão Principal</small>
-          </div>
-          <div class="kpi-card" style="border-left: 4px solid #58a6ff;">
-            <span>Chuva Acumulada</span>
-            <strong id="kpi-rain">Carregando...</strong>
-            <small id="kpi-rain-sub">Total 12 Meses (NASA POWER)</small>
-          </div>
-          <div class="kpi-card" style="border-left: 4px solid #d29922;">
-            <span>Temperatura Média</span>
-            <strong id="kpi-temp">Carregando...</strong>
-            <small id="kpi-temp-sub">Série Histórica Diária</small>
-          </div>
-          <div class="kpi-card" style="border-left: 4px solid #a371f7;">
-            <span>Vigor da Data Selecionada</span>
-            <strong id="kpi-mean-index">NDVI 0.68</strong>
-            <small id="kpi-mean-date">Passagem 07/04/2025</small>
+          <div class="timeline-dates-bar" id="dashboard-dates-bar" aria-label="Datas de passagem disponíveis">
+            <!-- Pílulas de data injetadas pelo JS a partir do catálogo real -->
           </div>
         </div>
 
         <div class="dash-layout">
           <div>
-            <!-- PR #7 — CLIMA & CONDIÇÕES AGRONÔMICAS (NASA POWER real,
-                 localização canônica da fazenda; o frontend NUNCA consulta
-                 a NASA diretamente — sempre via /api/climate/farm/{id}). -->
-            <div class="chart-box" id="climate-panel" style="border-left: 4px solid #a371f7;">
-              <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
-                <h3 style="margin:0;">🌦️ Clima &amp; Condições Agronômicas <span style="font-size:0.68rem; color:#8b949e; font-weight:400;">· Fonte: NASA POWER</span></h3>
-                <span id="climate-period-pills" style="display:flex; gap:6px; flex-wrap:wrap;">
-                  <button class="tab-btn" id="climate-preset-7d" type="button" onclick="selectClimatePreset('7d')">7 dias</button>
-                  <button class="tab-btn" id="climate-preset-15d" type="button" onclick="selectClimatePreset('15d')">15 dias</button>
-                  <button class="tab-btn active" id="climate-preset-30d" type="button" onclick="selectClimatePreset('30d')">30 dias</button>
-                  <button class="tab-btn" id="climate-preset-custom" type="button" onclick="selectClimateCustom()">Personalizado</button>
-                </span>
-              </div>
-              <div id="climate-custom-row" hidden style="display:flex; gap:8px; align-items:center; margin-bottom:10px; flex-wrap:wrap;">
-                <span style="font-size:0.75rem; color:#8b949e;">Período da análise climática:</span>
-                <input type="date" id="climate-custom-start" style="background:#0d1117; color:#f0f6fc; border:1px solid #30363d; border-radius:6px; padding:4px 8px;">
-                <input type="date" id="climate-custom-end" style="background:#0d1117; color:#f0f6fc; border:1px solid #30363d; border-radius:6px; padding:4px 8px;">
-                <button class="tab-btn" type="button" onclick="applyClimateCustomRange()">Aplicar período do clima</button>
-                <span style="font-size:0.68rem; color:#8b949e;" title="A timeline 3D abaixo tem controle de período próprio (cenas Sentinel-2) e não afeta o painel de clima.">altera apenas o painel de clima</span>
-              </div>
-              <div id="climate-context" class="climate-context">Carregando contexto da fazenda…</div>
-              <div id="climate-state"></div>
-            </div>
-
-            <!-- PR #8 — Saúde & Evolução da Lavoura (Sentinel-2 real) -->
-            <div class="chart-box crop-health-panel" id="crop-health-panel">
-              <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
-                <h3 style="margin:0;">🌱 Saúde &amp; Evolução da Lavoura <span style="font-size:0.68rem; color:#8b949e; font-weight:400;">· Sentinel-2 / Copernicus</span></h3>
-                <div class="crop-health-toolbar" style="margin:0;">
+            <!-- ==========================================================
+                 3 · SAÚDE & EVOLUÇÃO DA LAVOURA (Sentinel-2 / Copernicus)
+                 Hierarquia explícita:
+                   N1 estado atual · N2 mudança recente · N3 tendência
+                   N4 persistência e anomalia · N5 histórico e A/B
+                 ========================================================== -->
+            <div class="chart-box" id="crop-health-panel">
+              <div class="panel-head">
+                <h3 class="panel-title" style="margin:0;">
+                  Saúde &amp; Evolução da Lavoura
+                  <span class="source">Sentinel-2 L2A · Copernicus</span>
+                </h3>
+                <div class="ch-toolbar">
                   <label for="crop-health-index">Índice</label>
-                  <select id="crop-health-index" aria-label="Índice da análise temporal">
+                  <select id="crop-health-index" aria-label="Índice espectral da análise temporal">
                     <option value="ndvi">NDVI</option>
                     <option value="ndre">NDRE</option>
                     <option value="savi">SAVI</option>
@@ -615,131 +698,351 @@
                     <option value="gndvi">GNDVI</option>
                     <option value="ndmi">NDMI</option>
                   </select>
-                  <button type="button" id="crop-health-reload">Atualizar análise</button>
+                  <label for="crop-health-period">Histórico</label>
+                  <select id="crop-health-period" aria-label="Janela do histórico exibido na série temporal">
+                    <option value="180">180 dias</option>
+                    <option value="365" selected>365 dias</option>
+                    <option value="730">730 dias</option>
+                  </select>
+                  <button type="button" id="crop-health-reload">Atualizar</button>
                 </div>
               </div>
-              <div id="crop-health-state" class="crop-health-state">Carregando cenas Sentinel-2 reais…</div>
-              <div class="crop-health-kpis">
-                <div class="crop-health-kpi"><span>Vigor espectral atual</span><strong id="crop-health-current">—</strong><small id="crop-health-current-date">sem cena selecionada</small></div>
-                <div class="crop-health-kpi"><span>Tendência recente</span><strong id="crop-health-trend">—</strong><small id="crop-health-trend-detail">mínimo de cenas e qualidade</small></div>
-                <div class="crop-health-kpi"><span>Queda persistente</span><strong id="crop-health-persistent">—</strong><small id="crop-health-persistent-pct">não extrapolada para pixels sem dado</small></div>
-                <div class="crop-health-kpi"><span>Qualidade da análise</span><strong id="crop-health-quality">—</strong><small id="crop-health-quality-detail">cobertura válida e nuvens</small></div>
+
+              <div id="crop-health-state" class="state state-loading" role="status" aria-live="polite">
+                <span class="spinner" aria-hidden="true"></span>
+                <span id="crop-health-state-text">Consultando o catálogo Sentinel-2 e processando as cenas do talhão…</span>
               </div>
-              <div class="chart-box-inner" style="background:#0d1117; border:1px solid #21262d; border-radius:8px; padding:10px;">
-                <h4 style="margin:0 0 8px; color:#8b949e; font-size:0.78rem;">📈 Série temporal das aquisições reais</h4>
-                <canvas id="cropHealthChart" height="105"></canvas>
+
+              <!-- N1 — estado atual e tendência da janela operacional -->
+              <div class="ch-primary">
+                <div class="ch-headline" id="crop-health-current-card">
+                  <span class="label">Cena mais recente com dado</span>
+                  <span class="value" id="crop-health-current">—</span>
+                  <span class="qualifier" id="crop-health-current-date">aguardando a primeira aquisição processada</span>
+                  <span class="qualifier" id="crop-health-current-validity"></span>
+                </div>
+                <div class="ch-headline" id="crop-health-trend-card">
+                  <span class="label" id="crop-health-trend-label">Tendência da janela recente</span>
+                  <span class="value" id="crop-health-trend">—</span>
+                  <span class="qualifier" id="crop-health-trend-detail">exige um mínimo de cenas válidas e de intervalo</span>
+                  <span class="qualifier" id="crop-health-trend-window"></span>
+                </div>
               </div>
-              <div class="crop-health-toolbar" style="margin-top:10px;">
-                <label for="crop-health-date-a">Data A</label><select id="crop-health-date-a"></select>
-                <label for="crop-health-date-b">Data B</label><select id="crop-health-date-b"></select>
+
+              <!-- N2 — mudança recente: cada delta traz a sua referência -->
+              <div class="ch-block-title">
+                Mudança recente
+                <span class="hint">cada variação é absoluta, na unidade do índice, e traz a data de referência</span>
+              </div>
+              <div class="ch-deltas">
+                <div class="ch-delta">
+                  <span class="label">Desde a cena anterior</span>
+                  <span class="value none" id="crop-health-delta-previous">—</span>
+                  <span class="ref" id="crop-health-delta-previous-ref">sem cena anterior com dado</span>
+                </div>
+                <div class="ch-delta">
+                  <span class="label">Variação em ~30 dias</span>
+                  <span class="value none" id="crop-health-delta-30d">—</span>
+                  <span class="ref" id="crop-health-delta-30d-ref">sem cena próxima de 30 dias atrás</span>
+                </div>
+                <div class="ch-delta">
+                  <span class="label">Variação no período da tendência</span>
+                  <span class="value none" id="crop-health-delta-window">—</span>
+                  <span class="ref" id="crop-health-delta-window-ref">a tendência precisa de dados suficientes</span>
+                </div>
+              </div>
+
+              <!-- N4 — persistência, anomalia interna e cobertura da série -->
+              <div class="ch-block-title">Atenção e cobertura</div>
+              <div class="ch-secondary">
+                <div class="ch-delta">
+                  <span class="label">Queda persistente</span>
+                  <span class="value none" id="crop-health-persistent">—</span>
+                  <span class="ref" id="crop-health-persistent-pct">exige a mesma direção em cenas consecutivas</span>
+                </div>
+                <div class="ch-delta">
+                  <span class="label">Zona divergente na cena</span>
+                  <span class="value none" id="crop-health-anomaly">—</span>
+                  <span class="ref" id="crop-health-anomaly-ref">comparação com a mediana do próprio talhão</span>
+                </div>
+                <div class="ch-delta">
+                  <span class="label">Qualidade da cena atual</span>
+                  <span class="value none" id="crop-health-scene-quality">—</span>
+                  <span class="ref" id="crop-health-scene-quality-detail">cobertura válida após máscara e nuvens da cena</span>
+                </div>
+                <div class="ch-delta">
+                  <span class="label">Cobertura da série</span>
+                  <span class="value none" id="crop-health-quality">—</span>
+                  <span class="ref" id="crop-health-quality-detail">proporção de cenas úteis no período</span>
+                </div>
+              </div>
+
+              <div id="crop-health-attention" class="ch-secondary" style="display:none;" aria-live="polite"></div>
+
+              <!-- N5 — histórico observado -->
+              <div class="ch-block-title">Série temporal observada</div>
+              <div class="chart-box-inner">
+                <div class="ch-chart-head">
+                  <h4 id="crop-health-chart-title">Índice médio do talhão por aquisição</h4>
+                  <span class="axis-note" id="crop-health-chart-range">período e número de cenas serão exibidos com os dados</span>
+                </div>
+                <canvas id="cropHealthChart" height="120" role="img" aria-label="Série temporal do índice espectral médio do talhão"></canvas>
+                <div id="crop-health-chart-empty" class="state state-empty" hidden>
+                  Sem cenas válidas para desenhar a série neste período.
+                </div>
+                <div class="ch-legend" aria-hidden="true">
+                  <span><i style="background:#8ecfa0"></i> cena de qualidade alta</span>
+                  <span><i style="background:#dfae55"></i> qualidade média</span>
+                  <span><i style="background:#d98a7f"></i> qualidade limitada</span>
+                  <span><i style="background:#58655f"></i> insuficiente — fora da tendência</span>
+                </div>
+              </div>
+
+              <!-- N5 — comparação A/B entre duas aquisições reais -->
+              <div class="ch-block-title">
+                Comparação A → B
+                <span class="hint">delta espacial calculado no backend sobre os pixels pareados das duas cenas</span>
+              </div>
+              <div class="ch-toolbar">
+                <label for="crop-health-date-a">Cena A</label>
+                <select id="crop-health-date-a" aria-label="Primeira cena da comparação"></select>
+                <label for="crop-health-date-b">Cena B</label>
+                <select id="crop-health-date-b" aria-label="Segunda cena da comparação"></select>
                 <button type="button" id="crop-health-compare">Comparar A/B</button>
                 <button type="button" id="crop-health-previous">Comparar com cena anterior</button>
               </div>
-              <div id="crop-health-compare-state" class="crop-health-state">Escolha duas cenas reais para visualizar o delta.</div>
-              <div class="crop-health-compare">
-                <div class="crop-health-compare-card"><h4>O que mudou</h4><div id="crop-health-change-summary" class="crop-health-meta">—</div></div>
-                <div class="crop-health-compare-card"><h4>Onde mudou · mapa de diferença</h4><img id="crop-health-difference-image" alt="Mapa de diferença espectral entre duas cenas" hidden><div id="crop-health-difference-placeholder" class="crop-health-meta">O mapa será exibido após uma comparação real.</div><div class="crop-health-legend">Verde = aumento · cinza = estabilidade · laranja/vermelho = redução · cinza escuro = sem par válido</div></div>
+              <div id="crop-health-compare-state" class="state state-empty" role="status" aria-live="polite">
+                Escolha duas aquisições reais para calcular a diferença entre elas.
               </div>
-              <div id="crop-health-provenance" class="crop-health-meta">Fonte, bandas, cobertura válida e limitações serão exibidas quando houver dados reais.</div>
-              <div class="crop-health-meta">Índice espectral não é diagnóstico agronômico. Os dados não permitem determinar a causa da mudança; a área merece inspeção quando a evidência for persistente.</div>
+              <div class="ch-compare">
+                <div class="ch-compare-card">
+                  <h4>O que mudou</h4>
+                  <div id="crop-health-change-summary" class="disclaimer">Nenhuma comparação executada.</div>
+                  <div id="crop-health-change-areas" class="ch-areas" style="margin-top:12px;"></div>
+                </div>
+                <div class="ch-compare-card">
+                  <h4>Onde mudou · mapa de diferença</h4>
+                  <img id="crop-health-difference-image" alt="Mapa da diferença espectral entre as duas cenas selecionadas" hidden>
+                  <div id="crop-health-difference-placeholder" class="state state-empty">
+                    O mapa aparece após uma comparação entre duas cenas reais.
+                  </div>
+                  <div class="ch-legend">
+                    <span><i style="background:#4e9a68"></i> Verde = aumento</span>
+                    <span><i style="background:#93a39d"></i> cinza = estabilidade</span>
+                    <span><i style="background:#b8473c"></i> vermelho = redução</span>
+                    <span><i style="background:#58655f"></i> escuro = sem par válido</span>
+                  </div>
+                </div>
+              </div>
+
+              <div id="crop-health-provenance" class="provenance">Fonte, bandas, máscara e cobertura válida aparecem aqui quando houver cenas processadas.</div>
+              <div class="disclaimer" style="margin-top:8px;">
+                Índice espectral não é diagnóstico agronômico: ele descreve mudança relativa e
+                <b>não permite determinar a causa</b> dela. A coincidência com o clima
+                <b>não estabelece causalidade</b>. Quando faltam cenas válidas, o painel declara
+                <b>dados insuficientes</b> em vez de preencher a série.
+              </div>
             </div>
 
-            <!-- Zoneamento da Data Escolhida -->
-            <div class="chart-box" style="border-left: 4px solid #58a6ff;">
-              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-                <h3 style="margin:0;">🌱 Zoneamento Espectral & Distribuição da Área</h3>
-                <span id="zone-selected-date-badge" style="font-size:0.75rem; background:#21262d; padding:4px 8px; border-radius:6px; color:#58a6ff; font-weight:700;">Data: 07/04/2025</span>
+            <!-- ==========================================================
+                 4 · CLIMA & CONDIÇÕES AGRONÔMICAS (NASA POWER)
+                 O frontend nunca consulta a NASA diretamente: sempre via
+                 GET /api/climate/farm/{id}, com a localização canônica.
+                 ========================================================== -->
+            <div class="chart-box" id="climate-panel" style="border-left:2px solid var(--data);">
+              <div class="panel-head">
+                <h3 class="panel-title" style="margin:0;">
+                  Clima &amp; Condições Agronômicas
+                  <span class="source">NASA POWER</span>
+                </h3>
+                <span id="climate-period-pills" style="display:flex; gap:4px; flex-wrap:wrap;" role="group" aria-label="Período da análise climática">
+                  <button class="tab-btn" id="climate-preset-7d" type="button" onclick="selectClimatePreset('7d')">7 dias</button>
+                  <button class="tab-btn" id="climate-preset-15d" type="button" onclick="selectClimatePreset('15d')">15 dias</button>
+                  <button class="tab-btn active" id="climate-preset-30d" type="button" onclick="selectClimatePreset('30d')">30 dias</button>
+                  <button class="tab-btn" id="climate-preset-custom" type="button" onclick="selectClimateCustom()">Personalizado</button>
+                </span>
+              </div>
+              <fieldset id="climate-custom-row" hidden style="display:flex; gap:8px; align-items:flex-end; margin-bottom:12px; flex-wrap:wrap; border:1px solid var(--line); border-radius:var(--r-md); padding:10px 12px;">
+                <legend class="eyebrow" style="padding:0 6px;">Período da análise climática:</legend>
+                <span>
+                  <label class="field-label" for="climate-custom-start">Início</label>
+                  <input type="date" id="climate-custom-start">
+                </span>
+                <span>
+                  <label class="field-label" for="climate-custom-end">Fim</label>
+                  <input type="date" id="climate-custom-end">
+                </span>
+                <button class="btn" type="button" onclick="applyClimateCustomRange()">Aplicar período do clima</button>
+                <span class="disclaimer" style="align-self:center;" title="A timeline Sentinel-2 abaixo tem controle de período próprio e não é afetada por esta escolha.">altera apenas o painel de clima</span>
+              </fieldset>
+              <div id="climate-context" class="climate-context">Carregando o contexto climático da propriedade…</div>
+              <div id="climate-state"></div>
+            </div>
+
+            <!-- ==========================================================
+                 5 · ZONEAMENTO DA DATA ESCOLHIDA (analytics legado)
+                 ========================================================== -->
+            <div class="chart-box">
+              <div class="panel-head">
+                <h3 class="panel-title" style="margin:0;">
+                  Distribuição da área na data escolhida
+                  <span class="source">faixas do analytics legado</span>
+                </h3>
+                <span class="badge badge-none" id="zone-selected-date-badge">Data: —</span>
               </div>
               <div class="zones-grid">
-                <div class="zone-card" style="border-top: 3px solid #da3633;">
-                  <span>Faixa inferior*</span>
-                  <strong id="zone-stress-pct" style="color:#ff7b72;">--%</strong>
-                  <small id="zone-stress-ha">-- ha</small>
+                <div class="zone-card" style="border-top-color: var(--risk);">
+                  <span>Faixa inferior</span>
+                  <strong id="zone-stress-pct" style="color:var(--risk-text);">—%</strong>
+                  <small id="zone-stress-ha">— ha</small>
                 </div>
-                <div class="zone-card" style="border-top: 3px solid #d97706;">
-                  <span>Faixa intermediária*</span>
-                  <strong id="zone-mid-pct" style="color:#fbbf24;">--%</strong>
-                  <small id="zone-mid-ha">-- ha</small>
+                <div class="zone-card" style="border-top-color: var(--warn);">
+                  <span>Faixa intermediária</span>
+                  <strong id="zone-mid-pct" style="color:var(--warn-text);">—%</strong>
+                  <small id="zone-mid-ha">— ha</small>
                 </div>
-                <div class="zone-card" style="border-top: 3px solid #2ea043;">
-                  <span>Faixa superior*</span>
-                  <strong id="zone-good-pct" style="color:#7ee787;">--%</strong>
-                  <small id="zone-good-ha">-- ha</small>
+                <div class="zone-card" style="border-top-color: var(--veg);">
+                  <span>Faixa superior</span>
+                  <strong id="zone-good-pct" style="color:var(--veg-text);">—%</strong>
+                  <small id="zone-good-ha">— ha</small>
                 </div>
-                <div class="zone-card" style="border-top: 3px solid #1f6feb;">
-                  <span>Faixa alta*</span>
-                  <strong id="zone-dense-pct" style="color:#58a6ff;">--%</strong>
-                  <small id="zone-dense-ha">-- ha</small>
+                <div class="zone-card" style="border-top-color: var(--data);">
+                  <span>Faixa alta</span>
+                  <strong id="zone-dense-pct" style="color:var(--data-text);">—%</strong>
+                  <small id="zone-dense-ha">— ha</small>
                 </div>
               </div>
-              <div style="font-size:0.68rem; color:#8b949e;">* Faixas visuais do analytics legado; não são diagnóstico e não substituem a análise de mudança acima.</div>
+              <p class="disclaimer" style="margin:0;">
+                Faixas de valor de uma única cena, herdadas do analytics legado. Não são zonas de
+                mudança nem diagnóstico e não substituem a análise de evolução acima.
+              </p>
             </div>
 
-            <!-- Gráfico Interativo da Curva de Safra -->
+            <!-- ==========================================================
+                 6 · SÉRIES METEOROLÓGICAS E JANELA DE APLICAÇÃO
+                 ========================================================== -->
             <div class="chart-box">
-              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-                <h3 style="margin:0;">📈 Curva Real da Safra (Clique nos pontos para ver os dados da data)</h3>
-              </div>
-              <canvas id="cropCurveChart" height="110"></canvas>
+              <h3>Curva do índice por passagem</h3>
+              <canvas id="cropCurveChart" height="110" role="img" aria-label="Curva do índice espectral por passagem do satélite"></canvas>
+              <p class="chart-caption">Clique em um ponto para carregar a data correspondente no painel e na visualização.</p>
             </div>
 
-            <div class="charts-grid">
-              <div class="chart-box">
-                <h3>🌧️ Precipitação Mensal Acumulada (mm)</h3>
-                <canvas id="rainChart" height="130"></canvas>
+            <div class="charts-grid" style="margin-bottom:16px;">
+              <div class="chart-box" style="margin-bottom:0;">
+                <h3>Precipitação mensal acumulada</h3>
+                <canvas id="rainChart" height="130" role="img" aria-label="Precipitação mensal acumulada em milímetros"></canvas>
+                <p class="chart-caption">Milímetros por mês · fonte NASA POWER na coordenada do talhão.</p>
               </div>
-              <div class="chart-box">
-                <h3>🌡️ Perfil Térmico Mensal (°C)</h3>
-                <canvas id="tempChart" height="130"></canvas>
+              <div class="chart-box" style="margin-bottom:0;">
+                <h3>Perfil térmico mensal</h3>
+                <canvas id="tempChart" height="130" role="img" aria-label="Temperaturas mínima, média e máxima por mês"></canvas>
+                <p class="chart-caption">Graus Celsius · mínima, média e máxima diárias agregadas por mês.</p>
               </div>
             </div>
 
             <div class="table-box">
-              <h3>🛰️ Série Recente & Janela de Pulverização (NASA POWER)</h3>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Data</th>
-                    <th>Temp.</th>
-                    <th>Chuva</th>
-                    <th>Umidade</th>
-                    <th>Vento</th>
-                    <th>Status Aplicação</th>
-                  </tr>
-                </thead>
-                <tbody id="table-body">
-                  <tr><td colspan="6" style="text-align:center; color:#8b949e;">Carregando dados meteorológicos ao vivo...</td></tr>
-                </tbody>
-              </table>
+              <h3>Janela de aplicação nos dias recentes</h3>
+              <div class="table-wrap">
+                <table class="data">
+                  <caption class="visually-hidden">Condições meteorológicas diárias e aptidão para aplicação</caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">Data</th>
+                      <th scope="col">Temp.</th>
+                      <th scope="col">Chuva</th>
+                      <th scope="col">Umidade</th>
+                      <th scope="col">Vento</th>
+                      <th scope="col">Aplicação</th>
+                    </tr>
+                  </thead>
+                  <tbody id="table-body">
+                    <tr><td colspan="6" style="color:var(--text-3);">Carregando dados meteorológicos…</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <p class="chart-caption">
+                Critério operacional de pulverização a partir de vento, umidade e chuva do dia.
+                Não considera produto, equipamento nem legislação local.
+              </p>
             </div>
           </div>
 
+          <!-- ============================================================
+               COLUNA DE APOIO — projeção What-If e estimativa de safra
+               ============================================================ -->
           <div>
-            <div class="side-card" style="border-left: 4px solid #d29922;">
-              <h3 style="color:#e3b341;">⚡ Projeção Rápida What-If</h3>
+            <div class="side-card" style="border-left:2px solid var(--warn);">
+              <h3>Projeção rápida What-If</h3>
+              <p class="disclaimer" style="margin:-4px 0 12px;">
+                Modelo empírico de sensibilidade. Não é medição nem previsão do Sentinel-2.
+              </p>
               <div class="param-group">
-                <label><span>Adubação Nitrogenada (N)</span><strong id="val-dash-n">+0 kg/ha</strong></label>
+                <label for="slider-dash-n"><span>Adubação nitrogenada</span><strong id="val-dash-n">+0 kg/ha</strong></label>
                 <input type="range" id="slider-dash-n" min="-50" max="150" step="10" value="0">
               </div>
               <div class="param-group">
-                <label><span>Lâmina de Irrigação</span><strong id="val-dash-w">+0 mm</strong></label>
+                <label for="slider-dash-w"><span>Lâmina de irrigação</span><strong id="val-dash-w">+0 mm</strong></label>
                 <input type="range" id="slider-dash-w" min="-30" max="60" step="5" value="0">
               </div>
               <div class="param-group">
-                <label><span>Pressão de Pragas</span><strong id="val-dash-p">0%</strong></label>
+                <label for="slider-dash-p"><span>Pressão de pragas</span><strong id="val-dash-p">0%</strong></label>
                 <input type="range" id="slider-dash-p" min="0" max="60" step="5" value="0">
               </div>
               <div class="sim-result-box">
-                <div style="font-size:0.72rem; color:#8b949e; margin-bottom:4px;">PROJEÇÃO DO TALHÃO:</div>
-                <div>Vigor: <strong id="dash-ndvi-val" style="color:#7ee787;">NDVI +0.00</strong></div>
-                <div>Produtividade: <strong id="dash-yield-val" style="color:#58a6ff;">+0.0 sc/ha</strong></div>
-                <div style="margin-top:6px; padding-top:6px; border-top:1px solid #30363d;">
-                  Impacto Financeiro: <strong id="dash-money-val" style="color:#f0f6fc;">R$ 0,00</strong>
+                <span class="eyebrow">Projeção do talhão</span>
+                <span>Vigor: <strong id="dash-ndvi-val">NDVI +0.00</strong></span>
+                <span>Produtividade: <strong id="dash-yield-val">+0.0 sc/ha</strong></span>
+                <span>Impacto financeiro: <strong id="dash-money-val">R$ 0,00</strong></span>
+              </div>
+              <button class="btn" style="width:100%; margin-top:12px; justify-content:center;" type="button" onclick="switchScreen('3d')">
+                Ver lado a lado no terreno 3D ↗
+              </button>
+            </div>
+
+            <div class="side-card">
+              <h3>Estimativa de safra</h3>
+              <p class="disclaimer" style="margin:-4px 0 12px;">
+                Modelo empírico com datas e preços fixos no servidor. É uma estimativa de
+                referência, <b>não</b> uma medição da lavoura nem uma previsão comercial.
+              </p>
+              <div class="metric-grid" style="grid-template-columns:1fr;">
+                <div class="metric is-veg">
+                  <span class="label">Safra de verão (soja)</span>
+                  <span class="value" id="kpi-soja-yield">— sc/ha</span>
+                  <span class="qualifier" id="kpi-soja-vol">total e receita estimados</span>
+                </div>
+                <div class="metric is-warn">
+                  <span class="label">2ª safra (milho safrinha)</span>
+                  <span class="value" id="kpi-milho-yield">— sc/ha</span>
+                  <span class="qualifier" id="kpi-milho-vol">total e receita estimados</span>
+                </div>
+                <div class="metric is-data">
+                  <span class="label">Receita anual estimada</span>
+                  <span class="value" id="kpi-total-revenue">R$ —</span>
+                  <span class="qualifier">soma das duas safras no talhão</span>
                 </div>
               </div>
-              <button class="tab-btn active" style="width:100%; margin-top:12px; justify-content:center;" onclick="switchScreen('3d')">
-                Visualizar em 3D Lado a Lado ↗
-              </button>
+            </div>
+
+            <div class="side-card">
+              <h3>Condições no período</h3>
+              <div class="metric-grid" style="grid-template-columns:1fr;">
+                <div class="metric is-data">
+                  <span class="label">Chuva acumulada</span>
+                  <span class="value" id="kpi-rain">Carregando…</span>
+                  <span class="qualifier" id="kpi-rain-sub">total de 12 meses · NASA POWER</span>
+                </div>
+                <div class="metric is-warn">
+                  <span class="label">Temperatura média</span>
+                  <span class="value" id="kpi-temp">Carregando…</span>
+                  <span class="qualifier" id="kpi-temp-sub">série histórica diária</span>
+                </div>
+                <div class="metric is-veg">
+                  <span class="label">Índice da data selecionada</span>
+                  <span class="value" id="kpi-mean-index">—</span>
+                  <span class="qualifier" id="kpi-mean-date">nenhuma passagem selecionada</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -749,10 +1052,11 @@
     <!-- TELA 2: MAPA 2D -->
     <div id="screen-map" class="screen-view">
       <div class="map-floating-card">
-        <h3 style="margin:0 0 4px 0; color:#58a6ff;" id="map-card-farm">Propriedade</h3>
-        <p style="margin:0 0 6px 0; font-size:0.82rem; color:#8b949e;" id="map-card-city">Localização</p>
-        <div style="font-size:0.82rem;" id="map-card-area">Área: <strong>-- ha</strong></div>
-        <div style="font-size:0.82rem; margin-top:2px;" id="map-card-crop">Cultura: <strong>--</strong></div>
+        <span class="eyebrow">Propriedade</span>
+        <h3 id="map-card-farm">—</h3>
+        <p style="margin:0 0 8px; font-size:var(--fs-meta); color:var(--text-2);" id="map-card-city">—</p>
+        <div style="font-size:var(--fs-meta); color:var(--text-2);" id="map-card-area">Área: <strong style="color:var(--text-1);">— ha</strong></div>
+        <div style="font-size:var(--fs-meta); color:var(--text-2); margin-top:2px;" id="map-card-crop">Cultura: <strong style="color:var(--text-1);">—</strong></div>
       </div>
       <div id="map"></div>
     </div>
@@ -763,12 +1067,12 @@
     <div id="screen-3d" class="screen-view">
       <div id="viewport-3d">
         <div id="label-left" class="view-label">
-          <span class="scenario-title">OBSERVAÇÃO REAL</span>
+          <span class="scenario-title">Observação real</span>
           <span class="scenario-sub" id="status-real">carregando…</span>
         </div>
         <div id="label-right" class="view-label">
-          <span class="scenario-title">PROJEÇÃO WHAT-IF</span>
-          <span class="scenario-sub" id="status-sim">Projeção What-If</span>
+          <span class="scenario-title">Projeção What-If</span>
+          <span class="scenario-sub" id="status-sim">cenário simulado sobre a cena atual</span>
         </div>
         <div class="divider-line"></div>
 
@@ -778,7 +1082,7 @@
         <!-- WHAT-IF compacto: recolhível; recolhido preserva os valores -->
         <div id="whatif-panel-3d">
           <div id="whatif-header">
-            <span class="whatif-title">⚡ What-If</span>
+            <span class="whatif-title">What-If</span>
             <button id="whatif-toggle" type="button" title="Recolher/Expandir" aria-expanded="true">−</button>
           </div>
           <div id="whatif-body">
@@ -802,7 +1106,7 @@
           </div>
         </div>
         <!-- Aba lateral única quando o painel está recolhido -->
-        <button id="whatif-tab" type="button" style="display:none;">⚡ What-If</button>
+        <button id="whatif-tab" type="button" style="display:none;">What-If</button>
 
         <!-- METADADOS COMPACTOS (canto inferior esquerdo, ≤ ~25% da largura):
              1 linha + [Detalhes] (modal em drawer); resumo padrão. -->
@@ -818,7 +1122,7 @@
         </div>
 
         <!-- Dica mínima de navegação (não tutorial) -->
-        <div id="camera-hint">Arraste para orbitar · Scroll para zoom</div>
+        <div id="camera-hint">Arraste para orbitar · roda do mouse para aproximar</div>
 
         <!-- Erro compacto de cena (local, com retry manual) -->
         <div id="error-toast">
@@ -835,7 +1139,7 @@
            Semântica cronológica e identidade por data PRESERVADAS. -->
       <div id="timeline-panel">
         <div class="timeline-row">
-          <span id="timeline-title">TIMELINE SENTINEL-2</span>
+          <span id="timeline-title">Aquisições Sentinel-2</span>
           <span id="timeline-meta"></span>
           <span id="load-indicator"><span class="spinner"></span><span id="load-indicator-text">Carregando…</span></span>
           <span id="preload-status" hidden></span>
@@ -849,20 +1153,20 @@
             <input type="date" id="custom-end">
             <button id="custom-apply" type="button">Aplicar à timeline 3D</button>
           </span>
-          <button id="btn-latest" type="button" title="Selecionar a aquisição válida mais recente do catálogo">⇥ Mais recente</button>
+          <button id="btn-latest" type="button" title="Selecionar a aquisição válida mais recente do catálogo">Mais recente</button>
           <button id="tl-prev" class="tl-arrow" type="button" title="Cenas anteriores" aria-label="Cenas anteriores">‹</button>
           <div id="scene-timeline" aria-label="Cenas Sentinel-2 reais disponíveis"></div>
           <button id="tl-next" class="tl-arrow" type="button" title="Cenas seguintes" aria-label="Cenas seguintes">›</button>
         </div>
         <div class="timeline-row controls-row">
-          <button id="play-btn" type="button">▶ Play</button>
-          <select id="play-interval" title="Pausa entre cenas do Play">
+          <button id="play-btn" type="button">▶ Reproduzir</button>
+          <select id="play-interval" aria-label="Pausa entre cenas na reprodução" title="Pausa entre cenas na reprodução">
             <option value="1000">1 s</option>
             <option value="1600" selected>1,6 s</option>
             <option value="3000">3 s</option>
             <option value="5000">5 s</option>
           </select>
-          <select id="layer-select" title="Camada espectral">
+          <select id="layer-select" aria-label="Camada espectral exibida no terreno" title="Camada espectral exibida no terreno">
             <option value="rgb">RGB</option>
             <option value="ndvi">NDVI</option>
             <option value="evi">EVI</option>
@@ -876,7 +1180,7 @@
             <button class="exag-btn" type="button" data-exag="3">3×</button>
             <button class="exag-btn" type="button" data-exag="5">5×</button>
           </span>
-          <button id="btn-reset-camera" type="button" title="Reenquadrar o talhão na vista oblíqua padrão">⟲ Resetar</button>
+          <button id="btn-reset-camera" type="button" title="Reenquadrar o talhão na vista oblíqua padrão">Reenquadrar</button>
           <input type="range" id="timeline-slider" min="0" max="12" value="0" step="1" style="display:none;">
         </div>
       </div>
@@ -1224,14 +1528,26 @@
         }
       }
 
-      document.getElementById('nav-farm-title').innerText = `${activeFarm.name} — ${activeFarm.city}`;
-      document.getElementById('kpi-area').innerText = `${activeFarm.total_area} ha`;
-      document.getElementById('kpi-talhao-desc').innerText = `${activeFarm.crop}`;
-      
-      document.getElementById('map-card-farm').innerText = activeFarm.name;
-      document.getElementById('map-card-city').innerText = `📍 ${activeFarm.city}`;
-      document.getElementById('map-card-area').innerHTML = `Área: <strong>${activeFarm.total_area} ha</strong>`;
-      document.getElementById('map-card-crop').innerHTML = `Cultura: <strong>${activeFarm.crop}</strong>`;
+      // Faixa de contexto: quem/onde/quanto antes de qualquer indicador.
+      const talhaoName = (activeFarm.talhoes && activeFarm.talhoes[0] && activeFarm.talhoes[0].name) || 'Talhão principal';
+      const setText = (id, value) => { const el = document.getElementById(id); if (el) el.innerText = value; };
+      const hasCoords = Number.isFinite(Number(activeFarm.latitude)) && Number.isFinite(Number(activeFarm.longitude));
+
+      document.getElementById('nav-farm-title').innerText = activeFarm.name || 'Propriedade';
+      setText('ctx-talhao', talhaoName);
+      setText('ctx-farm', activeFarm.name || '—');
+      setText('kpi-area', `${activeFarm.total_area} ha`);
+      setText('kpi-talhao-desc', 'geometria cadastrada do talhão');
+      setText('ctx-crop', activeFarm.crop || '—');
+      setText('ctx-city', activeFarm.city || 'localização não informada');
+      setText('ctx-coords', hasCoords
+        ? `${Number(activeFarm.latitude).toFixed(4)}, ${Number(activeFarm.longitude).toFixed(4)}`
+        : 'não informada');
+
+      document.getElementById('map-card-farm').innerText = activeFarm.name || '—';
+      document.getElementById('map-card-city').innerText = activeFarm.city || 'localização não informada';
+      document.getElementById('map-card-area').innerHTML = `Área: <strong style="color:var(--text-1);">${activeFarm.total_area} ha</strong>`;
+      document.getElementById('map-card-crop').innerHTML = `Cultura: <strong style="color:var(--text-1);">${activeFarm.crop}</strong>`;
 
       map.setView([activeFarm.latitude, activeFarm.longitude], 15);
       marker.setLatLng([activeFarm.latitude, activeFarm.longitude]);
@@ -1245,9 +1561,9 @@
         try {
           const coords = JSON.parse(activeFarm.kml_coordinates);
           currentPolygon = L.polygon(coords, {
-            color: '#2ea043',
+            color: '#4e9a68',
             weight: 3,
-            fillColor: '#238636',
+            fillColor: '#3f7d52',
             fillOpacity: 0.35
           }).addTo(map);
 
@@ -1448,10 +1764,10 @@
           const totalRev = data.yield_predictions.total_anual_faturamento_brl;
 
           document.getElementById('kpi-soja-yield').innerText = `${v.produtividade_sc_ha} sc/ha`;
-          document.getElementById('kpi-soja-vol').innerText = `Total: ${v.total_sacas.toLocaleString('pt-BR')} sc | R$ ${v.faturamento_bruto_brl.toLocaleString('pt-BR', {minimumFractionDigits: 2})}`;
+          document.getElementById('kpi-soja-vol').innerText = `${v.total_sacas.toLocaleString('pt-BR')} sacas · R$ ${v.faturamento_bruto_brl.toLocaleString('pt-BR', {minimumFractionDigits: 2})} estimados`;
 
           document.getElementById('kpi-milho-yield').innerText = `${s.produtividade_sc_ha} sc/ha`;
-          document.getElementById('kpi-milho-vol').innerText = `Total: ${s.total_sacas.toLocaleString('pt-BR')} sc | R$ ${s.faturamento_bruto_brl.toLocaleString('pt-BR', {minimumFractionDigits: 2})}`;
+          document.getElementById('kpi-milho-vol').innerText = `${s.total_sacas.toLocaleString('pt-BR')} sacas · R$ ${s.faturamento_bruto_brl.toLocaleString('pt-BR', {minimumFractionDigits: 2})} estimados`;
 
           document.getElementById('kpi-total-revenue').innerText = totalRev.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
         }
@@ -1466,7 +1782,7 @@
       
       if (currentStats && currentStats.zones) {
         document.getElementById('kpi-mean-index').innerText = `${currentLayer.toUpperCase()} ${currentStats.mean}`;
-        document.getElementById('kpi-mean-date').innerText = `Passagem ${currentStats.formatted_date}`;
+        document.getElementById('kpi-mean-date').innerText = `Passagem de ${currentStats.formatted_date}`;
         document.getElementById('zone-selected-date-badge').innerText = `Data: ${currentStats.formatted_date}`;
 
         document.getElementById('zone-stress-pct').innerText = `${currentStats.zones.stress.pct}%`;
@@ -1496,16 +1812,17 @@
         data: {
           labels: labels,
           datasets: [{
-            label: `${currentLayer.toUpperCase()} Médio Real`,
+            label: `${currentLayer.toUpperCase()} médio do talhão`,
             data: values,
-            borderColor: '#2ea043',
-            backgroundColor: 'rgba(46, 160, 67, 0.15)',
-            borderWidth: 2.5,
+            borderColor: '#4e9a68',
+            backgroundColor: 'rgba(78, 154, 104, 0.10)',
+            borderWidth: 1.5,
             fill: true,
-            tension: 0.35,
-            pointRadius: 6,
-            pointHoverRadius: 9,
-            pointBackgroundColor: '#7ee787'
+            tension: 0.15,
+            pointRadius: 4,
+            pointHoverRadius: 7,
+            pointBackgroundColor: '#8ecfa0',
+            pointBorderColor: '#8ecfa0'
           }]
         },
         options: {
@@ -1517,26 +1834,44 @@
             }
           },
           plugins: {
-            legend: { labels: { color: '#8b949e', font: { size: 11 } } },
+            legend: { display: false },
             tooltip: {
+              backgroundColor: '#121716', borderColor: '#2a3431', borderWidth: 1,
+              titleColor: '#e9efec', bodyColor: '#c3cfca', padding: 10,
               callbacks: {
-                label: (ctx) => ` Vigor Médio: ${ctx.parsed.y} (Clique para selecionar)`
+                label: (ctx) => [
+                  `${currentLayer.toUpperCase()} médio: ${ctx.parsed.y}`,
+                  'Clique para carregar esta passagem',
+                ]
               }
             }
           },
           scales: {
-            x: { grid: { color: '#21262d' }, ticks: { color: '#8b949e', font: { size: 10 } } },
-            y: { min: 0.1, max: 0.9, grid: { color: '#21262d' }, ticks: { color: '#8b949e', font: { size: 10 } } }
+            x: { grid: { color: '#19201e' }, ticks: { color: '#93a39d', font: { size: 10 } } },
+            y: { min: 0.1, max: 0.9, grid: { color: '#19201e' }, ticks: { color: '#93a39d', font: { size: 10 } } }
           }
         }
       });
     }
 
     // =====================================================================
-    // PR #8 — SAÚDE & EVOLUÇÃO DA LAVOURA
-    // A série abaixo usa somente cenas reais retornadas pelo STAC/CDSE. O
-    // analytics legado continua separado para não quebrar PDF/What-If/3D.
+    // SAÚDE & EVOLUÇÃO DA LAVOURA (PR #8)
+    //
+    // A série usa exclusivamente cenas reais do catálogo STAC/CDSE; o
+    // analytics legado permanece separado para não quebrar PDF/What-If/3D.
+    //
+    // Regras de apresentação assumidas por este bloco:
+    //  - toda variação é ABSOLUTA, na unidade do índice, e nunca é exibida
+    //    sem a referência (contra qual cena, em que intervalo);
+    //  - "qualidade da cena" e "cobertura da série" são indicadores
+    //    distintos e rotulados como tal;
+    //  - "sem dado" nunca é desenhado como zero, estável ou não aplicável.
     // =====================================================================
+    // [CROP-HEALTH-UI-START]
+    const CH_INDEX_UNITS = { ndvi: 'NDVI', ndre: 'NDRE', savi: 'SAVI', evi: 'EVI', ndwi: 'NDWI', gndvi: 'GNDVI', ndmi: 'NDMI' };
+    const CH_QUALITY_COLOR = { alta: '#8ecfa0', media: '#dfae55', limitada: '#d98a7f', insuficiente: '#58655f' };
+    const CH_TREND_TONE = { melhoria: 'is-veg', queda: 'is-risk', estavel: '', sem_tendencia: 'is-warn', dados_insuficientes: 'is-none' };
+
     function cropHealthFmtDate(iso) {
       if (!iso) return '—';
       const p = String(iso).split('-');
@@ -1548,24 +1883,75 @@
       return Number(value).toLocaleString('pt-BR', { minimumFractionDigits: digits, maximumFractionDigits: digits });
     }
 
-    function cropHealthSetState(message, kind = '') {
+    /** Variação assinada com unidade do índice — nunca em "%". */
+    function cropHealthFmtDelta(value, unit) {
+      if (value === null || value === undefined || !Number.isFinite(Number(value))) return null;
+      const n = Number(value);
+      return `${n > 0 ? '+' : n < 0 ? '−' : ''}${cropHealthFmt(Math.abs(n))} ${unit}`;
+    }
+
+    function cropHealthSetState(message, kind = 'ok') {
       const el = document.getElementById('crop-health-state');
-      if (!el) return;
-      el.className = `crop-health-state ${kind}`;
-      el.innerText = message;
+      const txt = document.getElementById('crop-health-state-text');
+      if (!el || !txt) return;
+      el.className = `state state-${kind}`;
+      el.querySelector?.('.spinner')?.toggleAttribute?.('hidden', kind !== 'loading');
+      txt.innerText = message;
+    }
+
+    /** Preenche um bloco de delta (valor + referência + cor semântica). */
+    function cropHealthSetDelta(valueId, refId, value, unit, refText, emptyText) {
+      const v = document.getElementById(valueId);
+      const r = document.getElementById(refId);
+      if (!v || !r) return;
+      const text = cropHealthFmtDelta(value, unit);
+      if (text === null) {
+        v.className = 'value none';
+        v.innerText = 'Sem dado';
+        r.innerText = emptyText;
+        return;
+      }
+      const n = Number(value);
+      v.className = `value ${n > 0 ? 'up' : n < 0 ? 'down' : ''}`.trim();
+      v.innerText = text;
+      r.innerText = refText;
     }
 
     function cropHealthClearVisuals() {
-      ['crop-health-current', 'crop-health-current-date', 'crop-health-trend', 'crop-health-trend-detail', 'crop-health-persistent', 'crop-health-persistent-pct', 'crop-health-quality', 'crop-health-quality-detail'].forEach((id) => {
-        const el = document.getElementById(id); if (el) el.innerText = '—';
+      const unit = CH_INDEX_UNITS[cropHealthIndex] || cropHealthIndex.toUpperCase();
+      document.getElementById('crop-health-current').innerText = '—';
+      document.getElementById('crop-health-current-date').innerText = 'nenhuma aquisição processada no período';
+      document.getElementById('crop-health-current-validity').innerText = '';
+      document.getElementById('crop-health-trend').innerText = 'Dados insuficientes';
+      document.getElementById('crop-health-trend-detail').innerText = 'a tendência exige cenas válidas e intervalo mínimo';
+      document.getElementById('crop-health-trend-window').innerText = '';
+      document.getElementById('crop-health-trend-card').className = 'ch-headline is-none';
+      document.getElementById('crop-health-current-card').className = 'ch-headline is-none';
+      cropHealthSetDelta('crop-health-delta-previous', 'crop-health-delta-previous-ref', null, unit, '', 'sem cena anterior com dado');
+      cropHealthSetDelta('crop-health-delta-30d', 'crop-health-delta-30d-ref', null, unit, '', 'sem cena próxima de 30 dias atrás');
+      cropHealthSetDelta('crop-health-delta-window', 'crop-health-delta-window-ref', null, unit, '', 'a tendência precisa de dados suficientes');
+      ['crop-health-persistent', 'crop-health-anomaly', 'crop-health-scene-quality', 'crop-health-quality'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) { el.className = 'value none'; el.innerText = 'Sem dado'; }
       });
-      const selects = ['crop-health-date-a', 'crop-health-date-b'];
-      selects.forEach((id) => { const el = document.getElementById(id); if (el) el.innerHTML = ''; });
+      const attention = document.getElementById('crop-health-attention');
+      if (attention) { attention.style.display = 'none'; attention.innerHTML = ''; }
+      ['crop-health-date-a', 'crop-health-date-b'].forEach((id) => {
+        const el = document.getElementById(id); if (el) el.innerHTML = '';
+      });
       if (cropHealthChartInstance) { cropHealthChartInstance.destroy(); cropHealthChartInstance = null; }
+      const canvas = document.getElementById('cropHealthChart');
+      const empty = document.getElementById('crop-health-chart-empty');
+      if (canvas) canvas.hidden = true;
+      if (empty) empty.hidden = false;
+      const range = document.getElementById('crop-health-chart-range');
+      if (range) range.innerText = 'nenhuma cena válida neste período';
       const img = document.getElementById('crop-health-difference-image');
-      if (img) { img.hidden = true; if (typeof img.removeAttribute === 'function') img.removeAttribute('src'); else img.src = ''; }
+      if (img) { img.hidden = true; img.removeAttribute ? img.removeAttribute('src') : (img.src = ''); }
       const placeholder = document.getElementById('crop-health-difference-placeholder');
       if (placeholder) placeholder.hidden = false;
+      const areas = document.getElementById('crop-health-change-areas');
+      if (areas) areas.innerHTML = '';
     }
 
     function cropHealthPopulateDates() {
@@ -1577,12 +1963,15 @@
         valid.forEach((item) => {
           const option = document.createElement('option');
           option.value = item.date;
-          option.innerText = `${cropHealthFmtDate(item.date)} · ${item.quality_label || item.quality || 'qualidade'}`;
+          option.innerText = `${cropHealthFmtDate(item.date)} · qualidade ${(item.quality_label || '—').toLowerCase()}`;
           select.appendChild(option);
         });
       });
       const a = document.getElementById('crop-health-date-a');
       const b = document.getElementById('crop-health-date-b');
+      const enabled = valid.length >= 2;
+      document.getElementById('crop-health-compare').disabled = !enabled;
+      document.getElementById('crop-health-previous').disabled = !enabled;
       if (valid.length >= 2) {
         a.value = valid[valid.length - 2].date;
         b.value = valid[valid.length - 1].date;
@@ -1593,43 +1982,218 @@
 
     function renderCropHealthChart() {
       const canvas = document.getElementById('cropHealthChart');
+      const empty = document.getElementById('crop-health-chart-empty');
       if (!canvas || typeof Chart === 'undefined') return;
       if (cropHealthChartInstance) cropHealthChartInstance.destroy();
-      const labels = cropHealthTimeline.map((item) => cropHealthFmtDate(item.date));
-      const values = cropHealthTimeline.map((item) => item.mean);
-      const colors = cropHealthTimeline.map((item) => item.quality === 'alta' ? '#7ee787' : item.quality === 'media' ? '#fbbf24' : '#ff7b72');
+      const points = cropHealthTimeline.filter((item) => item.mean !== null && item.mean !== undefined);
+      if (!points.length) {
+        canvas.hidden = true;
+        if (empty) empty.hidden = false;
+        return;
+      }
+      canvas.hidden = false;
+      if (empty) empty.hidden = true;
+      const unit = CH_INDEX_UNITS[cropHealthIndex] || cropHealthIndex.toUpperCase();
+      const labels = points.map((item) => cropHealthFmtDate(item.date));
+      const values = points.map((item) => item.mean);
+      // Cada qualidade tem cor própria: "limitada" e "insuficiente" NÃO são
+      // colapsadas, porque só a segunda fica fora da tendência.
+      const colors = points.map((item) => CH_QUALITY_COLOR[item.quality] || CH_QUALITY_COLOR.insuficiente);
+      const radii = points.map((item) => (item.accepted_for_trend === false ? 3 : 4.5));
       cropHealthChartInstance = new Chart(canvas, {
         type: 'line',
-        data: { labels, datasets: [{ label: `${cropHealthIndex.toUpperCase()} médio`, data: values, borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.12)', spanGaps: false, tension: 0.2, pointRadius: 4, pointBackgroundColor: colors, pointBorderColor: colors }] },
+        data: {
+          labels,
+          datasets: [{
+            label: `${unit} médio do talhão`,
+            data: values,
+            borderColor: '#5a95bd',
+            backgroundColor: 'rgba(47,111,147,0.10)',
+            spanGaps: false, tension: 0.15, borderWidth: 1.5,
+            pointRadius: radii, pointHoverRadius: 6,
+            pointBackgroundColor: colors, pointBorderColor: colors
+          }]
+        },
         options: {
-          responsive: true, animation: false,
-          plugins: { legend: { labels: { color: '#8b949e', font: { size: 10 } } }, tooltip: { callbacks: { label: (ctx) => ` ${cropHealthFmt(ctx.parsed.y)} · ${cropHealthTimeline[ctx.dataIndex]?.quality_label || 'qualidade não informada'}` } } },
-          scales: { x: { grid: { color: '#21262d' }, ticks: { color: '#8b949e', font: { size: 9 }, maxTicksLimit: 12 } }, y: { grid: { color: '#21262d' }, ticks: { color: '#8b949e', font: { size: 9 } } } }
+          responsive: true, maintainAspectRatio: false, animation: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: '#121716', borderColor: '#2a3431', borderWidth: 1,
+              titleColor: '#e9efec', bodyColor: '#c3cfca', padding: 10,
+              callbacks: {
+                title: (items) => `Aquisição de ${items[0].label}`,
+                label: (ctx) => {
+                  const item = points[ctx.dataIndex] || {};
+                  const lines = [`${unit} médio: ${cropHealthFmt(ctx.parsed.y)}`];
+                  lines.push(`Qualidade da cena: ${item.quality_label || 'não informada'}`);
+                  if (item.valid_pixel_pct !== null && item.valid_pixel_pct !== undefined) {
+                    lines.push(`Cobertura válida: ${cropHealthFmt(item.valid_pixel_pct, 1)}%`);
+                  }
+                  if (item.cloud_cover !== null && item.cloud_cover !== undefined) {
+                    lines.push(`Nuvens na cena: ${cropHealthFmt(item.cloud_cover, 1)}%`);
+                  }
+                  if (item.delta_previous !== null && item.delta_previous !== undefined) {
+                    lines.push(`Desde ${cropHealthFmtDate(item.delta_previous_from)}: ${cropHealthFmtDelta(item.delta_previous, unit)}`);
+                  }
+                  if (item.accepted_for_trend === false) lines.push('Fora da tendência (qualidade insuficiente)');
+                  return lines;
+                }
+              }
+            }
+          },
+          scales: {
+            x: { grid: { color: '#19201e' }, ticks: { color: '#7b8b84', font: { size: 10 }, maxTicksLimit: 12, autoSkip: true } },
+            y: {
+              grid: { color: '#19201e' },
+              title: { display: true, text: `${unit} médio`, color: '#7b8b84', font: { size: 10 } },
+              ticks: { color: '#7b8b84', font: { size: 10 } }
+            }
+          }
         }
       });
     }
 
     function renderCropHealthTimeline(data) {
-      cropHealthTimeline = Array.isArray(data && data.timeline) ? data.timeline.slice().sort((a, b) => String(a.date).localeCompare(String(b.date))) : [];
+      cropHealthTimeline = Array.isArray(data && data.timeline)
+        ? data.timeline.slice().sort((a, b) => String(a.date).localeCompare(String(b.date)))
+        : [];
       if (!cropHealthTimeline.length) { cropHealthClearVisuals(); return; }
+
+      const unit = CH_INDEX_UNITS[data.index] || String(data.index).toUpperCase();
       const metrics = data.metrics || {};
-      const current = metrics.current || cropHealthTimeline[cropHealthTimeline.length - 1];
       const trend = metrics.trend_detail || {};
+      const window = trend.window || {};
       const persistence = metrics.persistence || {};
-      const quality = data.quality || {};
-      document.getElementById('crop-health-current').innerText = `${data.index.toUpperCase()} ${cropHealthFmt(current.mean)}`;
-      document.getElementById('crop-health-current-date').innerText = `Cena ${cropHealthFmtDate(current.date)} · cobertura ${cropHealthFmt(current.valid_pixel_pct, 1)}%`;
+      const anomaly = metrics.internal_anomaly || {};
+      const series = data.quality || {};
+      const sceneQuality = data.scene_quality || {};
+      const current = metrics.current;
+
+      // ---- Nível 1: cena atual ----------------------------------------
+      const currentCard = document.getElementById('crop-health-current-card');
+      if (current) {
+        document.getElementById('crop-health-current').innerHTML =
+          `<span class="unit">${unit}</span>${cropHealthFmt(current.mean)}`;
+        document.getElementById('crop-health-current-date').innerText =
+          `Aquisição de ${cropHealthFmtDate(current.date)} · cobertura válida ${cropHealthFmt(current.valid_pixel_pct, 1)}%`
+          + (current.cloud_cover === null || current.cloud_cover === undefined ? '' : ` · nuvens ${cropHealthFmt(current.cloud_cover, 1)}%`);
+        const validity = document.getElementById('crop-health-current-validity');
+        validity.innerText = metrics.current_scene_note || '';
+        currentCard.className = `ch-headline ${metrics.current_is_valid_for_analysis ? 'is-veg' : 'is-warn'}`;
+      } else {
+        document.getElementById('crop-health-current').innerText = 'Sem dado';
+        document.getElementById('crop-health-current-date').innerText = 'nenhuma aquisição do período produziu valor de índice';
+        document.getElementById('crop-health-current-validity').innerText = '';
+        currentCard.className = 'ch-headline is-none';
+      }
+
+      // ---- Nível 3: tendência da janela operacional --------------------
+      document.getElementById('crop-health-trend-label').innerText =
+        window.days ? `Tendência · últimos ${window.days} dias` : 'Tendência';
       document.getElementById('crop-health-trend').innerText = trend.label || metrics.trend_label || 'Dados insuficientes';
-      document.getElementById('crop-health-trend-detail').innerText = trend.delta !== null && trend.delta !== undefined ? `variação absoluta ${trend.delta > 0 ? '+' : ''}${cropHealthFmt(trend.delta)}` : (trend.text || 'mínimo de cenas e qualidade');
-      const persistentHa = persistence.status === 'ok' ? persistence.declining.ha : null;
-      document.getElementById('crop-health-persistent').innerText = persistentHa === null ? '—' : `${cropHealthFmt(persistentHa, 2)} ha`;
-      document.getElementById('crop-health-persistent-pct').innerText = persistentHa === null ? (persistence.message || 'dados insuficientes') : `${cropHealthFmt(persistence.declining.pct, 1)}% do talhão · ${persistence.scenes_used} cenas`;
-      document.getElementById('crop-health-quality').innerText = quality.label || '—';
-      document.getElementById('crop-health-quality-detail').innerText = `${quality.valid_scenes || 0} de ${quality.scenes || 0} cenas úteis · pixels válidos pós-máscara`;
+      document.getElementById('crop-health-trend-card').className =
+        `ch-headline ${CH_TREND_TONE[trend.code] !== undefined ? CH_TREND_TONE[trend.code] : 'is-none'}`.trim();
+      document.getElementById('crop-health-trend-detail').innerText = trend.text || trend.reason || '';
+      document.getElementById('crop-health-trend-window').innerText = window.first_observation
+        ? `${trend.scenes_used} cenas válidas de ${cropHealthFmtDate(window.first_observation)} a ${cropHealthFmtDate(window.last_observation)}`
+          + (window.mode === 'janela_estendida' ? ' · janela estendida por falta de cobertura' : '')
+        : (trend.reason || '');
+
+      // ---- Nível 2: deltas, cada um com a sua referência ---------------
+      const dp = metrics.delta_previous_detail;
+      cropHealthSetDelta('crop-health-delta-previous', 'crop-health-delta-previous-ref',
+        dp ? dp.value : null, unit,
+        dp ? `${cropHealthFmtDate(dp.from_date)} → ${cropHealthFmtDate(dp.to_date)} · ${dp.days} dias` : '',
+        'sem cena anterior com dado');
+      const d30 = metrics.delta_30d_detail;
+      cropHealthSetDelta('crop-health-delta-30d', 'crop-health-delta-30d-ref',
+        d30 ? d30.value : null, unit,
+        d30 ? `${cropHealthFmtDate(d30.from_date)} → ${cropHealthFmtDate(d30.to_date)} · ${d30.days} dias` : '',
+        'nenhuma cena próxima de 30 dias antes da atual');
+      cropHealthSetDelta('crop-health-delta-window', 'crop-health-delta-window-ref',
+        trend.delta, unit,
+        trend.delta_from ? `${cropHealthFmtDate(trend.delta_from)} → ${cropHealthFmtDate(trend.delta_to)} · ${trend.span_days} dias da janela` : '',
+        'a tendência não reuniu cenas suficientes');
+
+      // ---- Nível 4: persistência, anomalia, qualidades ------------------
+      const persistEl = document.getElementById('crop-health-persistent');
+      const persistRef = document.getElementById('crop-health-persistent-pct');
+      if (persistence.status === 'ok' && persistence.declining) {
+        const pw = persistence.window || {};
+        persistEl.className = `value ${persistence.declining.pixels ? 'down' : ''}`.trim();
+        persistEl.innerText = `${cropHealthFmt(persistence.declining.ha, 2)} ha`;
+        persistRef.innerText = `${cropHealthFmt(persistence.declining.pct, 1)}% do talhão · ${pw.scenes || persistence.scenes_used} cenas entre `
+          + `${cropHealthFmtDate(pw.start)} e ${cropHealthFmtDate(pw.end)} (${pw.days} dias)`;
+      } else {
+        persistEl.className = 'value none';
+        persistEl.innerText = 'Sem dado';
+        persistRef.innerText = persistence.message || 'cenas pareadas insuficientes para avaliar persistência';
+      }
+
+      const anomalyEl = document.getElementById('crop-health-anomaly');
+      const anomalyRef = document.getElementById('crop-health-anomaly-ref');
+      if (anomaly.status === 'ok' && anomaly.below_internal_baseline) {
+        anomalyEl.className = `value ${anomaly.below_internal_baseline.pixels ? 'down' : ''}`.trim();
+        anomalyEl.innerText = `${cropHealthFmt(anomaly.below_internal_baseline.ha, 2)} ha`;
+        anomalyRef.innerText = `${cropHealthFmt(anomaly.below_internal_baseline.pct, 1)}% abaixo da mediana do próprio talhão `
+          + `(${cropHealthFmt(anomaly.talhao_median)} ${unit}) na cena mais recente processada`;
+      } else {
+        anomalyEl.className = 'value none';
+        anomalyEl.innerText = 'Sem dado';
+        anomalyRef.innerText = anomaly.message || 'sem pixels válidos para o baseline interno';
+      }
+
+      const sceneEl = document.getElementById('crop-health-scene-quality');
+      sceneEl.className = 'value';
+      sceneEl.innerText = sceneQuality.label || '—';
+      document.getElementById('crop-health-scene-quality-detail').innerText = sceneQuality.date
+        ? `Cena de ${cropHealthFmtDate(sceneQuality.date)} · cobertura válida ${cropHealthFmt(sceneQuality.valid_pixel_pct, 1)}%`
+          + (sceneQuality.cloud_cover === null || sceneQuality.cloud_cover === undefined ? ' · nuvens não informadas' : ` · nuvens ${cropHealthFmt(sceneQuality.cloud_cover, 1)}%`)
+        : 'nenhuma cena processada';
+
+      const seriesEl = document.getElementById('crop-health-quality');
+      seriesEl.className = 'value';
+      seriesEl.innerText = series.label || '—';
+      document.getElementById('crop-health-quality-detail').innerText =
+        `${series.usable_scenes || 0} de ${series.scenes || 0} aquisições úteis (${cropHealthFmt(series.usable_ratio_pct, 1)}%) no período exibido`;
+
+      // ---- Avisos de atenção (lista curta, nunca alarmista) -------------
+      const attention = document.getElementById('crop-health-attention');
+      const items = (data.interpretation && data.interpretation.attention) || [];
+      if (attention) {
+        if (items.length) {
+          attention.style.display = '';
+          attention.innerHTML = items.map((t) =>
+            `<div class="state state-empty" style="border-left-color:var(--warn);">${t}</div>`).join('');
+        } else {
+          attention.style.display = 'none';
+          attention.innerHTML = '';
+        }
+      }
+
+      // ---- Nível 5: série e comparação ---------------------------------
       cropHealthPopulateDates();
       renderCropHealthChart();
+      const period = data.period || {};
+      const withData = cropHealthTimeline.filter((x) => x.mean !== null && x.mean !== undefined);
+      document.getElementById('crop-health-chart-title').innerText = `${unit} médio do talhão por aquisição`;
+      document.getElementById('crop-health-chart-range').innerText = withData.length
+        ? `${cropHealthFmtDate(withData[0].date)} a ${cropHealthFmtDate(withData[withData.length - 1].date)} · `
+          + `${withData.length} cenas com dado de ${cropHealthTimeline.length} aquisições · janela de ${period.days || '—'} dias`
+        : 'nenhuma cena com dado no período';
+
       const provenance = document.getElementById('crop-health-provenance');
-      if (provenance) provenance.innerText = `Fonte: ${data.source_data?.provider || 'Copernicus Sentinel-2'} · Coleção ${data.source_data?.collection || 'sentinel-2-l2a'} · índice ${data.index.toUpperCase()} · ${data.index_definition?.formula || ''}. A série usa datas reais STAC; cenas sem cobertura suficiente não sustentam tendência.`;
+      const src = data.source_data || {};
+      if (provenance) {
+        provenance.innerHTML =
+          `<b>Fonte:</b> ${src.provider || 'Copernicus'} · coleção ${src.collection || 'sentinel-2-l2a'} ${src.processing_level || 'L2A'} · `
+          + `<b>índice:</b> ${unit} = ${data.index_definition?.formula || '—'} · `
+          + `<b>máscara:</b> SCL + dataMask aplicados antes da estatística. `
+          + `<b>Tendência:</b> ${trend.method || 'Theil–Sen sobre datas reais'}; ${trend.criteria || ''} `
+          + `<b>Cobertura da série:</b> ${series.criteria || ''}`;
+      }
     }
 
     async function loadCropHealthPanel() {
@@ -1637,16 +2201,31 @@
       if (cropHealthAborter) cropHealthAborter.abort();
       cropHealthAborter = new AbortController();
       cropHealthIndex = (document.getElementById('crop-health-index')?.value || 'ndvi').toLowerCase();
-      cropHealthSetState('Carregando cenas Sentinel-2 reais…');
+      const periodDays = parseInt(document.getElementById('crop-health-period')?.value || '365', 10);
+      cropHealthSetState('Consultando o catálogo Sentinel-2 e processando as cenas do talhão…', 'loading');
       try {
-        const data = await CropHealthService.getTimeline(activeFarm.id, { index: cropHealthIndex, periodDays: 730, signal: cropHealthAborter.signal });
-        if (data.status === 'insufficient_data' || data.status === 'unavailable') {
+        const data = await CropHealthService.getTimeline(activeFarm.id, {
+          index: cropHealthIndex, periodDays, signal: cropHealthAborter.signal
+        });
+        if (data.status === 'unavailable') {
           cropHealthClearVisuals();
-          cropHealthSetState(data.message || 'Não há dados suficientes para avaliar tendência.', data.status === 'unavailable' ? 'error' : '');
+          cropHealthSetState(data.message || 'Fonte Sentinel-2 indisponível no momento.', 'error');
+          return;
+        }
+        if (!data.timeline || !data.timeline.length) {
+          cropHealthClearVisuals();
+          cropHealthSetState(data.message || 'Nenhuma aquisição Sentinel-2 disponível neste período.', 'empty');
           return;
         }
         renderCropHealthTimeline(data);
-        cropHealthSetState('Série Sentinel-2 carregada. Qualidade por cena, valores ausentes e limitações permanecem explícitos.', 'ok');
+        if (data.status === 'insufficient_data') {
+          cropHealthSetState(data.message || 'Há aquisições, mas nenhuma com qualidade suficiente para avaliar tendência.', 'empty');
+        } else {
+          const q = data.quality || {};
+          cropHealthSetState(
+            `Série carregada: ${q.usable_scenes || 0} de ${q.scenes || 0} aquisições úteis no período. `
+            + 'Cenas sem cobertura suficiente permanecem visíveis e fora da tendência.', 'ok');
+        }
       } catch (err) {
         if (err && err.name === 'AbortError') return;
         cropHealthClearVisuals();
@@ -1654,33 +2233,84 @@
       }
     }
 
+    /** Barra proporcional de área para o resultado da comparação A/B. */
+    function cropHealthAreaRow(name, zone, color) {
+      if (!zone) return '';
+      const pct = Number(zone.pct) || 0;
+      return `<div class="ch-area-row">
+        <span class="name">${name}</span>
+        <span class="bar"><i style="width:${Math.min(100, Math.max(0, pct)).toFixed(1)}%; background:${color};"></i></span>
+        <span class="qty">${cropHealthFmt(zone.ha, 2)} ha · ${cropHealthFmt(pct, 1)}%</span>
+      </div>`;
+    }
+
     async function compareCropHealthSelection() {
       const a = document.getElementById('crop-health-date-a')?.value;
       const b = document.getElementById('crop-health-date-b')?.value;
       const state = document.getElementById('crop-health-compare-state');
-      if (!a || !b || a === b) { if (state) state.innerText = 'Selecione duas datas Sentinel-2 diferentes.'; return; }
-      if (state) state.innerText = 'Processando diferença numérica das duas cenas…';
+      const setCompareState = (text, kind) => {
+        if (!state) return;
+        state.className = `state state-${kind}`;
+        state.innerText = text;
+      };
+      if (!a || !b || a === b) { setCompareState('Selecione duas aquisições Sentinel-2 diferentes.', 'empty'); return; }
+      if (a > b) { setCompareState('A cena A precisa ser anterior à cena B.', 'empty'); return; }
+      const unit = CH_INDEX_UNITS[cropHealthIndex] || cropHealthIndex.toUpperCase();
+      setCompareState('Processando a diferença numérica entre as duas cenas…', 'loading');
       try {
         const result = await CropHealthService.compare(activeFarm.id, a, b, cropHealthIndex, true);
-        if (!result || result.status !== 'ok') { if (state) state.innerText = result?.message || 'Não há dados suficientes para comparar as duas cenas.'; return; }
+        if (!result || result.status !== 'ok') {
+          setCompareState(result?.message || 'Não há dados suficientes para comparar estas duas cenas.', 'empty');
+          return;
+        }
         const c = result.comparison;
         const z = c.zones || {};
         const summary = document.getElementById('crop-health-change-summary');
-        if (summary) summary.innerText = `Δ${cropHealthIndex.toUpperCase()} = ${c.delta_mean > 0 ? '+' : ''}${cropHealthFmt(c.delta_mean)} · aumento: ${cropHealthFmt(z.improved?.ha, 2)} ha (${cropHealthFmt(z.improved?.pct, 1)}%) · estável: ${cropHealthFmt(z.stable?.ha, 2)} ha · redução: ${cropHealthFmt(z.declined?.ha, 2)} ha (${cropHealthFmt(z.declined?.pct, 1)}%) · sem par válido: ${cropHealthFmt(z.unobserved?.pct, 1)}%`;
+        if (summary) {
+          summary.innerHTML =
+            `<div style="font-size:1.15rem; font-weight:600; color:var(--text-1); font-variant-numeric:tabular-nums;">`
+            + `${cropHealthFmtDelta(c.delta_mean, unit) || 'Sem dado'}</div>`
+            + `<div style="margin-top:2px;">Comparação A → B · ${cropHealthFmtDate(a)} → ${cropHealthFmtDate(b)}`
+            + ` · mediana do delta ${cropHealthFmt(c.delta_median)} ${unit}</div>`
+            + `<div style="margin-top:6px;">Limiar de mudança por pixel: ${cropHealthFmt(z.threshold_absolute)} ${unit}.</div>`;
+        }
+        const areas = document.getElementById('crop-health-change-areas');
+        if (areas) {
+          areas.innerHTML =
+            cropHealthAreaRow('Aumento', z.improved, 'var(--veg)')
+            + cropHealthAreaRow('Estável', z.stable, 'var(--neutral)')
+            + cropHealthAreaRow('Redução', z.declined, 'var(--risk)')
+            + cropHealthAreaRow('Sem par', z.unobserved, 'var(--line-strong)');
+        }
         const climate = result.climate_context;
-        const climateText = climate && climate.status === 'ok' ? ` No mesmo intervalo, a precipitação foi ${cropHealthFmt(climate.precipitation?.accumulated_mm, 1)} mm e a temperatura média ${cropHealthFmt(climate.temperature?.mean_c, 1)} °C; isso é contexto temporal e não estabelece causalidade.` : ' Contexto climático indisponível; a análise espectral continua funcionando sem ele.';
-        if (state) state.innerText = `Comparação ${cropHealthFmtDate(a)} → ${cropHealthFmtDate(b)} concluída. ${c.quality_a.label} / ${c.quality_b.label}.${climateText}`;
+        const climateText = climate && climate.status === 'ok'
+          ? ` No mesmo intervalo houve ${cropHealthFmt(climate.precipitation?.accumulated_mm, 1)} mm de chuva e temperatura média de `
+            + `${cropHealthFmt(climate.temperature?.mean_c, 1)} °C — contexto temporal que não estabelece causalidade.`
+          : ' Contexto climático indisponível; a análise espectral continua válida sem ele.';
+        setCompareState(
+          `Comparação ${cropHealthFmtDate(a)} → ${cropHealthFmtDate(b)} concluída. `
+          + `Qualidade das cenas: A ${c.quality_a.label} · B ${c.quality_b.label}.${climateText}`, 'ok');
         const prov = document.getElementById('crop-health-provenance');
-        if (prov) prov.innerText = `A: ${cropHealthFmtDate(a)} · nuvens ${cropHealthFmt(c.quality_a.cloud_cover, 1)}% · cobertura válida ${cropHealthFmt(c.quality_a.valid_pixel_pct, 1)}% · B: ${cropHealthFmtDate(b)} · nuvens ${cropHealthFmt(c.quality_b.cloud_cover, 1)}% · cobertura válida ${cropHealthFmt(c.quality_b.valid_pixel_pct, 1)}%. Bandas: ${result.source_data?.bands?.join(', ') || 'ver proveniência da cena'}.`;
+        if (prov) {
+          prov.innerHTML =
+            `<b>Cena A</b> ${cropHealthFmtDate(a)} · nuvens ${cropHealthFmt(c.quality_a.cloud_cover, 1)}% · cobertura válida ${cropHealthFmt(c.quality_a.valid_pixel_pct, 1)}%.<br>`
+            + `<b>Cena B</b> ${cropHealthFmtDate(b)} · nuvens ${cropHealthFmt(c.quality_b.cloud_cover, 1)}% · cobertura válida ${cropHealthFmt(c.quality_b.valid_pixel_pct, 1)}%.<br>`
+            + `<b>Bandas:</b> ${result.source_data?.bands?.join(', ') || 'ver proveniência da cena'} · `
+            + `<b>Método das zonas:</b> ${z.method || '—'}`;
+        }
         const blob = await CropHealthService.getDifferenceBlob(activeFarm.id, a, b, cropHealthIndex);
         if (cropHealthDifferenceObjectUrl) URL.revokeObjectURL(cropHealthDifferenceObjectUrl);
         cropHealthDifferenceObjectUrl = URL.createObjectURL(blob);
         const img = document.getElementById('crop-health-difference-image');
         const placeholder = document.getElementById('crop-health-difference-placeholder');
-        if (img) { img.src = cropHealthDifferenceObjectUrl; img.hidden = false; }
+        if (img) {
+          img.src = cropHealthDifferenceObjectUrl;
+          img.alt = `Mapa da diferença de ${unit} entre ${cropHealthFmtDate(a)} e ${cropHealthFmtDate(b)}`;
+          img.hidden = false;
+        }
         if (placeholder) placeholder.hidden = true;
       } catch (err) {
-        if (state) state.innerText = err.message || 'Mapa de diferença indisponível.';
+        setCompareState(err.message || 'Mapa de diferença indisponível.', 'error');
       }
     }
 
@@ -1694,9 +2324,11 @@
     }
 
     document.getElementById('crop-health-index')?.addEventListener('change', loadCropHealthPanel);
+    document.getElementById('crop-health-period')?.addEventListener('change', loadCropHealthPanel);
     document.getElementById('crop-health-reload')?.addEventListener('click', loadCropHealthPanel);
     document.getElementById('crop-health-compare')?.addEventListener('click', compareCropHealthSelection);
     document.getElementById('crop-health-previous')?.addEventListener('click', compareCropHealthPrevious);
+    // [CROP-HEALTH-UI-END]
 
     async function loadLiveWeather() {
       try {
@@ -1717,11 +2349,11 @@
         const rainSub = document.getElementById('kpi-rain-sub');
         if (rainSub) {
           if (wData.is_real === false) {
-            rainSub.innerHTML = '⚠ DADOS DEMONSTRATIVOS (fonte indisponível)';
-            rainSub.style.color = '#ff7b72';
+            rainSub.innerHTML = '<span class="badge badge-warn">Dado demonstrativo</span> fonte NASA POWER indisponível';
+            rainSub.style.color = '';
           } else {
-            rainSub.innerHTML = 'Total 12 Meses (NASA POWER)';
-            rainSub.style.color = '#7ee787';
+            rainSub.innerHTML = 'Total de 12 meses · NASA POWER';
+            rainSub.style.color = '';
           }
         }
 
@@ -1759,14 +2391,25 @@
         type: 'bar',
         data: {
           labels: monthly.labels,
-          datasets: [{ data: monthly.rain, backgroundColor: '#1f6feb', borderRadius: 4 }]
+          datasets: [{ label: 'Chuva acumulada', data: monthly.rain, backgroundColor: '#2f6f93', borderRadius: 2 }]
         },
         options: {
           responsive: true,
-          plugins: { legend: { display: false } },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: '#121716', borderColor: '#2a3431', borderWidth: 1,
+              titleColor: '#e9efec', bodyColor: '#c3cfca',
+              callbacks: { label: (ctx) => `${ctx.parsed.y} mm no mês` }
+            }
+          },
           scales: {
-            x: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } },
-            y: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } }
+            x: { grid: { color: '#19201e' }, ticks: { color: '#7b8b84', font: { size: 10 } } },
+            y: {
+              grid: { color: '#19201e' },
+              title: { display: true, text: 'mm', color: '#7b8b84', font: { size: 10 } },
+              ticks: { color: '#7b8b84', font: { size: 10 } }
+            }
           }
         }
       });
@@ -1776,17 +2419,29 @@
         data: {
           labels: monthly.labels,
           datasets: [
-            { label: 'Máx', data: monthly.temp_max, borderColor: '#da3633', tension: 0.3 },
-            { label: 'Méd', data: monthly.temp_avg, borderColor: '#58a6ff', tension: 0.3 },
-            { label: 'Mín', data: monthly.temp_min, borderColor: '#2ea043', tension: 0.3 }
+            { label: 'Máxima', data: monthly.temp_max, borderColor: '#b8473c', borderWidth: 1.5, pointRadius: 2, tension: 0.25 },
+            { label: 'Média', data: monthly.temp_avg, borderColor: '#5a95bd', borderWidth: 1.5, pointRadius: 2, tension: 0.25 },
+            { label: 'Mínima', data: monthly.temp_min, borderColor: '#4e9a68', borderWidth: 1.5, pointRadius: 2, tension: 0.25 }
           ]
         },
         options: {
           responsive: true,
-          plugins: { legend: { labels: { color: '#8b949e' } } },
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: { labels: { color: '#93a39d', boxWidth: 10, font: { size: 10 } } },
+            tooltip: {
+              backgroundColor: '#121716', borderColor: '#2a3431', borderWidth: 1,
+              titleColor: '#e9efec', bodyColor: '#c3cfca',
+              callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y} °C` }
+            }
+          },
           scales: {
-            x: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } },
-            y: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } }
+            x: { grid: { color: '#19201e' }, ticks: { color: '#7b8b84', font: { size: 10 } } },
+            y: {
+              grid: { color: '#19201e' },
+              title: { display: true, text: '°C', color: '#7b8b84', font: { size: 10 } },
+              ticks: { color: '#7b8b84', font: { size: 10 } }
+            }
           }
         }
       });
@@ -1984,8 +2639,8 @@
           const msg = (typeof detail === 'string') ? detail : (detail.message || 'Dados climáticos temporariamente indisponíveis.');
           const hint = (typeof detail === 'object') ? (detail.hint || '') : '';
           stateEl.innerHTML =
-            `<div class="climate-state-box error">⚠ ${msg}` +
-            (hint ? `<div style="margin-top:6px; font-size:0.75rem; color:#8b949e;">${hint}</div>` : '') +
+            `<div class="climate-state-box error">${msg}` +
+            (hint ? `<div style="margin-top:6px; font-size:0.75rem; color:#93a39d;">${hint}</div>` : '') +
             `<div style="margin-top:10px;"><button class="tab-btn" type="button" onclick="loadClimatePanel()">Tentar novamente</button></div></div>`;
           return;
         }
@@ -2025,7 +2680,7 @@
         climateLog({ action: 'error', seq, error: String(err && err.message || err) });
         console.error("Erro ao carregar o painel de clima:", err);
         stateEl.innerHTML =
-          '<div class="climate-state-box error">⚠ Dados climáticos temporariamente indisponíveis.' +
+          '<div class="climate-state-box error">Dados climáticos temporariamente indisponíveis.' +
           '<div style="margin-top:10px;"><button class="tab-btn" type="button" onclick="loadClimatePanel()">Tentar novamente</button></div></div>';
       }
     }
@@ -2035,7 +2690,7 @@
       // (sobre os dias com observação). Omitida → diz o porquê, sem número.
       if (!baseline || baseline.compared === false || baseline.compared === undefined) {
         const why = baseline && baseline.reason ? baseline.reason : 'sem referência histórica';
-        return `<small style="color:#8b949e;" title="${String(why).replace(/"/g, '&quot;')}">comparação omitida (cobertura insuficiente)</small>`;
+        return `<small style="color:#93a39d;" title="${String(why).replace(/"/g, '&quot;')}">comparação omitida (cobertura insuficiente)</small>`;
       }
       const pct = baseline.deviation_pct;
       const cls = baseline.classification === 'abaixo_da_referencia' ? 'climate-delta-down'
@@ -2051,7 +2706,7 @@
     function climateDaysTag(metric) {
       // FIX.1 — cada métrica mostra seus dias disponíveis (X/Y)
       if (!metric || metric.available_days == null || metric.requested_days == null) return '';
-      const cls = metric.complete ? '' : ' style="color:#fbbf24;"';
+      const cls = metric.complete ? '' : ' style="color:#dfae55;"';
       return `<span${cls}> ${metric.available_days}/${metric.requested_days} dias</span>`;
     }
 
@@ -2066,7 +2721,7 @@
       if (!stateEl) return;
 
       if (data.status === 'insufficient_data') {
-        stateEl.innerHTML = `<div class="climate-state-box">⚠ ${data.message || 'Não há dados suficientes para este período.'}<div style="margin-top:6px; font-size:0.72rem;">Os dados não foram encontrados na fonte para a janela solicitada (período futuro ou sem dados consolidados). Nenhum valor foi estimado.</div></div>`;
+        stateEl.innerHTML = `<div class="climate-state-box">${data.message || 'Não há dados suficientes para este período.'}<div style="margin-top:6px; font-size:0.72rem;">Os dados não foram encontrados na fonte para a janela solicitada (período futuro ou sem dados consolidados). Nenhum valor foi estimado.</div></div>`;
         return;
       }
 
@@ -2100,13 +2755,13 @@
           ['Vento', byMetric.wind]
         ].filter(r => r[1]);
         const list = rows.map(r => `${r[0]}: <b>${r[1].available_days}/${req} dias</b>`).join(' · ');
-        html += `<div class="climate-state-box" style="margin-bottom:10px; text-align:left; color:#fbbf24; border-color:#d97706;">
-          <b>⚠ DADOS PARCIAIS</b> — algumas métricas ainda não possuem dados para todos os dias do período.
-          <div style="margin-top:6px; font-size:0.75rem; color:#c9d1d9;">
+        html += `<div class="climate-state-box" style="margin-bottom:10px; text-align:left; color:#dfae55; border-color:#b8720f;">
+          <b>Dados parciais</b> — algumas métricas ainda não possuem dados para todos os dias do período.
+          <div style="margin-top:6px; font-size:0.75rem; color:#c3cfca;">
             Dias com <b>todas</b> as variáveis: <b>${comp}/${req}</b>
             ${list ? `<div style="margin-top:3px;">${list}</div>` : ''}
           </div>
-          <div style="margin-top:6px; font-size:0.72rem; color:#8b949e;">Cálculos usam apenas os dias com dados — nenhum valor foi estimado ou preenchido.</div>
+          <div style="margin-top:6px; font-size:0.72rem; color:#93a39d;">Cálculos usam apenas os dias com dados — nenhum valor foi estimado ou preenchido.</div>
         </div>`;
       }
 
@@ -2116,12 +2771,12 @@
       html += `<div class="climate-section-title">Condições do período · ${climateFmtDate(period.start)} → ${climateFmtDate(period.end)} (${period.days || '--'} dias)</div>`;
       html += '<div class="climate-metrics">';
       const precPartial = (prec.available_days != null && prec.requested_days != null && prec.available_days < prec.requested_days);
-      const precAccumNote = precPartial ? ` <span style="color:#fbbf24;">(${prec.available_days}/${prec.requested_days} dias c/ dados)</span>` : '';
-      html += `<div class="climate-metric"><span>🌧️ Chuva${climateDaysTag(prec)}</span><strong>${climateFmtNum(prec.accumulated_mm)} mm${precAccumNote}</strong>${climateDeltaHtml(prec.baseline)}<small>média diária ${climateFmtNum(prec.daily_mean_mm, 2)} mm · ${prec.rainy_days != null ? prec.rainy_days : '--'} dias com chuva</small></div>`;
-      html += `<div class="climate-metric"><span>🌡️ Temperatura média${climateDaysTag(temp)}</span><strong>${climateFmtNum(temp.mean_c)} °C</strong>${climateDeltaHtml(temp.baseline)}<small>mín ${climateFmtNum(temp.min_c)} °C · máx ${climateFmtNum(temp.max_c)} °C</small></div>`;
-      html += `<div class="climate-metric"><span>💧 Umidade média${climateDaysTag(hum)}</span><strong>${climateFmtNum(hum.mean_pct)}%</strong><small>extremos ${climateFmtNum(hum.min_pct)}% a ${climateFmtNum(hum.max_pct)}%</small></div>`;
-      html += `<div class="climate-metric"><span>☀️ Radiação${climateDaysTag(rad)}</span><strong>${climateFmtNum(rad.daily_mean_mj_m2, 2)} MJ/m²/dia</strong>${climateDeltaHtml(rad.baseline)}<small>acumulado ${climateFmtNum(rad.accumulated_mj_m2)} MJ/m² nos dias c/ dados</small></div>`;
-      html += `<div class="climate-metric"><span>💨 Vento médio${climateDaysTag(wind)}</span><strong>${climateFmtNum(wind.mean_kmh)} km/h</strong><small>maior média diária: ${climateFmtNum(wind.max_daily_mean_kmh)} km/h</small></div>`;
+      const precAccumNote = precPartial ? ` <span style="color:#dfae55;">(${prec.available_days}/${prec.requested_days} dias c/ dados)</span>` : '';
+      html += `<div class="climate-metric"><span>Chuva${climateDaysTag(prec)}</span><strong>${climateFmtNum(prec.accumulated_mm)} mm${precAccumNote}</strong>${climateDeltaHtml(prec.baseline)}<small>média diária ${climateFmtNum(prec.daily_mean_mm, 2)} mm · ${prec.rainy_days != null ? prec.rainy_days : '--'} dias com chuva</small></div>`;
+      html += `<div class="climate-metric"><span>Temperatura média${climateDaysTag(temp)}</span><strong>${climateFmtNum(temp.mean_c)} °C</strong>${climateDeltaHtml(temp.baseline)}<small>mín ${climateFmtNum(temp.min_c)} °C · máx ${climateFmtNum(temp.max_c)} °C</small></div>`;
+      html += `<div class="climate-metric"><span>Umidade média${climateDaysTag(hum)}</span><strong>${climateFmtNum(hum.mean_pct)}%</strong><small>extremos ${climateFmtNum(hum.min_pct)}% a ${climateFmtNum(hum.max_pct)}%</small></div>`;
+      html += `<div class="climate-metric"><span>Radiação${climateDaysTag(rad)}</span><strong>${climateFmtNum(rad.daily_mean_mj_m2, 2)} MJ/m²/dia</strong>${climateDeltaHtml(rad.baseline)}<small>acumulado ${climateFmtNum(rad.accumulated_mj_m2)} MJ/m² nos dias c/ dados</small></div>`;
+      html += `<div class="climate-metric"><span>Vento médio${climateDaysTag(wind)}</span><strong>${climateFmtNum(wind.mean_kmh)} km/h</strong><small>maior média diária: ${climateFmtNum(wind.max_daily_mean_kmh)} km/h</small></div>`;
       html += '</div>';
 
       // --- DADOS DO PERÍODO (FIX.1) — dias solicitados vs. disponíveis, por variável ---
@@ -2139,10 +2794,10 @@
         const mm = r[1];
         if (!mm) return;
         const ok = (mm.available_days === covReq);
-        const badge = ok ? 'style="border-color:#2ea04333; color:#7ee787;"' : 'style="border-color:#d9770655; color:#fbbf24;"';
-        html += `<span style="font-size:0.72rem; background:#0d1117; border:1px solid #21262d; border-radius:12px; padding:3px 9px;" ${badge}>${r[0]}: <b>${mm.available_days}/${covReq}</b></span>`;
+        const badge = ok ? 'style="border-color:#4e9a6833; color:#8ecfa0;"' : 'style="border-color:#b8720f55; color:#dfae55;"';
+        html += `<span style="font-size:var(--fs-meta); background:var(--surface-0); border:1px solid var(--line); border-radius:var(--r-sm); padding:2px 8px;" ${badge}>${r[0]}: <b>${mm.available_days}/${covReq}</b></span>`;
       });
-      html += `<span style="font-size:0.72rem; background:#0d1117; border:1px solid ${cov.complete_days === covReq ? '#2ea04333' : '#d9770655'}; border-radius:12px; padding:3px 9px; color:${cov.complete_days === covReq ? '#7ee787' : '#fbbf24'};" title="Dias em que TODAS as variáveis estão disponíveis ao mesmo tempo.">Dias completos: <b>${cov.complete_days != null ? cov.complete_days : '--'}/${covReq}</b></span>`;
+      html += `<span style="font-size:0.72rem; background:#0b0f0e; border:1px solid ${cov.complete_days === covReq ? '#4e9a6833' : '#b8720f55'}; border-radius:var(--r-sm); padding:2px 8px; color:${cov.complete_days === covReq ? '#8ecfa0' : '#dfae55'};" title="Dias em que TODAS as variáveis estão disponíveis ao mesmo tempo.">Dias completos: <b>${cov.complete_days != null ? cov.complete_days : '--'}/${covReq}</b></span>`;
       html += '</div>';
 
       // --- INDICADORES CALCULADOS (derivados, fórmula declarada) ---
@@ -2154,11 +2809,11 @@
         html += '<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:6px; margin-bottom:4px;">';
         inds.forEach((i) => {
           const isNull = (i.value === null || i.value === undefined);
-          const overNote = (i.over_days != null && i.total_days != null && i.over_days < i.total_days) ? ` <span style="color:#fbbf24; font-size:0.7rem;">(${i.over_days}/${i.total_days} dias)</span>` : '';
+          const overNote = (i.over_days != null && i.total_days != null && i.over_days < i.total_days) ? ` <span style="color:#dfae55; font-size:0.7rem;">(${i.over_days}/${i.total_days} dias)</span>` : '';
           const v = isNull ? '—' : climateFmtNum(i.value, 2) + (i.unit ? ` ${i.unit}` : '');
           const tip = ((i.formula || '') + (i.reason ? `\n\nOMITIDO: ${i.reason}` : '')).replace(/"/g, '&quot;');
-          const color = isNull ? '#8b949e' : '#f0f6fc';
-          html += `<div style="background:#0d1117; border:1px solid #21262d; border-radius:6px; padding:6px 10px;" title="${tip}"><span style="font-size:0.68rem; color:#8b949e;">${i.name}</span><div style="font-size:0.85rem; font-weight:700; color:${color};">${v}${overNote}</div></div>`;
+          const color = isNull ? '#93a39d' : '#e9efec';
+          html += `<div style="background:#0b0f0e; border:1px solid #19201e; border-radius:6px; padding:6px 10px;" title="${tip}"><span style="font-size:0.68rem; color:#93a39d;">${i.name}</span><div style="font-size:0.85rem; font-weight:700; color:${color};">${v}${overNote}</div></div>`;
         });
         html += '</div>';
       }
@@ -2173,8 +2828,8 @@
       }
 
       // --- GRÁFICOS (precipitação e temperatura ao longo do tempo + baseline) ---
-      html += '<div class="climate-charts"><div class="chart-box-inner"><h4>🌧️ Precipitação diária (mm) × referência histórica</h4><canvas id="climate-precip-chart" height="150"></canvas></div>';
-      html += '<div class="chart-box-inner"><h4>🌡️ Temperatura diária (°C) × referência histórica</h4><canvas id="climate-temp-chart" height="150"></canvas></div></div>';
+      html += '<div class="climate-charts"><div class="chart-box-inner"><h4>Precipitação diária (mm) × referência histórica</h4><canvas id="climate-precip-chart" height="150"></canvas></div>';
+      html += '<div class="chart-box-inner"><h4>Temperatura diária (°C) × referência histórica</h4><canvas id="climate-temp-chart" height="150"></canvas></div></div>';
 
       // --- PROVENIÊNCIA / CONFIANÇA (Fase 8 + FIX.5) ---
       const apiVer = source.api_version ? ` ${source.api_version}` : '';
@@ -2189,7 +2844,7 @@
           const lc = { alta: 'alta', media: 'média', limitada: 'limitada' }[byConf[k]] || byConf[k];
           return `${nm} ${lc}`;
         });
-      const confDetail = confList.length ? `<br><span style="font-size:0.72rem; color:#8b949e;"><b>Confiança por métrica:</b> ${confList.join(' · ')}</span>` : '';
+      const confDetail = confList.length ? `<br><span style="font-size:0.72rem; color:#93a39d;"><b>Confiança por métrica:</b> ${confList.join(' · ')}</span>` : '';
       html += `<div class="climate-provenance">
         <b>Fonte:</b> ${source.name || 'NASA POWER'} (Daily API${apiVer}, comunidade ${source.community || 'AG'}) — ${source.data_nature || 'reanálise/modelo'}<br>
         <b>Período:</b> ${climateFmtDate(period.start)} → ${climateFmtDate(period.end)} · <b>Local:</b> ${loc.latitude}, ${loc.longitude} (localização canônica da fazenda${farmInfo.location_status ? ` · ${farmInfo.location_status}` : ''})<br>
@@ -2222,22 +2877,23 @@
           data: {
             labels: labels,
             datasets: [
-              { type: 'bar', label: 'Chuva diária (mm)', data: d.precip_mm || [], backgroundColor: 'rgba(31,111,235,0.75)', borderRadius: 2, yAxisID: 'y' },
-              { type: 'line', label: 'Referência histórica — média diária (mm)', data: d.baseline_precip_mm || [], borderColor: '#fbbf24', borderDash: [6, 3], pointRadius: 0, tension: 0.25, yAxisID: 'y' }
+              { type: 'bar', label: 'Chuva diária (mm)', data: d.precip_mm || [], backgroundColor: 'rgba(47,111,147,0.85)', borderRadius: 2, yAxisID: 'y' },
+              { type: 'line', label: 'Referência histórica — média diária (mm)', data: d.baseline_precip_mm || [], borderColor: '#dfae55', borderDash: [6, 3], pointRadius: 0, tension: 0.25, yAxisID: 'y' }
             ]
           },
           options: {
             responsive: true, animation: false,
-            plugins: { legend: { labels: { color: '#8b949e', font: { size: 10 }, boxWidth: 14 } },
-              tooltip: { callbacks: { label: (ctx) => ` ${ctx.dataset.label}: ${ctx.parsed.y != null ? String(ctx.parsed.y).replace('.', ',') : '--'} mm` } } },
+            plugins: { legend: { labels: { color: '#93a39d', font: { size: 10 }, boxWidth: 12 } },
+              tooltip: { backgroundColor: '#121716', borderColor: '#2a3431', borderWidth: 1, titleColor: '#e9efec', bodyColor: '#c3cfca',
+                callbacks: { label: (ctx) => ` ${ctx.dataset.label}: ${ctx.parsed.y != null ? String(ctx.parsed.y).replace('.', ',') : 'sem dado'} mm` } } },
             scales: {
-              x: { grid: { color: '#21262d' }, ticks: { color: '#8b949e', font: { size: 9 }, maxTicksLimit: 10 } },
-              y: { title: { display: true, text: 'mm', color: '#8b949e', font: { size: 10 } }, grid: { color: '#21262d' }, ticks: { color: '#8b949e', font: { size: 9 } } }
+              x: { grid: { color: '#19201e' }, ticks: { color: '#93a39d', font: { size: 9 }, maxTicksLimit: 10 } },
+              y: { title: { display: true, text: 'mm', color: '#93a39d', font: { size: 10 } }, grid: { color: '#19201e' }, ticks: { color: '#93a39d', font: { size: 9 } } }
             }
           }
         });
       } else {
-        precipCanvas.parentNode && (precipCanvas.parentNode.innerHTML = '<h4 style="margin:0 0 8px 0; font-size:0.78rem; color:#8b949e;">🌧️ Precipitação diária (mm)</h4><div style="color:#8b949e; font-size:0.75rem; padding:14px 0;">Sem dados para o gráfico.</div>');
+        precipCanvas.parentNode && (precipCanvas.parentNode.innerHTML = '<h4 style="margin:0 0 8px 0; font-size:var(--fs-meta); color:var(--text-2); font-weight:600;">Precipitação diária (mm)</h4><div class="state state-empty">Sem dias com precipitação medida neste período.</div>');
       }
 
       if (has(d.temp_mean_c) || has(d.baseline_temp_mean_c)) {
@@ -2246,24 +2902,25 @@
           data: {
             labels: labels,
             datasets: [
-              { label: 'Média atual (°C)', data: d.temp_mean_c || [], borderColor: '#58a6ff', borderWidth: 2, pointRadius: 0, tension: 0.25 },
-              { label: 'Máx atual (°C)', data: d.temp_max_c || [], borderColor: 'rgba(218,54,51,0.55)', borderWidth: 1, pointRadius: 0, tension: 0.25 },
-              { label: 'Mín atual (°C)', data: d.temp_min_c || [], borderColor: 'rgba(46,160,67,0.55)', borderWidth: 1, pointRadius: 0, tension: 0.25 },
-              { label: 'Referência histórica — média (°C)', data: d.baseline_temp_mean_c || [], borderColor: '#fbbf24', borderDash: [6, 3], pointRadius: 0, tension: 0.25 }
+              { label: 'Média atual (°C)', data: d.temp_mean_c || [], borderColor: '#5a95bd', borderWidth: 2, pointRadius: 0, tension: 0.25 },
+              { label: 'Máx atual (°C)', data: d.temp_max_c || [], borderColor: 'rgba(184,71,60,0.65)', borderWidth: 1, pointRadius: 0, tension: 0.25 },
+              { label: 'Mín atual (°C)', data: d.temp_min_c || [], borderColor: 'rgba(78,154,104,0.65)', borderWidth: 1, pointRadius: 0, tension: 0.25 },
+              { label: 'Referência histórica — média (°C)', data: d.baseline_temp_mean_c || [], borderColor: '#dfae55', borderDash: [6, 3], pointRadius: 0, tension: 0.25 }
             ]
           },
           options: {
             responsive: true, animation: false,
-            plugins: { legend: { labels: { color: '#8b949e', font: { size: 10 }, boxWidth: 14 } },
-              tooltip: { callbacks: { label: (ctx) => ` ${ctx.dataset.label}: ${ctx.parsed.y != null ? String(ctx.parsed.y).replace('.', ',') : '--'} °C` } } },
+            plugins: { legend: { labels: { color: '#93a39d', font: { size: 10 }, boxWidth: 12 } },
+              tooltip: { backgroundColor: '#121716', borderColor: '#2a3431', borderWidth: 1, titleColor: '#e9efec', bodyColor: '#c3cfca',
+                callbacks: { label: (ctx) => ` ${ctx.dataset.label}: ${ctx.parsed.y != null ? String(ctx.parsed.y).replace('.', ',') : 'sem dado'} °C` } } },
             scales: {
-              x: { grid: { color: '#21262d' }, ticks: { color: '#8b949e', font: { size: 9 }, maxTicksLimit: 10 } },
-              y: { title: { display: true, text: '°C', color: '#8b949e', font: { size: 10 } }, grid: { color: '#21262d' }, ticks: { color: '#8b949e', font: { size: 9 } } }
+              x: { grid: { color: '#19201e' }, ticks: { color: '#93a39d', font: { size: 9 }, maxTicksLimit: 10 } },
+              y: { title: { display: true, text: '°C', color: '#93a39d', font: { size: 10 } }, grid: { color: '#19201e' }, ticks: { color: '#93a39d', font: { size: 9 } } }
             }
           }
         });
       } else {
-        tempCanvas.parentNode && (tempCanvas.parentNode.innerHTML = '<h4 style="margin:0 0 8px 0; font-size:0.78rem; color:#8b949e;">🌡️ Temperatura diária (°C)</h4><div style="color:#8b949e; font-size:0.75rem; padding:14px 0;">Sem dados para o gráfico.</div>');
+        tempCanvas.parentNode && (tempCanvas.parentNode.innerHTML = '<h4 style="margin:0 0 8px 0; font-size:var(--fs-meta); color:var(--text-2); font-weight:600;">Temperatura diária (°C)</h4><div class="state state-empty">Sem dias com temperatura medida neste período.</div>');
       }
     }
 
@@ -3463,7 +4120,7 @@
       canvas.height = 256;
       const ctx = canvas.getContext('2d');
       if (!ctx) return null;
-      ctx.fillStyle = '#1b2430';
+      ctx.fillStyle = '#161d1b';
       ctx.fillRect(0, 0, 256, 256);
       // Faixas diagonais: padrão de "visualização aproximada" (não é dado real).
       for (let x = -256; x < 512; x += 32) {
@@ -3483,7 +4140,7 @@
       ctx.setLineDash([]);
       ctx.fillStyle = 'rgba(0,0,0,0.55)';
       ctx.fillRect(0, 112, 256, 32);
-      ctx.fillStyle = '#f0d879';
+      ctx.fillStyle = '#e2cd86';
       ctx.font = 'bold 14px sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText('VISUALIZAÇÃO APROXIMADA', 128, 133);
@@ -3505,7 +4162,7 @@
         if (img && typeof img.width === 'number' && img.width > 0) {
           ctx.drawImage(img, 0, 0, 256, 256);
         } else {
-          ctx.fillStyle = '#1b2430';
+          ctx.fillStyle = '#161d1b';
           ctx.fillRect(0, 0, 256, 256);
         }
         const imageData = ctx.getImageData(0, 0, 256, 256);
@@ -4157,7 +4814,7 @@
     }
 
     /**
-     * WHAT-IF RECOLHÍVEL (PR #5h): ao recolher vira a aba [⚡ What-If]; como a
+     * WHAT-IF RECOLHÍVEL (PR #5h): ao recolher vira a aba [What-If]; como a
      * função troca APENAS `display`, os valores dos sliders/resultados ficam
      * INTACTOS e reabrem exatamente onde estavam.
      */
@@ -4880,7 +5537,7 @@
       if (!debug3dEnabled) return;
       debugOverlay.style.cssText =
         'position:fixed;top:64px;left:16px;z-index:9999;background:rgba(0,0,0,.82);' +
-        'color:#7ee787;font:11px/1.5 monospace;padding:8px 10px;border:1px solid #2ea043;' +
+        'color:#8ecfa0;font:11px/1.5 monospace;padding:8px 10px;border:1px solid #4e9a68;' +
         'border-radius:6px;white-space:pre;pointer-events:none;max-width:420px;';
       document.body.appendChild(debugOverlay);
       console.warn('[3D-DEBUG] modo debug3d ATIVO (wireframe/bbox/eixos/estatísticas)');
@@ -4888,7 +5545,7 @@
     initDebug3D();
 
     // =====================================================================
-    // PR #5h — WHAT-IF RECOLHÍVEL: ao recolher vira a aba [⚡ What-If]; os
+    // PR #5h — WHAT-IF RECOLHÍVEL: ao recolher vira a aba [What-If]; os
     // VALORES dos sliders/resultados são preservados (o DOM dos inputs nunca
     // é alterado) e reabre exatamente onde estava.
     // =====================================================================

@@ -35,11 +35,68 @@ logger = logging.getLogger("orion.crop_health")
 PROVIDER = "Copernicus Data Space Ecosystem"
 COLLECTION = "sentinel-2-l2a"
 PROCESSING_LEVEL = "L2A"
+#: Janela padrão do HISTÓRICO exibido na timeline/gráfico (não é a janela da
+#: tendência — ver ``TREND_WINDOW_DAYS``).
 DEFAULT_PERIOD_DAYS = 730
 DEFAULT_LIMIT = 60
+
+# ---------------------------------------------------------------------------
+# Tendência temporal — janela, mínimos e limiares (PR #8, revisão da auditoria)
+# ---------------------------------------------------------------------------
+#: Janela OPERACIONAL da tendência, ancorada na última cena aceita. 120 dias
+#: cobrem aproximadamente um ciclo de soja/milho safrinha (110–130 dias) e,
+#: com a revisita de ~5 dias do par Sentinel-2, comportam até ~24 passagens
+#: potenciais — o suficiente para uma regressão robusta. Chamar de "recente"
+#: uma série de 730 dias era semanticamente errado; o histórico continua
+#: disponível na timeline e na comparação A/B.
+TREND_WINDOW_DAYS = 120
+#: Extensão máxima admitida quando a janela de 120 dias não reúne o mínimo de
+#: cenas aceitas (nuvem persistente). Acima disso a tendência é declarada
+#: insuficiente em vez de misturar dois ciclos agrícolas.
+TREND_WINDOW_MAX_DAYS = 240
+#: Mínimo de cenas aceitas para qualquer classificação de tendência.
 MIN_TREND_SCENES = 3
+#: Intervalo temporal mínimo entre a primeira e a última cena da janela.
+#: Abaixo disso duas passagens quase simultâneas produziriam "tendência".
 MIN_TREND_INTERVAL_DAYS = 14
+#: Concordância direcional mínima (tau de Kendall) para aceitar direção.
+#: tau = S / C(n,2): com n=3, tau=1/3 corresponde a 2 de 3 pares concordantes,
+#: ou seja, UMA oscilação isolada ainda preserva a tendência; com n≥12 exige
+#: maioria clara de pares concordantes. 0,30 fica logo abaixo de 1/3 para não
+#: descartar o caso n=3 por arredondamento.
+TREND_TAU_MIN = 0.30
+#: Alvo e tolerância do delta de ~30 dias (revisita real não cai em 30 exatos).
+DELTA_30D_TARGET_DAYS = 30
+DELTA_30D_TOLERANCE_DAYS = 15
 PERSISTENCE_SCENES = 3
+
+TREND_LABELS = {
+    "melhoria": "Melhoria",
+    "queda": "Queda",
+    "estavel": "Estável",
+    "sem_tendencia": "Sem tendência definida",
+    "dados_insuficientes": "Dados insuficientes",
+}
+
+#: Critério textual da tendência — exibido na UI e replicado na documentação.
+TREND_CRITERIA = (
+    "Inclinação de Theil–Sen sobre as DATAS REAIS das cenas aceitas na janela; "
+    f"direção confirmada por tau de Kendall (|tau| ≥ {TREND_TAU_MIN:.2f}) e por "
+    "magnitude estimada no período (inclinação × dias da janela) maior ou igual "
+    "ao piso do índice. Série sem magnitude relevante e com dispersão baixa é "
+    "classificada como estável; magnitude relevante sem direção concordante, ou "
+    "dispersão alta, é classificada como sem tendência definida. A direção só é "
+    "aceita quando a mudança estimada é pelo menos tão grande quanto a dispersão "
+    "residual em torno da reta (razão sinal/ruído ≥ 1)."
+)
+
+#: Critério textual da qualidade AGREGADA da série (distinta da cena).
+SERIES_QUALITY_CRITERIA = (
+    "Série: proporção de cenas úteis (qualidade alta ou média) sobre o total de "
+    "aquisições do período. Alta: ≥80% úteis e ≥50% de qualidade alta; "
+    "Média: ≥60% úteis; Limitada: ≥34% úteis e pelo menos 3 cenas úteis; "
+    "Insuficiente: abaixo disso. Uma única cena ruim não rebaixa a série."
+)
 
 # A resolução de B05/B11 é 20 m; o Process API entrega todos na grade pedida.
 INDEX_CATALOG: dict[str, dict] = {
@@ -235,13 +292,30 @@ def _empty_response(index: str, status: str, message: str, detail: dict | None =
         },
         "metrics": {
             "current": None,
+            "latest_scene": None,
+            "latest_valid_scene": None,
+            "current_is_valid_for_analysis": False,
+            "current_scene_note": "Nenhuma aquisição Sentinel-2 disponível para o período.",
             "previous": None,
             "delta_previous": None,
+            "delta_previous_detail": None,
+            "delta_30d": None,
+            "delta_30d_detail": None,
             "trend": "dados_insuficientes",
-            "trend_label": "Dados insuficientes",
+            "trend_label": TREND_LABELS["dados_insuficientes"],
+            "trend_detail": {
+                "code": "dados_insuficientes",
+                "label": TREND_LABELS["dados_insuficientes"],
+                "text": "Não há dados suficientes para avaliar tendência.",
+                "reason": "nenhuma cena Sentinel-2 válida no período",
+                "scenes_used": 0,
+                "window": None,
+                "criteria": TREND_CRITERIA,
+            },
             "stability": None,
             "volatility": None,
-            "persistence": {"status": "dados_insuficientes"},
+            "volatility_scope": "janela da tendência",
+            "persistence": {"status": "dados_insuficientes", "window": None},
             "internal_anomaly": {"status": "dados_insuficientes"},
         },
         "interpretation": {
@@ -249,8 +323,20 @@ def _empty_response(index: str, status: str, message: str, detail: dict | None =
             "attention": [],
             "scientific_note": "Índice espectral não é diagnóstico agronômico; os dados não permitem determinar a causa de uma eventual mudança.",
         },
-        "quality": {"level": "insuficiente", "label": "Insuficiente", "scenes": 0},
-        "confidence": {"level": "insuficiente", "label": "Insuficiente", "reason": "sem cenas Sentinel-2 válidas"},
+        "quality": {
+            "scope": "serie", "level": "insuficiente", "label": "Insuficiente",
+            "scenes": 0, "usable_scenes": 0, "valid_scenes": 0,
+            "usable_ratio_pct": 0.0, "high_ratio_pct": 0.0,
+            "distribution": {"alta": 0, "media": 0, "limitada": 0, "insuficiente": 0},
+            "criteria": SERIES_QUALITY_CRITERIA,
+        },
+        "scene_quality": None,
+        "confidence": {
+            "scope": "serie", "level": "insuficiente", "label": "Insuficiente",
+            "alias_of": "quality",
+            "note": "Campo mantido por compatibilidade: repete a qualidade agregada da série.",
+            "reason": "sem cenas Sentinel-2 válidas",
+        },
     }
 
 
@@ -287,11 +373,18 @@ def _timeline_item(scene: cdse.SceneInfo, index: str, processed: dict | None, er
         "cloud_cover": quality["cloud_cover"],
         "quality": quality["level"],
         "quality_label": quality["label"],
-        "confidence": quality["level"],
+        "quality_scope": "cena",
+        "accepted_for_trend": quality["level"] in ACCEPTABLE_QUALITIES,
         "source": "sentinel-cdse",
         "source_data": _scene_source(scene, stats, quality),
+        # Deltas explicitamente referenciados (a UI nunca mostra "variação"
+        # sem dizer em relação a quê e entre quais datas).
         "delta_previous": None,
+        "delta_previous_from": None,
+        "delta_previous_days": None,
         "delta_30d": None,
+        "delta_30d_from": None,
+        "delta_30d_days": None,
     }
     if error:
         item["status"] = "sem_dados"
@@ -302,67 +395,322 @@ def _timeline_item(scene: cdse.SceneInfo, index: str, processed: dict | None, er
 
 
 def _enrich_deltas(timeline: list[dict]) -> None:
+    """Calcula os dois deltas automáticos, cada um com a sua referência.
+
+    - ``delta_previous``: cena atual − cena ANTERIOR COM DADO (a cena anterior
+      pode ter falhado; comparar contra ela produziria ``None`` silencioso);
+    - ``delta_30d``: cena atual − cena mais próxima de ``DELTA_30D_TARGET_DAYS``
+      dias antes, dentro de ``DELTA_30D_TOLERANCE_DAYS``.
+
+    As datas de referência e o intervalo real em dias ficam gravados no item
+    para que a interface nunca exiba uma variação sem dizer de onde ela vem.
+    """
     ordered = sorted(timeline, key=lambda x: x["date"])
     for i, item in enumerate(ordered):
-        if i > 0 and item.get("mean") is not None and ordered[i - 1].get("mean") is not None:
-            item["delta_previous"] = _round_or_none(item["mean"] - ordered[i - 1]["mean"])
-        target = _safe_date(item["date"]) - timedelta(days=30)
+        if item.get("mean") is None:
+            continue
+        current_date = _safe_date(item["date"])
+        previous = next((x for x in reversed(ordered[:i]) if x.get("mean") is not None), None)
+        if previous is not None:
+            item["delta_previous"] = _round_or_none(item["mean"] - previous["mean"])
+            item["delta_previous_from"] = previous["date"]
+            item["delta_previous_days"] = (current_date - _safe_date(previous["date"])).days
+        target = current_date - timedelta(days=DELTA_30D_TARGET_DAYS)
         candidates = [
             x for x in ordered[:i]
-            if x.get("mean") is not None and abs((_safe_date(x["date"]) - target).days) <= 15
+            if x.get("mean") is not None
+            and abs((_safe_date(x["date"]) - target).days) <= DELTA_30D_TOLERANCE_DAYS
         ]
         if candidates:
             base = min(candidates, key=lambda x: abs((_safe_date(x["date"]) - target).days))
             item["delta_30d"] = _round_or_none(item["mean"] - base["mean"])
+            item["delta_30d_from"] = base["date"]
+            item["delta_30d_days"] = (current_date - _safe_date(base["date"])).days
 
 
 def _accepted_points(timeline: list[dict]) -> list[dict]:
     return [x for x in timeline if x.get("mean") is not None and x.get("quality") in ACCEPTABLE_QUALITIES]
 
 
-def classify_trend(timeline: list[dict], index: str = "ndvi") -> dict:
-    """Classifica tendência somente com cenas de boa/média qualidade.
+def _theil_sen_slope(x: np.ndarray, y: np.ndarray) -> float | None:
+    """Inclinação de Theil–Sen: mediana das inclinações par a par.
 
-    São necessárias pelo menos três cenas, intervalo total de 14 dias e
-    direção consistente dos intervalos. A magnitude é absoluta no índice;
-    percentual do valor não é usado.
+    Estimador robusto — uma cena discrepante altera no máximo uma fração das
+    inclinações par a par e praticamente não desloca a mediana, ao contrário
+    dos mínimos quadrados. Usa as DATAS REAIS (``x`` em dias), portanto
+    intervalos irregulares entre passagens não distorcem o resultado.
+    """
+    n = int(x.size)
+    if n < 2:
+        return None
+    slopes = []
+    for i in range(n - 1):
+        dx = x[i + 1:] - x[i]
+        valid = dx > 0
+        if np.any(valid):
+            slopes.append((y[i + 1:][valid] - y[i]) / dx[valid])
+    if not slopes:
+        return None
+    return float(np.median(np.concatenate(slopes)))
+
+
+def _mann_kendall(x: np.ndarray, y: np.ndarray) -> dict:
+    """Estatística S de Mann–Kendall, tau de Kendall e aproximação normal.
+
+    ``S`` soma o sinal de cada par ordenado no tempo; ``tau = S / C(n,2)`` é a
+    concordância direcional (1 = monotônica crescente, -1 = decrescente).
+    A aproximação normal (com correção de empates) devolve ``z``/``p`` como
+    INFORMAÇÃO: com n=3 o teste não tem poder algum, por isso a decisão usa
+    tau + magnitude e o p-valor é apenas reportado.
+    """
+    n = int(x.size)
+    pairs = n * (n - 1) // 2
+    if pairs == 0:
+        return {"s": 0, "pairs": 0, "tau": None, "z": None, "p_value": None}
+    s_stat = 0
+    for i in range(n - 1):
+        dt = np.sign(x[i + 1:] - x[i])
+        dv = np.sign(y[i + 1:] - y[i])
+        s_stat += int(np.sum(dt * dv))
+    tau = s_stat / pairs
+    # Variância com correção de empates nos valores do índice.
+    _, counts = np.unique(y, return_counts=True)
+    ties = float(np.sum(counts * (counts - 1) * (2 * counts + 5)))
+    variance = (n * (n - 1) * (2 * n + 5) - ties) / 18.0
+    if variance <= 0:
+        return {"s": s_stat, "pairs": pairs, "tau": round(tau, 4), "z": None, "p_value": None}
+    if s_stat > 0:
+        z = (s_stat - 1) / math.sqrt(variance)
+    elif s_stat < 0:
+        z = (s_stat + 1) / math.sqrt(variance)
+    else:
+        z = 0.0
+    p_value = 2.0 * (1.0 - 0.5 * (1.0 + math.erf(abs(z) / math.sqrt(2.0))))
+    return {"s": s_stat, "pairs": pairs, "tau": round(tau, 4),
+            "z": round(z, 4), "p_value": round(p_value, 4)}
+
+
+def select_trend_window(
+    points: list[dict],
+    window_days: int = TREND_WINDOW_DAYS,
+    max_window_days: int = TREND_WINDOW_MAX_DAYS,
+) -> tuple[list[dict], dict]:
+    """Recorta a janela OPERACIONAL da tendência a partir da última cena aceita.
+
+    A timeline mostra o histórico completo pedido; a tendência responde a
+    "o que está acontecendo agora" e por isso olha apenas os últimos
+    ``window_days``. Quando a nuvem impede reunir o mínimo de cenas nessa
+    janela, ela é estendida uma única vez até ``max_window_days`` e o modo é
+    declarado explicitamente na resposta.
+    """
+    if not points:
+        return [], {"days": window_days, "mode": "sem_cenas", "requested_days": window_days}
+    anchor = _safe_date(points[-1]["date"])
+
+    def slice_from(days: int) -> list[dict]:
+        floor_date = anchor - timedelta(days=days - 1)
+        return [p for p in points if _safe_date(p["date"]) >= floor_date]
+
+    selected = slice_from(window_days)
+    mode = "janela_recente"
+    if len(selected) < MIN_TREND_SCENES or _span_days(selected) < MIN_TREND_INTERVAL_DAYS:
+        extended = slice_from(max_window_days)
+        if len(extended) > len(selected):
+            selected, mode = extended, "janela_estendida"
+    used_days = window_days if mode == "janela_recente" else max_window_days
+    window = {
+        "requested_days": window_days,
+        "days": used_days,
+        "mode": mode,
+        "mode_label": ("Últimos %d dias" % used_days) if mode == "janela_recente"
+        else ("Janela estendida para %d dias (cobertura insuficiente em %d dias)" % (used_days, window_days)),
+        "anchor_date": anchor.isoformat(),
+        "start": (anchor - timedelta(days=used_days - 1)).isoformat(),
+        "end": anchor.isoformat(),
+    }
+    if selected:
+        window["first_observation"] = selected[0]["date"]
+        window["last_observation"] = selected[-1]["date"]
+        window["observed_span_days"] = _span_days(selected)
+    return selected, window
+
+
+def _span_days(points: list[dict]) -> int:
+    if len(points) < 2:
+        return 0
+    return (_safe_date(points[-1]["date"]) - _safe_date(points[0]["date"])).days
+
+
+def classify_trend(
+    timeline: list[dict],
+    index: str = "ndvi",
+    window_days: int = TREND_WINDOW_DAYS,
+) -> dict:
+    """Classifica a tendência da janela operacional usando as datas reais.
+
+    Algoritmo (substitui a regra de monotonicidade perfeita da versão
+    anterior, que transformava qualquer oscilação isolada em "Estável"):
+
+    1. só entram cenas com média válida e qualidade alta/média;
+    2. a janela é recortada por ``select_trend_window`` (últimos
+       ``TREND_WINDOW_DAYS`` dias, estendida até ``TREND_WINDOW_MAX_DAYS``
+       quando necessário);
+    3. exige ``MIN_TREND_SCENES`` cenas e ``MIN_TREND_INTERVAL_DAYS`` de
+       intervalo observado;
+    4. a inclinação é estimada por Theil–Sen sobre dias corridos reais;
+    5. a magnitude estimada no período é ``inclinação × dias observados`` e
+       precisa alcançar o piso do índice (``delta_floor``);
+    6. a direção precisa de concordância ``|tau| ≥ TREND_TAU_MIN``;
+    7. sem magnitude relevante e com dispersão residual baixa → "estável";
+       demais casos → "sem tendência definida" (explicitamente distinto de
+       "estável" e de "dados insuficientes").
     """
     index = validate_index(index)
-    points = sorted(_accepted_points(timeline), key=lambda x: x["date"])
-    insufficient = {
-        "code": "dados_insuficientes", "label": "Dados insuficientes",
-        "text": "Não há dados suficientes para avaliar tendência.",
-        "scenes_used": len(points), "delta": None, "slope_per_day": None,
-    }
-    if len(points) < MIN_TREND_SCENES:
-        return insufficient
-    span = (_safe_date(points[-1]["date"]) - _safe_date(points[0]["date"])).days
-    if span < MIN_TREND_INTERVAL_DAYS:
-        return {**insufficient, "reason": "intervalo temporal menor que 14 dias"}
-    values = np.asarray([float(p["mean"]) for p in points], dtype=float)
-    changes = np.diff(values)
     floor = float(INDEX_CATALOG[index]["delta_floor"])
-    total_delta = float(values[-1] - values[0])
-    # A direção consistente pode ser formada por passos menores que o piso;
-    # o piso é aplicado à mudança acumulada, evitando perder uma tendência
-    # gradual apenas porque cada passagem individual mudou pouco.
-    signs = [1 if c > 0 else -1 if c < 0 else 0 for c in changes]
-    nonzero = [s for s in signs if s]
-    slope = float(np.polyfit(np.arange(len(values)), values, 1)[0] / max(span / max(len(values) - 1, 1), 1))
-    if total_delta >= floor and len(nonzero) >= 2 and all(s == 1 for s in nonzero):
-        code, label, text = "melhoria", "Melhoria", "Melhoria recente de vigor espectral."
-    elif total_delta <= -floor and len(nonzero) >= 2 and all(s == -1 for s in nonzero):
-        code, label, text = "queda", "Queda", "Queda recente de vigor espectral."
-    elif abs(total_delta) < floor or len(nonzero) < 2 or (nonzero and len(set(nonzero)) > 1):
-        code, label, text = "estavel", "Estável", "Vigor espectral sem mudança direcional consistente no período."
+    accepted = sorted(_accepted_points(timeline), key=lambda x: x["date"])
+    points, window = select_trend_window(accepted, window_days)
+
+    def insufficient(reason: str) -> dict:
+        return {
+            "code": "dados_insuficientes",
+            "label": TREND_LABELS["dados_insuficientes"],
+            "text": "Não há dados suficientes para avaliar tendência.",
+            "reason": reason,
+            "scenes_used": len(points),
+            "scenes_accepted_total": len(accepted),
+            "window": window,
+            "delta": None,
+            "delta_from": points[0]["date"] if points else None,
+            "delta_to": points[-1]["date"] if points else None,
+            "estimated_change": None,
+            "slope_per_day": None,
+            "span_days": _span_days(points),
+            "absolute_threshold": floor,
+            "tau": None,
+            "criteria": TREND_CRITERIA,
+        }
+
+    if len(points) < MIN_TREND_SCENES:
+        return insufficient(
+            f"menos de {MIN_TREND_SCENES} cenas de qualidade alta/média na janela de "
+            f"{window.get('days', window_days)} dias"
+        )
+    span = _span_days(points)
+    if span < MIN_TREND_INTERVAL_DAYS:
+        return insufficient(f"intervalo observado menor que {MIN_TREND_INTERVAL_DAYS} dias")
+
+    dates = [_safe_date(p["date"]) for p in points]
+    x = np.asarray([(d - dates[0]).days for d in dates], dtype=float)
+    y = np.asarray([float(p["mean"]) for p in points], dtype=float)
+    slope = _theil_sen_slope(x, y)
+    if slope is None:
+        return insufficient("não foi possível estimar a inclinação temporal")
+    estimated_change = float(slope) * span
+    endpoint_delta = float(y[-1] - y[0])
+    mk = _mann_kendall(x, y)
+    tau = mk["tau"] if mk["tau"] is not None else 0.0
+    residuals = y - (y[0] + slope * (x - x[0]))
+    # Dispersão robusta em torno da reta de Theil–Sen (MAD × 1,4826 ≈ desvio
+    # padrão de uma normal, sem sofrer com uma cena discrepante).
+    residual_scatter = float(1.4826 * np.median(np.abs(residuals - np.median(residuals))))
+
+    magnitude_ok = abs(estimated_change) >= floor
+    direction_ok = abs(tau) >= TREND_TAU_MIN
+    # Razão sinal/ruído: a mudança estimada ao longo da janela precisa ser pelo
+    # menos tão grande quanto a dispersão típica das cenas em torno da reta.
+    # Sem isso, uma série que oscila 0,35 de uma passagem para a outra seria
+    # declarada "melhoria" por um arrasto de 0,06 nas pontas.
+    signal_to_noise = (abs(estimated_change) / residual_scatter) if residual_scatter > 0 else None
+    noise_ok = residual_scatter <= abs(estimated_change)
+    if magnitude_ok and direction_ok and noise_ok and tau > 0:
+        code = "melhoria"
+        text = (
+            f"Aumento consistente do {INDEX_CATALOG[index]['label']} na janela analisada "
+            f"({window.get('first_observation')} a {window.get('last_observation')})."
+        )
+    elif magnitude_ok and direction_ok and noise_ok and tau < 0:
+        code = "queda"
+        text = (
+            f"Redução consistente do {INDEX_CATALOG[index]['label']} na janela analisada "
+            f"({window.get('first_observation')} a {window.get('last_observation')})."
+        )
+    elif not magnitude_ok and residual_scatter < floor:
+        code = "estavel"
+        text = (
+            f"Série praticamente horizontal: variação estimada abaixo de {floor:.2f} "
+            f"{INDEX_CATALOG[index]['label']} e dispersão baixa entre as cenas."
+        )
     else:
-        code, label, text = "estavel", "Estável", "Variação espectral sem evidência suficiente de tendência direcional."
+        code = "sem_tendencia"
+        text = (
+            "As cenas oscilam sem direção predominante; não há evidência suficiente "
+            "para declarar melhoria ou queda no período."
+        )
     return {
-        "code": code, "label": label, "text": text,
-        "scenes_used": len(points), "delta": _round_or_none(total_delta),
-        "slope_per_day": _round_or_none(slope, 6), "span_days": span,
+        "code": code,
+        "label": TREND_LABELS[code],
+        "text": text,
+        "scenes_used": len(points),
+        "scenes_accepted_total": len(accepted),
+        "window": window,
+        # Delta ponta-a-ponta DA JANELA (primeira → última cena aceita dela).
+        "delta": _round_or_none(endpoint_delta),
+        "delta_from": points[0]["date"],
+        "delta_to": points[-1]["date"],
+        # Mudança estimada pela reta robusta ao longo do intervalo observado.
+        "estimated_change": _round_or_none(estimated_change),
+        "slope_per_day": _round_or_none(slope, 6),
+        "span_days": span,
         "absolute_threshold": floor,
-        "direction_sequence": signs,
+        "tau": mk["tau"],
+        "tau_threshold": TREND_TAU_MIN,
+        "mann_kendall": mk,
+        "residual_scatter": _round_or_none(residual_scatter),
+        "signal_to_noise": _round_or_none(signal_to_noise, 2),
+        "direction_sequence": [1 if c > 0 else -1 if c < 0 else 0 for c in np.diff(y)],
+        "criteria": TREND_CRITERIA,
+        "method": "Theil–Sen sobre datas reais + tau de Kendall",
+    }
+
+
+def classify_series_quality(timeline: list[dict]) -> dict:
+    """Qualidade AGREGADA da série — distinta da qualidade de cada cena.
+
+    A versão anterior rebaixava a análise inteira para "Limitada" assim que
+    UMA cena não fosse alta/média. Aqui a classificação é proporcional: o que
+    importa é quantas aquisições do período sustentam a análise.
+    """
+    total = len(timeline)
+    counts = {"alta": 0, "media": 0, "limitada": 0, "insuficiente": 0}
+    for item in timeline:
+        level = item.get("quality")
+        if level in counts:
+            counts[level] += 1
+        else:
+            counts["insuficiente"] += 1
+    usable = counts["alta"] + counts["media"]
+    usable_ratio = (usable / total) if total else 0.0
+    high_ratio = (counts["alta"] / total) if total else 0.0
+    if total == 0 or usable == 0 or usable < MIN_TREND_SCENES or usable_ratio < 0.34:
+        level = "insuficiente"
+    elif usable_ratio < 0.60:
+        level = "limitada"
+    elif usable_ratio < 0.80 or high_ratio < 0.50:
+        level = "media"
+    else:
+        level = "alta"
+    labels = {"alta": "Alta", "media": "Média", "limitada": "Limitada", "insuficiente": "Insuficiente"}
+    return {
+        "scope": "serie",
+        "level": level,
+        "label": labels[level],
+        "scenes": total,
+        "usable_scenes": usable,
+        "valid_scenes": usable,
+        "usable_ratio_pct": round(100.0 * usable_ratio, 1),
+        "high_ratio_pct": round(100.0 * high_ratio, 1),
+        "distribution": counts,
+        "criteria": SERIES_QUALITY_CRITERIA,
     }
 
 
@@ -462,7 +810,10 @@ def compute_persistence(scene_results: list[dict], area_ha: float, index: str = 
     usable = [r for r in scene_results if r and r.get("stats") and r.get("valid_mask") is not None]
     usable = sorted(usable, key=lambda r: r["date"])
     if len(usable) < PERSISTENCE_SCENES:
-        return {"status": "dados_insuficientes", "scenes_used": len(usable), "message": "São necessárias pelo menos três cenas válidas para avaliar persistência."}
+        return {
+            "status": "dados_insuficientes", "scenes_used": len(usable), "window": None,
+            "message": f"São necessárias pelo menos {PERSISTENCE_SCENES} cenas processadas para avaliar persistência.",
+        }
     usable = usable[-PERSISTENCE_SCENES:]
     polygon = np.asarray(usable[0]["polygon_mask"], dtype=bool)
     valid = polygon.copy()
@@ -475,7 +826,10 @@ def compute_persistence(scene_results: list[dict], area_ha: float, index: str = 
         transitions.append((pair, delta, threshold))
         valid &= pair
     if not transitions or not np.any(valid):
-        return {"status": "dados_insuficientes", "scenes_used": len(usable), "message": "Não há pixels pareados suficientes para avaliar persistência."}
+        return {
+            "status": "dados_insuficientes", "scenes_used": len(usable), "window": None,
+            "message": "Não há pixels pareados suficientes para avaliar persistência.",
+        }
     decline = valid.copy(); improve = valid.copy()
     for pair, delta, threshold in transitions:
         decline &= delta <= -threshold
@@ -484,12 +838,30 @@ def compute_persistence(scene_results: list[dict], area_ha: float, index: str = 
     def area(mask):
         pixels = int(np.sum(mask)); pct = pixels * 100.0 / polygon_pixels
         return {"pixels": pixels, "pct": round(pct, 2), "ha": round(area_ha * pct / 100.0, 4)}
+    dates = [r["date"] for r in usable]
+    window = {
+        "start": dates[0],
+        "end": dates[-1],
+        "days": (_safe_date(dates[-1]) - _safe_date(dates[0])).days,
+        "scenes": len(usable),
+        "transitions": len(transitions),
+    }
     return {
         "status": "ok", "scenes_used": len(usable),
-        "dates": [r["date"] for r in usable],
+        "dates": dates,
+        "window": window,
         "declining": area(decline), "improving": area(improve),
         "thresholds_absolute": [round(t[2], 4) for t in transitions],
-        "text": "Nível de atenção elevado por persistência espectral; isso não confirma problema agronômico.",
+        "criteria": (
+            f"Persistência exige a MESMA direção nas {len(transitions)} transições entre as "
+            f"{len(usable)} últimas cenas com dado pareado, cada uma acima do limiar adaptativo "
+            "da transição."
+        ),
+        "text": (
+            f"Persistência avaliada entre {dates[0]} e {dates[-1]} ({window['days']} dias, "
+            f"{len(usable)} cenas). Persistência espectral eleva o nível de atenção, mas não "
+            "confirma problema agronômico."
+        ),
     }
 
 
@@ -560,9 +932,21 @@ def get_health_timeline(
 
     calendar, calendar_status, detail = _base_context(lat, lon, area_ha, kml_coordinates, index, start, end, min(120, max(1, limit)))
     if not calendar:
-        status = "unavailable" if calendar_status == "error" else "insufficient_data"
-        message = "Dados Sentinel-2 indisponíveis no momento." if status == "unavailable" else "Não há dados suficientes para avaliar tendência."
+        # A causa da ausência é declarada, não uniformizada: fonte não
+        # configurada, falha da fonte e janela sem passagem são situações
+        # diferentes e o operador precisa saber qual delas ocorreu.
+        status, message = {
+            "not_configured": ("unavailable",
+                               "Fonte Sentinel-2 não configurada neste ambiente: nenhuma cena pode ser processada."),
+            "error": ("unavailable",
+                      "Dados Sentinel-2 indisponíveis no momento (falha ao consultar o catálogo)."),
+        }.get(calendar_status, ("insufficient_data",
+                                "Nenhuma aquisição Sentinel-2 utilizável no período selecionado."))
         result = _empty_response(index, status, message, detail or {"calendar_status": calendar_status, "period": {"start": start.isoformat(), "end": end.isoformat()}})
+        result["source_data"]["calendar_status"] = calendar_status
+        result["source_data"]["scene_count"] = 0
+        result["source_data"]["scene_with_data_count"] = 0
+        result["source_data"]["valid_scene_count"] = 0
         result["period"] = {"start": start.isoformat(), "end": end.isoformat(), "days": (end - start).days + 1}
         _cache_set(cache_key, result)
         return result
@@ -585,59 +969,141 @@ def get_health_timeline(
     records.sort(key=lambda x: x["date"])
     _enrich_deltas(records)
     trend = classify_trend(records, index)
-    valid_records = _accepted_points(records)
-    means = np.asarray([r["mean"] for r in valid_records], dtype=float) if valid_records else np.asarray([])
-    volatility = _round_or_none(np.std(means), 4) if means.size > 1 else None
-    stability = "estavel" if volatility is not None and volatility < INDEX_CATALOG[index]["delta_floor"] else ("variavel" if volatility is not None else None)
+    accepted_records = _accepted_points(records)
+    with_data = [r for r in records if r.get("mean") is not None]
+
+    # Volatilidade/estabilidade descrevem a DISPERSÃO DA JANELA DA TENDÊNCIA,
+    # não do histórico inteiro — misturar dois ciclos agrícolas inflaria o
+    # desvio e tornaria a métrica ilegível.
+    window_points, _ = select_trend_window(accepted_records)
+    window_means = np.asarray([r["mean"] for r in window_points], dtype=float) if window_points else np.asarray([])
+    volatility = _round_or_none(np.std(window_means), 4) if window_means.size > 1 else None
+    floor = float(INDEX_CATALOG[index]["delta_floor"])
+    stability = None
+    if volatility is not None:
+        stability = "estavel" if volatility < floor else "variavel"
+
     current_raster = processed[-1] if processed else None
     persistence = compute_persistence(processed, area_ha, index)
-    anomaly = compute_internal_anomaly(current_raster["values"], current_raster["valid_mask"], area_ha, index) if current_raster else {"status": "dados_insuficientes"}
-    current = records[-1] if records else None
-    previous = records[-2] if len(records) > 1 else None
-    quality_levels = [r["quality"] for r in records]
-    quality_level = (
-        "alta" if quality_levels and all(q == "alta" for q in quality_levels)
-        else "media" if quality_levels and all(q in {"alta", "media"} for q in quality_levels)
-        else "limitada"
+    anomaly = (
+        compute_internal_anomaly(current_raster["values"], current_raster["valid_mask"], area_ha, index)
+        if current_raster else {"status": "dados_insuficientes"}
     )
+
+    # ------------------------------------------------------------------
+    # Cena atual — a interface precisa distinguir explicitamente:
+    #   latest_scene        = última aquisição do catálogo (pode ter falhado)
+    #   current             = última aquisição COM valor calculado
+    #   latest_valid_scene  = última aquisição ACEITA pela tendência
+    # ------------------------------------------------------------------
+    latest_scene = records[-1] if records else None
+    current = with_data[-1] if with_data else None
+    latest_valid = accepted_records[-1] if accepted_records else None
+    previous = with_data[-2] if len(with_data) > 1 else None
+    current_is_valid = bool(current and current.get("quality") in ACCEPTABLE_QUALITIES)
+    if current is None:
+        current_note = "Nenhuma aquisição do período produziu valor de índice."
+    elif current_is_valid:
+        current_note = "A última cena com dado também é a última cena válida para a análise de tendência."
+    elif latest_valid is not None:
+        current_note = (
+            f"A última cena disponível ({current['date']}, qualidade "
+            f"{current.get('quality_label', '—').lower()}) NÃO entra na tendência; a última cena válida "
+            f"para análise é {latest_valid['date']}."
+        )
+    else:
+        current_note = (
+            f"A última cena disponível ({current['date']}) tem qualidade "
+            f"{current.get('quality_label', '—').lower()} e nenhuma cena do período é válida para análise."
+        )
+
+    series_quality = classify_series_quality(records)
+    scene_quality = None
+    if current is not None:
+        scene_quality = {
+            "scope": "cena",
+            "level": current.get("quality"),
+            "label": current.get("quality_label"),
+            "date": current.get("date"),
+            "valid_pixel_pct": current.get("valid_pixel_pct"),
+            "cloud_cover": current.get("cloud_cover"),
+            "criteria": classify_scene_quality(90, 10)["criteria"],
+        }
+
+    attention: list[str] = []
+    if persistence.get("status") == "ok" and persistence.get("declining", {}).get("pixels", 0):
+        window = persistence.get("window") or {}
+        attention.append(
+            f"Queda espectral persistente em {persistence['declining']['ha']:.2f} ha entre "
+            f"{window.get('start', '—')} e {window.get('end', '—')}."
+        )
+    if anomaly.get("status") == "ok" and anomaly.get("below_internal_baseline", {}).get("pixels", 0):
+        attention.append("Há zona abaixo do baseline interno do próprio talhão na cena mais recente processada.")
+    if not current_is_valid and current is not None:
+        attention.append(current_note)
+    if series_quality["level"] in {"limitada", "insuficiente"}:
+        attention.append(
+            f"Cobertura da série {series_quality['label'].lower()}: "
+            f"{series_quality['usable_scenes']} de {series_quality['scenes']} cenas são úteis."
+        )
+
     result = {
-        "status": "ok" if valid_records else "insufficient_data",
-        "message": None if valid_records else "Não há pixels válidos suficientes para avaliar tendência.",
-        "period": {"start": start.isoformat(), "end": end.isoformat(), "days": (end - start).days + 1},
+        "status": "ok" if accepted_records else "insufficient_data",
+        "message": None if accepted_records else "Não há cenas com qualidade suficiente para avaliar tendência no período.",
+        "period": {"start": start.isoformat(), "end": end.isoformat(), "days": (end - start).days + 1,
+                   "scope": "histórico exibido na timeline"},
         "index": index,
         "index_definition": INDEX_CATALOG[index],
         "timeline": records,
         "source_data": {
             "provider": PROVIDER, "collection": COLLECTION, "processing_level": PROCESSING_LEVEL,
             "calendar_source": "sentinel-cdse", "calendar_status": calendar_status,
-            "is_real": True, "scene_count": len(records), "valid_scene_count": len(valid_records),
+            "calendar_coverage": detail,
+            "is_real": True, "scene_count": len(records),
+            "scene_with_data_count": len(with_data),
+            "valid_scene_count": len(accepted_records),
         },
         "metrics": {
-            "current": current, "previous": previous,
+            "current": current,
+            "latest_scene": latest_scene,
+            "latest_valid_scene": latest_valid,
+            "current_is_valid_for_analysis": current_is_valid,
+            "current_scene_note": current_note,
+            "previous": previous,
             "delta_previous": current.get("delta_previous") if current else None,
+            "delta_previous_detail": {
+                "value": current.get("delta_previous"),
+                "from_date": current.get("delta_previous_from"),
+                "to_date": current.get("date"),
+                "days": current.get("delta_previous_days"),
+                "reference": "cena anterior com dado",
+                "unit": INDEX_CATALOG[index]["label"],
+            } if current and current.get("delta_previous") is not None else None,
             "delta_30d": current.get("delta_30d") if current else None,
+            "delta_30d_detail": {
+                "value": current.get("delta_30d"),
+                "from_date": current.get("delta_30d_from"),
+                "to_date": current.get("date"),
+                "days": current.get("delta_30d_days"),
+                "reference": f"cena mais próxima de {DELTA_30D_TARGET_DAYS} dias antes (±{DELTA_30D_TOLERANCE_DAYS} dias)",
+                "unit": INDEX_CATALOG[index]["label"],
+            } if current and current.get("delta_30d") is not None else None,
             "trend": trend["code"], "trend_label": trend["label"], "trend_detail": trend,
             "stability": stability, "volatility": volatility,
+            "volatility_scope": "janela da tendência",
             "persistence": persistence, "internal_anomaly": anomaly,
         },
         "interpretation": {
             "trend": trend["text"],
-            "attention": [
-                *(["Área com queda espectral persistente."] if persistence.get("status") == "ok" and persistence.get("declining", {}).get("pixels", 0) else []),
-                *(["Zona apresenta comportamento diferente do restante do talhão."] if anomaly.get("status") == "ok" and anomaly.get("below_internal_baseline", {}).get("pixels", 0) else []),
-                *(["Há cenas com cobertura limitada; a interpretação deve ser feita com cautela."] if any(r.get("quality") == "limitada" for r in records) else []),
-            ],
+            "attention": attention,
             "scientific_note": "Índice espectral não é diagnóstico agronômico. Os dados descrevem mudança relativa e não permitem determinar sua causa.",
         },
-        "quality": {
-            "level": quality_level, "label": {"alta": "Alta", "media": "Média", "limitada": "Limitada"}[quality_level],
-            "scenes": len(records), "valid_scenes": len(valid_records),
-            "criteria": classify_scene_quality(90, 10)["criteria"],
-        },
+        "quality": series_quality,
+        "scene_quality": scene_quality,
         "confidence": {
-            "level": quality_level,
-            "label": {"alta": "Alta", "media": "Média", "limitada": "Limitada"}[quality_level],
-            "basis": "cobertura válida pós-SCL/dataMask, cobertura de nuvens e qualidade individual das cenas",
+            **series_quality,
+            "alias_of": "quality",
+            "note": "Campo mantido por compatibilidade: repete literalmente a qualidade agregada da série. Não é uma dimensão independente e não é exibido como tal na interface.",
         },
     }
     _cache_set(cache_key, result)
@@ -727,7 +1193,6 @@ def compare_dates(
             "delta_mean": delta_mean, "delta_median": zones.get("delta_median"),
             "direction": direction, "zones": zones,
             "quality_a": quality_a, "quality_b": quality_b,
-            "confidence_a": quality_a, "confidence_b": quality_b,
             "difference_map": {
                 "url_path": f"/api/farms/{farm_id}/crop-health/difference.png?index={index}&date_a={a.isoformat()}&date_b={b.isoformat()}",
                 "legend": {"positive": "aumento do índice", "zero": "estabilidade", "negative": "redução do índice"},

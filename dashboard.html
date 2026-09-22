@@ -2,97 +2,91 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <title>Dashboard Agronômico & Operacional - Fazenda Orion</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Vitrine estática (dados demonstrativos) — Orion</title>
+  <link rel="stylesheet" href="orion.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
-    * { box-sizing: border-box; }
-    body {
-      margin: 0; padding: 24px; font-family: 'Segoe UI', Roboto, Helvetica, sans-serif;
-      background: #0d1117; color: #f0f6fc;
-    }
+    body { margin: 0; padding: var(--sp-5) var(--sp-4) var(--sp-6); }
+    .page { max-width: 1440px; margin: 0 auto; }
+
     .top-bar {
-      display: flex; justify-content: space-between; align-items: center;
-      padding-bottom: 20px; border-bottom: 1px solid #30363d; margin-bottom: 24px;
-      flex-wrap: wrap; gap: 16px;
+      display: flex; justify-content: space-between; align-items: flex-end;
+      padding-bottom: var(--sp-3); border-bottom: 1px solid var(--line);
+      margin-bottom: var(--sp-4); flex-wrap: wrap; gap: var(--sp-4);
     }
-    .top-title h1 { margin: 0; font-size: 1.6rem; color: #58a6ff; }
-    .top-title p { margin: 4px 0 0 0; color: #8b949e; font-size: 0.9rem; }
+    .top-title h1 { margin: var(--sp-1) 0 2px; font-size: 1.3rem; color: var(--text-1); }
+    .top-title p { margin: 0; color: var(--text-2); font-size: var(--fs-sm); }
     .btn-action {
-      background: #238636; color: #fff; padding: 10px 18px; border-radius: 8px;
-      text-decoration: none; font-weight: 600; display: inline-flex; align-items: center; gap: 8px;
-      transition: 0.2s;
+      background: var(--veg); color: #fff; border: 1px solid var(--veg);
+      padding: 8px 14px; border-radius: var(--r-md);
+      text-decoration: none; font-weight: 600; font-size: var(--fs-sm);
+      display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
     }
-    .btn-action:hover { background: #2ea043; }
+    .btn-action:hover { background: #59a874; }
 
-    /* Layout Principal em 2 Colunas */
-    .main-layout {
-      display: grid; grid-template-columns: 1fr 370px; gap: 24px;
-    }
-    @media (max-width: 1100px) { .main-layout { grid-template-columns: 1fr; } }
+    .main-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: var(--sp-4); align-items: start; }
+    @media (max-width: 1100px) { .main-layout { grid-template-columns: minmax(0, 1fr); } }
 
-    /* KPIs */
-    .kpi-grid {
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 14px; margin-bottom: 24px;
-    }
+    .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--sp-2); margin-bottom: var(--sp-4); }
     .kpi-card {
-      background: #161b22; border: 1px solid #30363d; padding: 16px;
-      border-radius: 12px; display: flex; flex-direction: column; gap: 4px;
+      background: var(--surface-1); border: 1px solid var(--line);
+      border-left: 2px solid var(--line-strong);
+      padding: var(--sp-3) var(--sp-4); border-radius: var(--r-md);
+      display: flex; flex-direction: column; gap: 2px; min-width: 0;
     }
-    .kpi-card span { font-size: 0.75rem; color: #8b949e; text-transform: uppercase; font-weight: 600; }
-    .kpi-card strong { font-size: 1.4rem; }
-    .kpi-card small { font-size: 0.75rem; color: #7ee787; }
+    .kpi-card span { font-size: var(--fs-micro); color: var(--text-3); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
+    .kpi-card strong { font-size: var(--fs-value); color: var(--text-1); font-weight: 600; font-variant-numeric: tabular-nums; }
+    .kpi-card small { font-size: var(--fs-meta); color: var(--text-2); }
 
-    .charts-grid {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 24px;
-    }
-    @media (max-width: 750px) { .charts-grid { grid-template-columns: 1fr; } }
+    .charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); margin-bottom: var(--sp-4); }
+    @media (max-width: 820px) { .charts-grid { grid-template-columns: 1fr; } }
 
     .chart-box, .table-box, .side-card {
-      background: #161b22; border: 1px solid #30363d; padding: 18px; border-radius: 12px;
-      margin-bottom: 20px;
+      background: var(--surface-1); border: 1px solid var(--line);
+      padding: var(--sp-4); border-radius: var(--r-lg); margin-bottom: var(--sp-4);
     }
-    .chart-box h3, .table-box h3, .side-card h3 { margin: 0 0 14px 0; font-size: 1rem; color: #58a6ff; }
+    .chart-box h3, .table-box h3, .side-card h3 {
+      margin: 0 0 var(--sp-3); font-size: var(--fs-body); color: var(--text-1); font-weight: 600;
+    }
+    .chart-box canvas { max-width: 100%; }
 
-    /* Painéis Laterais */
-    .whatif-card { border-left: 4px solid #d29922; }
-    .calc-card { border-left: 4px solid #1f6feb; }
+    .whatif-card { border-left: 2px solid var(--warn); }
+    .calc-card { border-left: 2px solid var(--data); }
 
-    .param-group { margin-bottom: 12px; }
-    .param-group label { font-size: 0.8rem; color: #8b949e; display: flex; justify-content: space-between; }
-    .param-group input[type=range] { width: 100%; margin-top: 5px; accent-color: #d29922; }
+    .param-group { margin-bottom: var(--sp-3); }
+    .param-group label { font-size: var(--fs-meta); color: var(--text-2); display: flex; justify-content: space-between; gap: var(--sp-2); }
+    .param-group label strong { color: var(--text-1); font-variant-numeric: tabular-nums; }
+    .param-group input[type=range] { width: 100%; margin-top: 5px; accent-color: var(--warn); }
 
     .sim-result-box {
-      background: rgba(13, 17, 23, 0.8); border: 1px solid #30363d;
-      padding: 12px; border-radius: 8px; margin-top: 12px; font-size: 0.85rem;
+      background: var(--surface-0); border: 1px solid var(--line);
+      padding: var(--sp-3); border-radius: var(--r-md); margin-top: var(--sp-3);
+      font-size: var(--fs-sm); line-height: 1.7; color: var(--text-2);
     }
+    .sim-result-box strong { color: var(--text-1); font-variant-numeric: tabular-nums; }
 
     .btn-orion-link {
-      background: #1f6feb; color: white; border: none; padding: 10px 14px;
-      border-radius: 8px; cursor: pointer; font-weight: 600; width: 100%; margin-top: 12px;
-      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-      text-decoration: none; transition: 0.2s;
+      background: var(--surface-2); color: var(--text-1); border: 1px solid var(--line);
+      padding: 9px 14px; border-radius: var(--r-md); cursor: pointer; font-weight: 600;
+      width: 100%; margin-top: var(--sp-3); font-size: var(--fs-sm);
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px; text-decoration: none;
     }
-    .btn-orion-link:hover { background: #388bfd; }
-
-    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-    th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #21262d; }
-    th { color: #8b949e; background: #0d1117; }
-    .badge { padding: 3px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; }
-    .badge-ok { background: rgba(35, 134, 54, 0.25); color: #7ee787; border: 1px solid #2ea043; }
-    .badge-warn { background: rgba(217, 119, 6, 0.25); color: #fbbf24; border: 1px solid #d97706; }
-    .badge-bad { background: rgba(218, 54, 51, 0.25); color: #ff7b72; border: 1px solid #da3633; }
+    .btn-orion-link:hover { border-color: var(--data); color: var(--data-text); }
   </style>
 </head>
 <body>
 
+  <div class="page">
   <!-- Top Bar -->
   <div class="top-bar">
     <div class="top-title">
-      <h1>📊 Dashboard Agronômico & Operacional</h1>
-      <p>Fazenda Orion — Talhão 01 (Área Total: 42,54 ha)</p>
+      <span class="eyebrow">Orion · página legada</span>
+      <h1>Vitrine estática do painel</h1>
+      <p>Layout de referência com números ilustrativos fixos — não é o monitoramento do talhão.</p>
     </div>
-    <a href="index.html" class="btn-action">🚀 Abrir Simulador 3D Side-by-Side</a>
+    <a href="index.html" class="btn-action">Abrir o monitoramento real do talhão →</a>
   </div>
 
   <!-- PR #7 — Esta página é uma VITRINE ESTÁTICA LEGADA: os números abaixo
@@ -100,62 +94,66 @@
        hardcodados, NEM NASA POWER real NEM Sentinel real. O clima real por
        período fica no painel "Clima & Condições Agronômicas" em index.html
        (GET /api/climate/farm/{id}, fonte NASA POWER, localização canônica). -->
-  <div style="background:rgba(217,119,6,0.12); border:1px solid #d97706; border-left:4px solid #d97706; color:#fbbf24; padding:10px 14px; border-radius:8px; margin-bottom:20px; font-size:0.85rem; font-weight:600;">
-    ⚠ DADOS DEMONSTRATIVOS — página estática legada. Os valores exibidos aqui são ilustrativos (hardcoded) e NÃO vêm da NASA POWER nem do Sentinel-2. Para clima real do talhão, use o painel "Clima &amp; Condições Agronômicas" no Simulador (index.html).
+  <div class="notice-demo" role="note" style="margin-bottom:24px;">
+    <span><b>Dados demonstrativos.</b> Todos os números desta página são fixos no código e
+    <b>não</b> vêm da NASA POWER nem do Sentinel-2. Clima real, série espectral e comparação
+    entre cenas ficam em <a href="index.html">Monitoramento do talhão</a>.</span>
   </div>
 
   <div class="main-layout">
     <!-- Coluna Esquerda: KPIs, Gráficos e Tabela -->
     <div>
       <div class="kpi-grid">
-        <div class="kpi-card" style="border-left: 4px solid #2ea043;">
-          <span>Área Mapeada</span>
+        <div class="kpi-card" style="border-left-color: var(--veg);">
+          <span>Área mapeada</span>
           <strong>42,54 ha</strong>
-          <small>Talhão 01</small>
+          <small>Talhão 01 · valor ilustrativo</small>
         </div>
-        <div class="kpi-card" style="border-left: 4px solid #58a6ff;">
-          <span>Chuva Acumulada</span>
+        <div class="kpi-card" style="border-left-color: var(--data);">
+          <span>Chuva acumulada</span>
           <strong>1.626,6 mm</strong>
-          <small style="color:#fbbf24;">DADOS DEMONSTRATIVOS</small>
+          <small>12 meses · valor ilustrativo</small>
         </div>
-        <div class="kpi-card" style="border-left: 4px solid #d29922;">
-          <span>Temperatura Média</span>
+        <div class="kpi-card" style="border-left-color: var(--warn);">
+          <span>Temperatura média</span>
           <strong>22,4 °C</strong>
-          <small>Mín 1,2°C / Máx 38,0°C</small>
+          <small>mín 1,2 °C / máx 38,0 °C · ilustrativo</small>
         </div>
-        <div class="kpi-card" style="border-left: 4px solid #a371f7;">
+        <div class="kpi-card" style="border-left-color: var(--data);">
           <span>Série Sentinel-2</span>
-          <strong>13 Cenas</strong>
-          <small>07/04/25 a 08/03/26</small>
+          <strong>13 cenas</strong>
+          <small>07/04/25 a 08/03/26 · ilustrativo</small>
         </div>
       </div>
 
       <div class="charts-grid">
         <div class="chart-box">
-          <h3>🌧️ Precipitação Mensal (mm)</h3>
+          <h3>Precipitação mensal (mm)</h3>
           <canvas id="rainChart" height="140"></canvas>
         </div>
         <div class="chart-box">
-          <h3>🌡️ Curva Térmica Mensal (°C)</h3>
+          <h3>Curva térmica mensal (°C)</h3>
           <canvas id="tempChart" height="140"></canvas>
         </div>
       </div>
 
       <div class="table-box">
-        <h3>🛰️ Histórico de Aplicações & Imagens</h3>
-        <table>
-          <thead>
-            <tr>
-              <th>Data</th>
-              <th>Temp.</th>
-              <th>Chuva</th>
-              <th>Umidade</th>
-              <th>Vento</th>
-              <th>Status Aplicação</th>
-            </tr>
-          </thead>
-          <tbody id="table-body"></tbody>
-        </table>
+        <h3>Histórico de aplicações e passagens</h3>
+        <div class="table-wrap">
+          <table class="data">
+            <thead>
+              <tr>
+                <th scope="col">Data</th>
+                <th scope="col">Temp.</th>
+                <th scope="col">Chuva</th>
+                <th scope="col">Umidade</th>
+                <th scope="col">Vento</th>
+                <th scope="col">Aplicação</th>
+              </tr>
+            </thead>
+            <tbody id="table-body"></tbody>
+          </table>
+        </div>
       </div>
     </div>
 
@@ -163,51 +161,55 @@
     <div>
       <!-- 1. Simulador What-If -->
       <div class="side-card whatif-card">
-        <h3 style="color:#e3b341;">⚡ Simulador "What-If"</h3>
+        <h3>Simulador What-If</h3>
         
+        <p class="disclaimer" style="margin:-4px 0 12px;">Modelo empírico de sensibilidade; não é medição.</p>
+
         <div class="param-group">
-          <label><span>Adubação Nitrogenada ($N$)</span><strong id="val-n">+0 kg/ha</strong></label>
+          <label for="dash-n"><span>Adubação nitrogenada</span><strong id="val-n">+0 kg/ha</strong></label>
           <input type="range" id="dash-n" min="-50" max="150" step="10" value="0">
         </div>
 
         <div class="param-group">
-          <label><span>Lâmina de Irrigação</span><strong id="val-w">+0 mm</strong></label>
+          <label for="dash-w"><span>Lâmina de irrigação</span><strong id="val-w">+0 mm</strong></label>
           <input type="range" id="dash-w" min="-30" max="60" step="5" value="0">
         </div>
 
         <div class="param-group">
-          <label><span>Pressão de Pragas/Clorose</span><strong id="val-p">0%</strong></label>
+          <label for="dash-p"><span>Pressão de pragas</span><strong id="val-p">0%</strong></label>
           <input type="range" id="dash-p" min="0" max="60" step="5" value="0">
         </div>
 
         <div class="sim-result-box">
-          <div style="font-size:0.72rem; color:#8b949e; margin-bottom:4px;">PROJEÇÃO DO TALHÃO (42,54 ha):</div>
-          <div>Vigor: <strong id="dash-ndvi" style="color:#7ee787;">NDVI +0.00</strong></div>
-          <div>Produtividade: <strong id="dash-yield" style="color:#58a6ff;">+0.0 sc/ha</strong></div>
-          <div style="margin-top:6px; padding-top:6px; border-top:1px solid #30363d;">
-            Impacto Financeiro: <strong id="dash-money" style="color:#f0f6fc;">R$ 0,00</strong>
+          <div class="eyebrow" style="margin-bottom:4px;">Projeção do talhão (42,54 ha)</div>
+          <div>Vigor: <strong id="dash-ndvi">NDVI +0.00</strong></div>
+          <div>Produtividade: <strong id="dash-yield">+0.0 sc/ha</strong></div>
+          <div style="margin-top:6px; padding-top:6px; border-top:1px solid var(--line);">
+            Impacto financeiro: <strong id="dash-money">R$ 0,00</strong>
           </div>
         </div>
       </div>
 
       <!-- 2. Integração com a Calculadora Orion -->
       <div class="side-card calc-card">
-        <h3 style="color:#58a6ff;">🚜 Calculadora Agrícola Orion</h3>
-        <p style="font-size:0.83rem; color:#8b949e; margin-top:0; line-height:1.4;">
-          Acesse a ferramenta oficial da Orion para cálculo de pontas de pulverização, taxa de aplicação, vazão de bicos e regulagem para este talhão.
+        <h3>Calculadora agrícola Orion</h3>
+        <p style="font-size:var(--fs-sm); color:var(--text-2); margin-top:0; line-height:1.5;">
+          Cálculo de pontas, taxa de aplicação, vazão de bicos e regulagem para este talhão.
         </p>
 
         <div class="sim-result-box" style="margin-top:8px;">
-          • Talhão Selecionado: <strong>Talhão 01</strong><br>
-          • Área Base: <strong>42,54 hectares</strong><br>
-          • Cultura: <strong>Soja / Milho Safrinha</strong>
+          Talhão: <strong>Talhão 01</strong><br>
+          Área base: <strong>42,54 ha</strong><br>
+          Cultura: <strong>Soja / milho safrinha</strong>
         </div>
 
-        <a href="https://orion.ind.br/calculadora/" target="_blank" class="btn-orion-link">
+        <a href="https://orion.ind.br/calculadora/" target="_blank" rel="noopener" class="btn-orion-link">
           Abrir Calculadora Orion ↗
         </a>
       </div>
     </div>
+  </div>
+
   </div>
 
   <script>
@@ -263,8 +265,8 @@
     const months = ["Abr/25", "Mai/25", "Jun/25", "Jul/25", "Ago/25", "Set/25", "Out/25", "Nov/25", "Dez/25", "Jan/26", "Fev/26", "Mar/26"];
     new Chart(document.getElementById('rainChart'), {
       type: 'bar',
-      data: { labels: months, datasets: [{ data: [244.6, 65.3, 63.4, 9.7, 38.9, 94.1, 164.4, 226.9, 328.1, 103.9, 286.6, 0.8], backgroundColor: '#1f6feb', borderRadius: 4 }] },
-      options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } }, y: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } } } }
+      data: { labels: months, datasets: [{ data: [244.6, 65.3, 63.4, 9.7, 38.9, 94.1, 164.4, 226.9, 328.1, 103.9, 286.6, 0.8], backgroundColor: '#2f6f93', borderRadius: 2 }] },
+      options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { grid: { color: '#19201e' }, ticks: { color: '#7b8b84', font: { size: 10 } } }, y: { grid: { color: '#19201e' }, ticks: { color: '#7b8b84', font: { size: 10 } } } } }
     });
 
     new Chart(document.getElementById('tempChart'), {
@@ -272,12 +274,12 @@
       data: {
         labels: months,
         datasets: [
-          { label: 'Máx', data: [29.7, 31.8, 28.6, 32.7, 35.0, 38.0, 37.6, 38.0, 34.4, 35.9, 36.7, 35.9], borderColor: '#da3633', tension: 0.3 },
-          { label: 'Méd', data: [22.0, 20.4, 17.1, 17.0, 18.5, 24.6, 23.8, 23.8, 25.0, 26.2, 26.5, 27.4], borderColor: '#58a6ff', tension: 0.3 },
-          { label: 'Mín', data: [9.3, 3.1, 1.2, 3.5, 2.5, 8.9, 11.7, 12.1, 14.5, 13.6, 17.9, 19.5], borderColor: '#2ea043', tension: 0.3 }
+          { label: 'Máx', data: [29.7, 31.8, 28.6, 32.7, 35.0, 38.0, 37.6, 38.0, 34.4, 35.9, 36.7, 35.9], borderColor: '#b8473c', tension: 0.25, borderWidth: 1.5, pointRadius: 2 },
+          { label: 'Méd', data: [22.0, 20.4, 17.1, 17.0, 18.5, 24.6, 23.8, 23.8, 25.0, 26.2, 26.5, 27.4], borderColor: '#5a95bd', tension: 0.25, borderWidth: 1.5, pointRadius: 2 },
+          { label: 'Mín', data: [9.3, 3.1, 1.2, 3.5, 2.5, 8.9, 11.7, 12.1, 14.5, 13.6, 17.9, 19.5], borderColor: '#4e9a68', tension: 0.25, borderWidth: 1.5, pointRadius: 2 }
         ]
       },
-      options: { responsive: true, plugins: { legend: { labels: { color: '#8b949e' } } }, scales: { x: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } }, y: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } } } }
+      options: { responsive: true, plugins: { legend: { labels: { color: '#93a39d', boxWidth: 10, font: { size: 10 } } } }, scales: { x: { grid: { color: '#19201e' }, ticks: { color: '#7b8b84', font: { size: 10 } } }, y: { grid: { color: '#19201e' }, ticks: { color: '#7b8b84', font: { size: 10 } } } } }
     });
   </script>
 </body>

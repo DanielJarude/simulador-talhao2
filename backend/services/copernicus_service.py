@@ -392,12 +392,54 @@ def parse_stac_item(feature: dict) -> SceneInfo:
     )
 
 
+#: Teto de itens por página aceito pelo STAC do CDSE. Pedir mais do que isso
+#: faz o servidor truncar silenciosamente para o próprio limite dele.
+STAC_MAX_PAGE_LIMIT = 100
+#: Teto de páginas percorridas por consulta (proteção contra resposta enorme).
+STAC_MAX_PAGES = 8
+#: Teto absoluto de itens acumulados por consulta (proteção de memória/tempo).
+STAC_MAX_ITEMS = 400
+#: Ordenação temporal determinística pedida ao servidor (STAC API — Sort).
+STAC_SORTBY_DESC = [{"field": "properties.datetime", "direction": "desc"}]
+
+
+def _scene_sort_key(scene: SceneInfo) -> tuple[str, str]:
+    """Chave determinística: aquisição mais recente primeiro, desempate por id."""
+    return (scene.datetime or "", scene.item_id or "")
+
+
+def _stac_next_request(links, current_url: str, current_body: dict):
+    """Resolve o link `rel=next` de uma resposta STAC.
+
+    A paginação do STAC API por POST devolve `href`, `method`, `body` e
+    `merge`. Devolve `(method, url, body)` ou `None` quando não há próxima
+    página. Links malformados são ignorados (nunca quebram a consulta).
+    """
+    for link in links or []:
+        if not isinstance(link, dict) or str(link.get("rel") or "").lower() != "next":
+            continue
+        href = link.get("href") or current_url
+        method = str(link.get("method") or "POST").upper()
+        if method == "GET":
+            return "GET", href, None
+        body = link.get("body")
+        if isinstance(body, dict):
+            merged = {**current_body, **body} if link.get("merge") else dict(body)
+        else:
+            merged = dict(current_body)
+        return "POST", href, merged
+    return None
+
+
 def stac_search(
     geometry: dict | None,
     bbox: list[float],
     start: date,
     end: date,
     limit: int = 10,
+    *,
+    max_items: int | None = None,
+    sortby: bool = True,
 ) -> list[SceneInfo]:
     """
     POST https://stac.dataspace.copernicus.eu/v1/search (STAC 1.1.0).
@@ -405,11 +447,25 @@ def stac_search(
     `bbox` deve estar na ordem geográfica [minLon, minLat, maxLon, maxLat]
     (ver `aoi_bounds`). `geometry`, quando presente, é GeoJSON [lon, lat] —
     o CDSE prioriza `intersects` (interseção real do polígono).
+
+    Ordenação e paginação (PR #8):
+
+    - a consulta pede `sortby` por `properties.datetime` DESC, para que a
+      primeira página seja determinística (as aquisições mais recentes da
+      janela) em vez da ordem arbitrária do servidor;
+    - se o servidor recusar `sortby` (HTTP 400), a consulta é repetida uma
+      única vez sem o campo e a ordenação passa a ser feita localmente;
+    - `max_items` ativa a paginação por `rel=next`, limitada por
+      `STAC_MAX_PAGES` e `STAC_MAX_ITEMS`. Sem `max_items` o comportamento
+      é o histórico: uma página de `limit` itens;
+    - o resultado é SEMPRE reordenado localmente (mais recente primeiro),
+      com deduplicação por `id`, para nunca depender da ordem do provedor.
     """
     url = settings.cdse_stac_url.rstrip("/") + "/search"
+    page_limit = max(1, min(int(limit), STAC_MAX_PAGE_LIMIT))
     body: dict = {
         "collections": [COLLECTION],          # sentinel-2-l2a
-        "limit": limit,
+        "limit": page_limit,
         # Intervalo RFC3339 aceito pelo STAC: inicio/fim com offset UTC.
         "datetime": f"{start.isoformat()}T00:00:00Z/{end.isoformat()}T23:59:59Z",
     }
@@ -417,20 +473,65 @@ def stac_search(
         body["intersects"] = geometry            # prioriza interseção REAL do polígono
     else:
         body["bbox"] = list(bbox)                # [minLon, minLat, maxLon, maxLat]
+    if sortby:
+        body["sortby"] = [dict(rule) for rule in STAC_SORTBY_DESC]
 
     headers = {"Content-Type": "application/json"}
     if is_configured():
         headers["Authorization"] = f"Bearer {_get_token()}"
-    resp = _request("POST", url, json_body=body, headers=headers, stage="STAC_SEARCH")
-    try:
-        data = resp.json()
-    except Exception:
-        raise CopernicusError(
-            "CDSE STAC: JSON inválido na resposta",
-            endpoint=url, content_type="application/json", stage="STAC_SEARCH",
+
+    budget = STAC_MAX_ITEMS if max_items is None else max(1, min(int(max_items), STAC_MAX_ITEMS))
+    max_pages = 1 if max_items is None else STAC_MAX_PAGES
+    scenes: dict[str, SceneInfo] = {}
+    method, next_url, next_body = "POST", url, body
+    truncated = False
+
+    for page in range(max_pages):
+        if method == "GET":
+            resp = _request("GET", next_url, headers=headers, stage="STAC_SEARCH")
+        else:
+            try:
+                resp = _request("POST", next_url, json_body=next_body, headers=headers, stage="STAC_SEARCH")
+            except CopernicusError as exc:
+                # Servidor que não implementa `sortby` responde 400: refaz a
+                # consulta sem ordenação e ordena localmente.
+                if page == 0 and exc.status == 400 and "sortby" in (next_body or {}):
+                    logger.warning("CDSE STAC: sortby recusado (HTTP 400) — refazendo sem ordenação do servidor")
+                    next_body = {k: v for k, v in next_body.items() if k != "sortby"}
+                    resp = _request("POST", next_url, json_body=next_body, headers=headers, stage="STAC_SEARCH")
+                else:
+                    raise
+        try:
+            data = resp.json()
+        except Exception:
+            raise CopernicusError(
+                "CDSE STAC: JSON inválido na resposta",
+                endpoint=next_url, content_type="application/json", stage="STAC_SEARCH",
+            )
+        features = data.get("features") or []
+        for feature in features:
+            scene = parse_stac_item(feature)
+            scenes.setdefault(scene.item_id or f"_anon_{len(scenes)}", scene)
+        if len(scenes) >= budget:
+            truncated = len(scenes) > budget or bool(_stac_next_request(data.get("links"), next_url, next_body or {}))
+            break
+        if not features:
+            break
+        following = _stac_next_request(data.get("links"), next_url, next_body or {})
+        if not following:
+            break
+        if page == max_pages - 1:
+            truncated = True
+            break
+        method, next_url, next_body = following
+
+    ordered = sorted(scenes.values(), key=_scene_sort_key, reverse=True)
+    if truncated:
+        logger.warning(
+            "CDSE STAC: janela %s..%s truncada em %d cenas (teto de páginas/itens)",
+            start.isoformat(), end.isoformat(), len(ordered),
         )
-    features = data.get("features") or []
-    return [parse_stac_item(f) for f in features]
+    return ordered[:budget]
 
 
 def fetch_real_calendar(
@@ -468,9 +569,19 @@ def fetch_real_calendar(
     try:
         bounds = aoi_bounds(lat, lon, area_ha, kml_coordinates)
         geometry = kml_to_geojson_polygon(kml_coordinates)
-        scenes = stac_search(geometry, bounds, start, end, limit=max(limit, 20))
+        # A janela pode ser bem maior que uma página do STAC (ex.: 730 dias
+        # × revisita de ~5 dias = centenas de passagens). Pedimos ordenação
+        # temporal ao servidor E paginamos: as `limit` cenas devolvidas são
+        # as mais recentes REAIS da janela, não as primeiras que o servidor
+        # decidiu enviar.
+        page_limit = max(limit, 20)
+        budget = min(STAC_MAX_ITEMS, max(page_limit * 4, 120))
+        scenes = stac_search(
+            geometry, bounds, start, end,
+            limit=page_limit, max_items=budget, sortby=True,
+        )
         usable = [s for s in scenes if s.cloud_cover is not None and s.cloud_cover <= settings.cdse_max_cloud_cover]
-        usable.sort(key=lambda s: (s.datetime or "", s.item_id or ""), reverse=True)
+        usable.sort(key=_scene_sort_key, reverse=True)
         calendar = [
             {
                 "date": s.acquisition_date,
@@ -494,14 +605,22 @@ def fetch_real_calendar(
                 CALENDAR_FALLBACK_SOURCE, "no_scene", len(scenes),
                 start.isoformat(), end.isoformat(),
             )
-        return calendar, ("ok" if calendar else "no_scene"), None
+        coverage = {
+            "window": {"start": start.isoformat(), "end": end.isoformat()},
+            "stac_scenes": len(scenes),
+            "usable_scenes": len(usable),
+            "returned": len(calendar),
+            "max_cloud_cover": settings.cdse_max_cloud_cover,
+            "sorted_by": "properties.datetime desc",
+            "truncated_by_limit": len(usable) > len(calendar),
+        } if calendar else None
+        return calendar, ("ok" if calendar else "no_scene"), coverage
     except (CopernicusNotConfigured, CopernicusError) as exc:
         stage = getattr(exc, "stage", None) or type(exc).__name__
         logger.warning(
             "[3D-DATES] source=%s reason=%s stage=%s",
             CALENDAR_FALLBACK_SOURCE, "error", stage,
         )
-        return [], "error", exc.to_detail() if isinstance(exc, CopernicusError) else None
         return [], "error", exc.to_detail() if isinstance(exc, CopernicusError) else None
 
 

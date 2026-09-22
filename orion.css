@@ -1,0 +1,409 @@
+/* ==========================================================================
+   Orion — Design System interno
+   Orion Tecnologia e Sistemas Agrícolas Ltda.
+
+   Um único lugar define cor, tipografia, espaçamento, raio, superfície e
+   estado. As páginas (index/fazendas/auth/dashboard) consomem estes tokens;
+   nenhuma delas deve reintroduzir hex solto ou medida arbitrária.
+
+   Princípios:
+   - superfícies chapadas, hairlines de 1px, sem sombra decorativa, sem
+     gradiente, sem glow, sem vidro;
+   - raio pequeno (instrumento, não cartão de marketing);
+   - números em fonte tabular — colunas e séries temporais alinham;
+   - COR TEM SIGNIFICADO: verde = vegetação/aumento, âmbar = atenção,
+     terracota = queda/risco, azul = dado/água/informação, cinza = neutro
+     ou ausência de dado. Nada é colorido por decoração.
+   ========================================================================== */
+
+:root {
+  /* --- superfícies (base neutra levemente esverdeada, não azul-preta) --- */
+  --surface-0: #0b0f0e;   /* fundo da página */
+  --surface-1: #121716;   /* cartão / painel */
+  --surface-2: #19201e;   /* controle, célula, campo dentro do cartão */
+  --surface-3: #222b28;   /* hover / estado ativo discreto */
+
+  /* --- linhas --- */
+  --line:        #2a3431;
+  --line-strong: #3a4744;
+
+  /* --- texto --- */
+  --text-1: #e9efec;      /* valor, título */
+  --text-2: #93a39d;      /* rótulo, apoio */
+  --text-3: #7b8b84;      /* meta, proveniência */
+
+  /* --- semântica --- */
+  --veg:        #4e9a68;   /* vegetação, aumento do índice */
+  --veg-text:   #8ecfa0;
+  --veg-soft:   rgba(78, 154, 104, 0.14);
+  --warn:       #b8862c;   /* atenção, dado parcial */
+  --warn-text:  #dfae55;
+  --warn-soft:  rgba(184, 134, 44, 0.14);
+  --risk:       #b8473c;   /* queda, risco, erro */
+  --risk-text:  #d98a7f;
+  --risk-soft:  rgba(184, 71, 60, 0.14);
+  --data:       #2f6f93;   /* dado, água, informação */
+  --data-text:  #93b9cf;
+  --data-soft:  rgba(47, 111, 147, 0.16);
+  --neutral:    #58655f;   /* sem dado, não observado */
+  --neutral-soft: rgba(88, 101, 95, 0.18);
+
+  /* --- tipografia --- */
+  --font: "Inter", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-num: "SF Mono", "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+  --fs-micro: 0.66rem;   /* rótulo em caixa alta */
+  --fs-meta:  0.72rem;   /* proveniência, nota de rodapé */
+  --fs-sm:    0.8rem;
+  --fs-body:  0.875rem;
+  --fs-lg:    1.05rem;
+  --fs-value: 1.5rem;    /* número principal de um indicador */
+
+  /* --- espaçamento (escala de 4) --- */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+
+  /* --- raio e foco --- */
+  --r-sm: 3px;
+  --r-md: 5px;
+  --r-lg: 8px;
+  --focus: 0 0 0 2px var(--surface-0), 0 0 0 4px var(--data-text);
+}
+
+/* ==========================================================================
+   Base
+   ========================================================================== */
+* { box-sizing: border-box; }
+
+body {
+  font-family: var(--font);
+  background: var(--surface-0);
+  color: var(--text-1);
+  font-size: var(--fs-body);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.01em; }
+
+a { color: var(--data-text); }
+
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+  border-radius: var(--r-sm);
+}
+
+/* Números de indicador, tabela e série temporal alinham verticalmente. */
+.num, .kpi-card strong, .metric-value, td.num, .tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* ==========================================================================
+   Rótulo de seção — caixa alta curta, nunca frase de marketing
+   ========================================================================== */
+.eyebrow {
+  font-size: var(--fs-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  color: var(--text-3);
+}
+
+.panel-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  margin: 0;
+  font-size: var(--fs-lg);
+  color: var(--text-1);
+}
+
+.panel-title .source {
+  font-size: var(--fs-meta);
+  font-weight: 400;
+  color: var(--text-3);
+}
+
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--sp-3);
+  padding-bottom: var(--sp-3);
+  border-bottom: 1px solid var(--line);
+}
+
+/* ==========================================================================
+   Superfícies
+   ========================================================================== */
+.panel {
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: var(--sp-4);
+}
+
+.inset {
+  background: var(--surface-0);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: var(--sp-3);
+}
+
+/* ==========================================================================
+   Controles
+   ========================================================================== */
+.btn {
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-1);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.btn:hover { background: var(--surface-3); border-color: var(--line-strong); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn-primary { background: var(--veg); border-color: var(--veg); color: #fff; }
+.btn-primary:hover { background: #59a874; border-color: #59a874; }
+.btn-quiet { background: transparent; color: var(--text-2); }
+.btn-quiet:hover { color: var(--text-1); background: var(--surface-2); }
+.btn-danger { color: var(--risk-text); border-color: var(--risk); background: transparent; }
+.btn-danger:hover { background: var(--risk-soft); }
+
+.field-label {
+  display: block;
+  font-size: var(--fs-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+  color: var(--text-3);
+  margin-bottom: var(--sp-1);
+}
+
+.input, input[type="text"], input[type="email"], input[type="password"],
+input[type="number"], input[type="date"], select, textarea {
+  font: inherit;
+  font-size: var(--fs-sm);
+  color: var(--text-1);
+  background: var(--surface-0);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 7px 10px;
+  color-scheme: dark;
+}
+.input:focus, input:focus, select:focus, textarea:focus {
+  border-color: var(--data);
+  outline: none;
+}
+
+/* ==========================================================================
+   Indicadores (KPI) — rótulo, valor, qualificador. Nunca número solto.
+   ========================================================================== */
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: var(--sp-2);
+}
+
+.metric {
+  background: var(--surface-0);
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--line-strong);
+  border-radius: var(--r-md);
+  padding: var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.metric > .label {
+  font-size: var(--fs-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+  color: var(--text-3);
+}
+.metric > .value {
+  font-size: var(--fs-value);
+  font-weight: 600;
+  color: var(--text-1);
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.metric > .qualifier {
+  font-size: var(--fs-meta);
+  color: var(--text-2);
+  line-height: 1.4;
+}
+.metric.is-veg  { border-left-color: var(--veg); }
+.metric.is-warn { border-left-color: var(--warn); }
+.metric.is-risk { border-left-color: var(--risk); }
+.metric.is-data { border-left-color: var(--data); }
+.metric.is-none { border-left-color: var(--neutral); }
+.metric.is-none > .value { color: var(--text-3); }
+
+/* ==========================================================================
+   Badges — só quando o estado precisa ser lido de relance
+   ========================================================================== */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: var(--r-sm);
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.badge-ok, .badge-veg   { background: var(--veg-soft);  color: var(--veg-text);  border-color: var(--veg); }
+.badge-warn             { background: var(--warn-soft); color: var(--warn-text); border-color: var(--warn); }
+.badge-bad, .badge-risk { background: var(--risk-soft); color: var(--risk-text); border-color: var(--risk); }
+.badge-data             { background: var(--data-soft); color: var(--data-text); border-color: var(--data); }
+.badge-none             { background: var(--neutral-soft); color: var(--text-3); border-color: var(--line-strong); }
+
+/* ==========================================================================
+   Tabelas — hairline, cabeçalho fixo em caixa alta, números tabulares
+   ========================================================================== */
+.table-wrap { overflow-x: auto; }
+
+table.data {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+}
+table.data th {
+  text-align: left;
+  font-size: var(--fs-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+  background: var(--surface-0);
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+table.data td {
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--line);
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+}
+table.data tbody tr:hover td { background: var(--surface-2); }
+table.data tbody tr:last-child td { border-bottom: none; }
+
+/* ==========================================================================
+   Estados: carregando · vazio · erro · dado indisponível
+   Cada um é visualmente distinto — "sem dado" nunca parece "zero".
+   ========================================================================== */
+.state {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: flex-start;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text-2);
+  background: var(--surface-0);
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--line-strong);
+  border-radius: var(--r-md);
+  padding: var(--sp-3);
+}
+.state-loading { border-left-color: var(--data); color: var(--data-text); }
+.state-empty   { border-left-color: var(--neutral); border-style: dashed; color: var(--text-3); }
+.state-error   { border-left-color: var(--risk); background: var(--risk-soft); color: var(--risk-text); }
+.state-ok      { border-left-color: var(--veg); color: var(--text-2); }
+
+.spinner {
+  display: inline-block;
+  width: 11px; height: 11px;
+  flex-shrink: 0;
+  margin-top: 4px;
+  border-radius: 50%;
+  border: 2px solid var(--data-soft);
+  border-top-color: var(--data-text);
+  animation: orion-spin 0.8s linear infinite;
+}
+@keyframes orion-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation-duration: 2.4s; }
+  * { transition-duration: 0.01ms !important; }
+}
+
+/* ==========================================================================
+   Proveniência — de onde veio o número e o que ele não prova
+   ========================================================================== */
+.provenance {
+  font-size: var(--fs-meta);
+  line-height: 1.6;
+  color: var(--text-3);
+  border-top: 1px solid var(--line);
+  padding-top: var(--sp-3);
+  margin-top: var(--sp-3);
+}
+.provenance b, .provenance strong { color: var(--text-2); font-weight: 600; }
+
+.disclaimer {
+  font-size: var(--fs-meta);
+  line-height: 1.6;
+  color: var(--text-3);
+}
+
+/* ==========================================================================
+   Aviso de dado demonstrativo — sempre explícito, nunca disfarçado
+   ========================================================================== */
+.notice-demo {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: flex-start;
+  background: var(--warn-soft);
+  border: 1px solid var(--warn);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--r-md);
+  color: var(--warn-text);
+  padding: var(--sp-3) var(--sp-4);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
+/* ==========================================================================
+   Acessibilidade
+   ========================================================================== */
+.visually-hidden {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.skip-link {
+  position: absolute;
+  left: var(--sp-3);
+  top: -48px;
+  z-index: 999;
+  background: var(--surface-1);
+  border: 1px solid var(--data);
+  color: var(--text-1);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-md);
+  transition: top 0.12s;
+}
+.skip-link:focus { top: var(--sp-3); }

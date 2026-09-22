@@ -208,3 +208,198 @@ No pipeline real, estatísticas são calculadas nos pixels válidos dentro da m�
 ## 7. Conclusão da auditoria
 
 O repositório tem infraestrutura suficiente para implementar o PR #8 com dados reais, mas não possui ainda uma camada de evolução científica segura. A implementação deve distinguir rigorosamente dado de fonte, métrica derivada e interpretação. Em especial, nenhum fallback procedural, textura normalizada ou estimativa de produtividade do analytics legado deve aparecer como série Sentinel real.
+
+---
+
+# Revisão pós-playtest — fechamento do PR #8
+
+**Data da revisão:** 22/09/2026
+**Escopo:** correções da auditoria técnica do PR #8 (tendência, janela, deltas,
+qualidade, cena atual, persistência e STAC) + rework visual do frontend.
+
+Esta seção substitui, onde houver conflito, o que a auditoria original descreveu
+como "implementação planejada". O que está escrito aqui corresponde ao código.
+
+## R1. Tendência agronômica
+
+### Algoritmo anterior
+
+```python
+signs = [1 if c > 0 else -1 if c < 0 else 0 for c in np.diff(values)]
+nonzero = [s for s in signs if s]
+if total_delta >= floor and len(nonzero) >= 2 and all(s == 1 for s in nonzero):
+    ...melhoria
+elif total_delta <= -floor and len(nonzero) >= 2 and all(s == -1 for s in nonzero):
+    ...queda
+else:
+    ...estável
+```
+
+Três defeitos:
+
+1. **monotonicidade perfeita** — `all(s == 1)` / `all(s == -1)` exigia que
+   TODAS as transições tivessem a mesma direção. Uma única oscilação
+   intermediária, comum em série Sentinel real, rebaixava a série a "Estável";
+2. **eixo ordinal** — `np.polyfit(np.arange(len(values)), values, 1)` usava a
+   posição da cena, não a data. Com passagens irregulares (nuvem), a inclinação
+   ficava distorcida;
+3. **janela errada** — a série avaliada era a janela inteira pedida pelo cliente
+   (730 dias por padrão do frontend), embora a UI chamasse o indicador de
+   "Tendência recente".
+
+Consequência observada no playtest: NDVI atual ≈ 0,59, delta ponta-a-ponta
+≈ −0,32, 23 cenas aceitas → **"Estável"**. Não era erro aritmético: era o
+classificador.
+
+### Algoritmo atual
+
+`classify_trend` + `select_trend_window` em
+`backend/services/crop_health_service.py`.
+
+1. filtro por qualidade (alta/média) preservado;
+2. janela operacional: últimos **120 dias** a partir da última cena aceita,
+   estendida **uma vez** para 240 dias quando faltar cobertura — o modo usado é
+   declarado em `trend_detail.window.mode`;
+3. mínimos preservados: 3 cenas e 14 dias de intervalo observado;
+4. **Theil–Sen** sobre `x = dias corridos desde a primeira cena da janela`:
+   mediana das inclinações par a par. Robusto — uma cena discrepante altera
+   apenas uma fração das inclinações e não desloca a mediana;
+5. **Mann–Kendall / tau de Kendall** para concordância direcional;
+6. dispersão residual robusta em torno da reta: `1,4826 × MAD(resíduos)`;
+7. decisão:
+
+   | Resultado | Condição |
+   |---|---|
+   | `melhoria` / `queda` | `|inclinação × dias| ≥ delta_floor` **e** `|tau| ≥ 0,30` **e** `|mudança| ≥ dispersão residual` |
+   | `estavel` | magnitude abaixo do piso **e** dispersão abaixo do piso |
+   | `sem_tendencia` | há variação, mas sem direção predominante ou com ruído maior que o sinal |
+   | `dados_insuficientes` | < 3 cenas aceitas na janela ou intervalo < 14 dias |
+
+### Justificativa estatística
+
+- **Theil–Sen** tem ponto de ruptura de ~29%: até quase um terço das
+  observações pode ser discrepante sem inverter a inclinação estimada. Mínimos
+  quadrados, usados antes, têm ponto de ruptura zero.
+- **Tau de Kendall** mede concordância de pares, não magnitude, e é invariante a
+  transformações monótonas — separa "para onde a série vai" de "quanto ela
+  andou", que é exatamente a confusão do classificador antigo.
+- **Razão sinal/ruído ≥ 1** impede o caso oposto: uma série que oscila 0,35 de
+  uma passagem para a outra ser declarada "melhoria" por um arrasto de 0,06 nas
+  pontas.
+- O **p-valor de Mann–Kendall** (aproximação normal com correção de empates) é
+  devolvido em `trend_detail.mann_kendall`, mas **não é critério de decisão**:
+  com n=3 o teste não tem poder e reprovaria qualquer tendência curta. Usá-lo
+  como gate tornaria o indicador inútil justamente no caso que a auditoria
+  pediu para funcionar (3 a 5 cenas).
+- Nenhuma dependência nova: ambos os estimadores são ~20 linhas de NumPy.
+
+### Justificativa dos limiares
+
+| Limiar | Valor | Base |
+|---|---|---|
+| Janela da tendência | 120 dias | ciclo de soja/milho safrinha (110–130 dias); ~24 passagens potenciais com revisita de 5 dias do par Sentinel-2 |
+| Extensão máxima | 240 dias | limite antes de misturar dois ciclos agrícolas |
+| Mínimo de cenas | 3 | menor conjunto que define uma reta e duas transições |
+| Intervalo mínimo | 14 dias | evita "tendência" entre passagens quase simultâneas |
+| `delta_floor` | 0,05 | preservado da versão anterior; magnitude mínima relevante na escala do índice |
+| `TREND_TAU_MIN` | 0,30 | tau = S/C(n,2). Com n=3, 2 de 3 pares concordantes → tau = 1/3 ≈ 0,333 > 0,30: **uma oscilação isolada é tolerada**. Com n ≥ 12 exige maioria clara |
+| sinal/ruído | ≥ 1 | a mudança do período precisa ser pelo menos do tamanho do ruído típico |
+
+## R2. Janela da tendência (semântica)
+
+| Conceito | Campo | Janela |
+|---|---|---|
+| Histórico exibido | `period` / `period_days` | pedido pelo cliente (frontend: 180/365/730, padrão 365) |
+| Tendência operacional | `metrics.trend_detail.window` | últimos 120 dias (240 no modo estendido) |
+| Comparação A/B | `comparison` | duas datas manuais, independentes |
+
+A UI mostra o rótulo "Tendência · últimos N dias", a primeira e a última
+observação da janela, o número de cenas válidas e, quando aplicável, que a
+janela foi estendida por falta de cobertura.
+
+## R3. Deltas
+
+Quatro conceitos, quatro apresentações distintas, todas em valor absoluto na
+unidade do índice (`−0,32 NDVI`), nunca em `%`:
+
+| Conceito | Campo | Rótulo na UI |
+|---|---|---|
+| atual − cena anterior com dado | `metrics.delta_previous_detail` | "Desde a cena anterior" + `dd/mm/aaaa → dd/mm/aaaa · N dias` |
+| atual − cena ~30 dias antes (±15) | `metrics.delta_30d_detail` | "Variação em ~30 dias" + datas + intervalo real |
+| última − primeira da janela | `trend_detail.delta` + `delta_from`/`delta_to` | "Variação no período da tendência" |
+| cena B − cena A manuais | `comparison.delta_mean` | bloco próprio "Comparação A → B" |
+
+`delta_previous` passou a pular cenas que falharam no processamento (antes,
+comparava contra a cena imediatamente anterior e virava `None` em silêncio).
+
+## R4. Qualidade
+
+- **Cena** (`timeline[].quality`, `scene_quality`, escopo `cena`): critério
+  objetivo inalterado (cobertura válida × nuvens).
+- **Série** (`quality`, escopo `serie`): reescrita de forma proporcional —
+  alta ≥ 80% úteis e ≥ 50% altas; média ≥ 60% úteis; limitada ≥ 34% úteis e
+  ≥ 3 cenas úteis; insuficiente abaixo disso. **Uma cena ruim não rebaixa mais
+  a análise inteira** e "Limitada" deixou de ser fallback universal. A resposta
+  traz `distribution`, `usable_ratio_pct` e `high_ratio_pct`.
+- **`confidence`**: era alias literal de `quality`. Mantido na resposta por
+  compatibilidade, agora explicitamente marcado (`alias_of: "quality"` + nota) e
+  **removido da interface**. Nenhuma métrica de confiança artificial foi criada.
+  `confidence_a`/`confidence_b` da comparação A/B foram removidos.
+
+## R5. Cena atual
+
+`metrics` distingue três coisas que antes eram uma só:
+
+- `latest_scene` — última aquisição do período, mesmo sem valor;
+- `current` — última aquisição **com valor calculado**;
+- `latest_valid_scene` — última aquisição **aceita pela tendência**.
+
+`current_is_valid_for_analysis` e `current_scene_note` explicam a divergência, e
+o painel muda a cor do card e exibe a nota. Qualidade ruim não é escondida.
+
+## R6. Persistência
+
+Conceito preservado (3 cenas, 2 transições na mesma direção acima do limiar
+adaptativo). A resposta passou a incluir `window` com `start`, `end`, `days`,
+`scenes` e `transitions`; o texto cita o período e a UI mostra
+`dd/mm → dd/mm (N dias)` junto da área em hectares.
+
+## R7. STAC / calendário Sentinel
+
+`stac_search` ganhou ordenação determinística (`sortby` por
+`properties.datetime` desc, com retry sem o campo em caso de HTTP 400),
+paginação por `links[rel=next]` (POST com merge de body ou GET por href),
+deduplicação por `id` e reordenação local obrigatória. Tetos: 100 itens por
+página, 8 páginas, 400 itens. Sem `max_items` o comportamento histórico de uma
+página é preservado (usado pela timeline 3D).
+
+`fetch_real_calendar` pagina com orçamento de `min(400, max(limit × 4, 120))`,
+filtra nuvem **antes** de truncar e devolve um `detail` de cobertura seguro
+(janela, cenas encontradas, cenas úteis, devolvidas, ordenação e se houve
+truncamento). Um `return` duplicado morto foi removido.
+
+## R8. Rework visual
+
+Design system interno em `orion.css`: paleta fechada com significado agronômico,
+superfícies chapadas, hairlines, raio ≤ 8px, sem vidro/glow/gradiente/sombra
+decorativa, tipografia com algarismos tabulares, quatro estados visuais
+distintos (carregando / vazio / erro / ok), `:focus-visible`, `skip-link`,
+`prefers-reduced-motion` e `<meta viewport>` em todas as páginas. Contraste
+WCAG AA verificado por teste. Detalhes no README, seção "Design system interno".
+
+O painel Saúde & Evolução foi reorganizado em cinco níveis de leitura e o
+gráfico passou a distinguir "limitada" de "insuficiente" por cor, porque apenas
+a segunda fica fora da tendência.
+
+## R9. O que continua sendo limitação
+
+1. Índice espectral descreve mudança relativa e **não determina a causa**.
+2. Períodos muito nublados produzem legitimamente "dados insuficientes" — a
+   análise não preenche a série.
+3. NDWI (Gao) e NDMI compartilham as mesmas bandas neste contrato.
+4. O contexto climático é coincidência temporal, nunca causalidade.
+5. A estimativa de safra do analytics legado permanece um **modelo empírico com
+   datas e preços fixos**; no painel ela foi movida para a coluna de apoio e
+   rotulada como estimativa de referência, não medição.
+6. Sem credenciais CDSE nenhuma cena é processada; a interface declara a causa
+   em vez de mostrar uma série vazia sem explicação.

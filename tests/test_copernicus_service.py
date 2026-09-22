@@ -1152,8 +1152,8 @@ class TestEndpointCdsE:
         monkeypatch.setattr(cds.settings, "cdse_client_secret", "s")
         captured = []
 
-        def fake_search(geom, bounds, start, end, limit):
-            captured.append({"start": start, "end": end, "limit": limit})
+        def fake_search(geom, bounds, start, end, limit, **kwargs):
+            captured.append({"start": start, "end": end, "limit": limit, **kwargs})
             return [
                 _scene("d1", "2025-03-20T10:00:00Z", 6.0),
                 _scene("d2", "2025-03-24T10:00:00Z", 15.0),
